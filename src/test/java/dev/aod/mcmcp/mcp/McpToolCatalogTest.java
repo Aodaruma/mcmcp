@@ -1124,6 +1124,8 @@ class McpToolCatalogTest {
                 .findFirst().orElseThrow().get("description").getAsString();
         assertThat(observation)
                 .contains("With no arguments, atomically pins and returns the latest observation frame")
+                .contains("compact block")
+                .contains("explicit queries retain detailed visible_surface records")
                 .contains("default omits unknown_boundary")
                 .contains("absence never means air")
                 .contains("pass schema_version=1")

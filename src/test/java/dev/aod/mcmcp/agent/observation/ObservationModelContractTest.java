@@ -260,6 +260,37 @@ class ObservationModelContractTest {
     }
 
     @Test
+    void compactPageGroupsOnlyWitnessedFacesAndKeepsDetailedProjectionUnchanged() throws Exception {
+        var first = surface(10, 0);
+        var second = new VisibleSurface(first.position(), Face.NORTH, first.block(), first.state(),
+                first.placementItem(), first.shapeClass(), first.cropMature(), first.rayHit(),
+                first.eyeOrigin(), first.observedTick(), first.worldRevision());
+        var page = new ObservationPage(
+                "obs-0000000000000001", 10, false, List.of(first, second), null);
+
+        var compact = ObservationWireMapper.compactPage(page, ignored -> null);
+        JsonObject catalog = JsonParser.parseString(Files.readString(catalogPath())).getAsJsonObject();
+        JsonObject schema = tool(catalog, "agent_get_observation").getAsJsonObject("outputSchema");
+        assertThat(matches(schema, new GsonBuilder().serializeNulls().create().toJsonTree(compact)))
+                .isTrue();
+        assertThat((List<?>) compact.get("records")).singleElement().satisfies(record -> {
+            @SuppressWarnings("unchecked")
+            var block = (Map<String, Object>) record;
+            assertThat(block)
+                        .containsEntry("kind", "block")
+                        .containsEntry("faces", "UN")
+                        .doesNotContainKeys("face", "eye_origin", "observed_tick", "world_revision");
+        });
+        assertThat((List<?>) ObservationWireMapper.page(page, ignored -> null).get("records"))
+                .hasSize(2)
+                .allSatisfy(record -> {
+                    @SuppressWarnings("unchecked")
+                    var surface = (Map<String, Object>) record;
+                    assertThat(surface).containsEntry("kind", "visible_surface").containsKey("face");
+                });
+    }
+
+    @Test
     void visibleItemExposesOnlyItsDisplayedRegistryIdentity() {
         var item = new VisibleEntity(
                 new ResourceId("minecraft:item"),

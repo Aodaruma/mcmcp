@@ -13,6 +13,7 @@ import dev.aod.mcmcp.agent.observation.ObservationFrameStore;
 import dev.aod.mcmcp.agent.observation.ObservationKind;
 import dev.aod.mcmcp.agent.observation.ObservationPage;
 import dev.aod.mcmcp.agent.observation.ObservationStoreException;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.VisibleSurface;
 import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
 import dev.aod.mcmcp.agent.observation.ObservationWireMapper;
 import dev.aod.mcmcp.agent.observation.OmnidirectionalObserver;
@@ -37,6 +38,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
@@ -98,7 +100,8 @@ final class AgentObservations {
     }
 
     PreparedObservationPage getAgentObservation(Map<String, Object> arguments) {
-        if (arguments.isEmpty()) {
+        boolean compact = arguments.isEmpty();
+        if (compact) {
             String frameId = agentObservationFrames.announceLatestSummary()
                     .orElseThrow(() -> new RuntimeInvocationException(
                             "frame_expired", "No observation frame is available yet.", true, Map.of()))
@@ -148,9 +151,12 @@ final class AgentObservations {
                     cursor,
                     RuntimeArguments.intArgument(arguments, "limit"));
             UUID receiptId = deliveredAgentEvidence.prepareDelivery(page);
-            Map<String, Object> wirePage = ObservationWireMapper.page(page, surface ->
-                    deliveredAgentEvidence.preparedPlacementStateRef(receiptId, surface)
-                            .orElse(null));
+            Function<VisibleSurface, String> placementStateRefs = surface ->
+                            deliveredAgentEvidence.preparedPlacementStateRef(receiptId, surface)
+                                    .orElse(null);
+            Map<String, Object> wirePage = compact
+                    ? ObservationWireMapper.compactPage(page, placementStateRefs)
+                    : ObservationWireMapper.page(page, placementStateRefs);
             return new PreparedObservationPage(wirePage, receiptId);
         } catch (ObservationStoreException failure) {
             throw new RuntimeInvocationException(

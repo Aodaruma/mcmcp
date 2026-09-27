@@ -856,7 +856,7 @@
     {
       "name": "agent_get_observation",
       "title": "Get MCMCP Observation",
-      "description": "With no arguments, atomically pins and returns the latest observation frame, up to 64 visible surfaces, visible entities, traversability records, and hazards. The default omits unknown_boundary and sound_clue records; absence never means air. For precise evidence or paging, pass schema_version=1, an announced frame_id, kinds, cursor=null on the first page, limit=1..256, and optional filter. Filters only narrow already visible records and do not scan unseen world state. If a frame expires, call with no arguments to read the newest frame.",
+      "description": "With no arguments, atomically pins and returns the latest observation frame, up to 64 compact block, visible entity, traversability, and hazard records. Compact blocks group only actually visible faces by position plus block/state and encode faces with D/U/N/S/W/E; they never imply unseen faces or air. The default omits unknown_boundary and sound_clue records; absence never means air. For precise evidence or paging, pass schema_version=1, an announced frame_id, kinds, cursor=null on the first page, limit=1..256, and optional filter; explicit queries retain detailed visible_surface records. Filters only narrow already visible records and do not scan unseen world state. If a frame expires, call with no arguments to read the newest frame.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1091,6 +1091,40 @@
               }
             ]
           },
+          "compactBlock": {
+            "type": "object",
+            "description": "Argument-free projection grouped only from returned visible_surface records with the same position, block, and nullable audited state. faces contains only witnessed faces using D/U/N/S/W/E; omitted faces and positions remain unknown, never air. Server-side delivery evidence retains the full witnessed surface metadata.",
+            "additionalProperties": false,
+            "properties": {
+              "kind": {"const": "block"},
+              "position": {"$ref": "#/$defs/blockPosition"},
+              "block": {"$ref": "#/$defs/resourceLocation"},
+              "state": {
+                "oneOf": [
+                  {"type": "null"},
+                  {"$ref": "#/$defs/completeBlockState"}
+                ]
+              },
+              "faces": {
+                "type": "string",
+                "pattern": "^(?!.*(.).*\\1)[DUNSWE]{1,6}$"
+              },
+              "placement_item": {
+                "oneOf": [
+                  {"type": "null"},
+                  {"$ref": "#/$defs/resourceLocation"}
+                ]
+              },
+              "placement_state_ref": {
+                "oneOf": [
+                  {"type": "null"},
+                  {"type": "string", "pattern": "^psr_[0-9a-f]{32}$"}
+                ]
+              },
+              "crop_mature": {"type": "boolean"}
+            },
+            "required": ["kind", "position", "block", "state", "faces", "placement_item", "placement_state_ref"]
+          },
           "visibleEntity": {
             "type": "object",
             "additionalProperties": false,
@@ -1256,6 +1290,7 @@
             "maxItems": 256,
             "items": {
               "oneOf": [
+                {"$ref": "#/$defs/compactBlock"},
                 {"$ref": "#/$defs/visibleSurface"},
                 {"$ref": "#/$defs/visibleEntity"},
                 {"$ref": "#/$defs/traversability"},
