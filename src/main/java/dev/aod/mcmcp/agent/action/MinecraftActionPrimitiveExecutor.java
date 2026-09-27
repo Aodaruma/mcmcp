@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.agent.action;
 
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
+import dev.aod.mcmcp.agent.navigation.DiagonalTraversal;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
 import dev.aod.mcmcp.agent.navigation.NavCell;
 import dev.aod.mcmcp.agent.navigation.NavigationDistanceBudget;
@@ -311,6 +312,14 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 locomotion,
                 player.isInWater(),
                 player.getDeltaMovement().y);
+        // Direct diagonal support is traversed slowly; actual per-tick collision/support guards remain active.
+        if (!state.route.edges().isEmpty() && state.edgeIndex < state.route.edges().size()
+                && state.route.edges().get(state.edgeIndex).supportedDiagonal()) {
+            var crouched = desired.isEmpty() ? EnumSet.noneOf(MovementInputLease.MovementKey.class)
+                    : EnumSet.copyOf(desired);
+            crouched.add(MovementInputLease.MovementKey.CROUCH);
+            desired = Set.copyOf(crouched);
+        }
         Vec3 command = commandDirection(player.getYRot(), desired);
         if (locomotion != Locomotion.WATER && command.horizontalDistanceSqr() > 0.0D) {
             double previewLength = Math.min(1.0D, horizontalDistance(player, waypoint));
@@ -739,7 +748,8 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         if (current == null || !route.worldSessionId().equals(current.worldSessionId())
                 || !current.traversable()
                 || current.locomotion() != planned.locomotion()
-                || !diagonalProofCurrent(current, snapshot)) {
+                || !DiagonalTraversal.clear(snapshot, current)
+                || current.supportedDiagonal() && !planned.supportedDiagonal()) {
             return EdgeDecision.REPLAN;
         }
         if (current.requiresProbe()) {
@@ -778,26 +788,6 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         Objects.requireNonNull(edge, "edge");
         return TickResult.running(edge == EdgeDecision.PROBE && movementIssued
                 ? Reason.PROBE_MICRO_STEP : Reason.NONE);
-    }
-
-    private static boolean diagonalProofCurrent(
-            TraversabilityEdge edge,
-            KnownTraversabilitySnapshot snapshot) {
-        NavCell from = edge.key().from();
-        NavCell to = edge.key().to();
-        if (!from.horizontallyDiagonalTo(to)) return true;
-        NavCell xSide = new NavCell(from.dimension(), to.x(), from.y(), from.z());
-        NavCell zSide = new NavCell(from.dimension(), from.x(), from.y(), to.z());
-        return confirmed(snapshot, new TraversabilityEdge.Key(from, xSide))
-                && confirmed(snapshot, new TraversabilityEdge.Key(from, zSide));
-    }
-
-    private static boolean confirmed(
-            KnownTraversabilitySnapshot snapshot,
-            TraversabilityEdge.Key key) {
-        return snapshot.edge(key)
-                .map(edge -> edge.status() == TraversabilityEdge.Status.CONFIRMED)
-                .orElse(false);
     }
 
     static float boundedYawDelta(float currentYaw, float desiredYaw, float limit) {
