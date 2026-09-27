@@ -24,6 +24,28 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ClientRecipeCatalogTest {
     @Test
+    void unlockedDisplayTakesPriorityOverTheSameClientSyncedDisplay() {
+        var catalog = new ClientRecipeCatalog();
+        UUID session = UUID.randomUUID();
+        var known = shapeless(1, Items.STONE, Items.STICK, 1);
+        var source = new ClientSyncedRecipes.Snapshot(1, true,
+                List.of(shapeless(-1, Items.STONE, Items.STICK, 1),
+                        shapeless(-2, Items.DIRT, Items.STICK, 1)),
+                List.of("minecraft:crafting"), 0, false, false);
+
+        catalog.refresh(session, 1, List.of(known), RecipeScope.ALL_CRAFTABLE, source);
+        var result = catalog.query(session, new ClientRecipeCatalog.Query(
+                ClientRecipeCatalog.QueryKind.RESULT_ITEM, "minecraft:stick"), 2);
+
+        assertThat(result.coverage().known()).isEqualTo(2);
+        assertThat(result.coverage().matched()).isEqualTo(2);
+        assertThat(result.coverage().truncated()).isFalse();
+        assertThat(result.recipes()).hasSize(2);
+        assertThat(result.recipes().getFirst().supported()).isTrue();
+        assertThat(result.recipes().getLast().supported()).isFalse();
+    }
+
+    @Test
     void scopeSwitchAndSourceReloadInvalidateRefsWithoutAuthorizingAdditionalRecipes() {
         var catalog = new ClientRecipeCatalog();
         UUID session = UUID.randomUUID();

@@ -122,10 +122,16 @@ public final class ClientRecipeCatalog {
         }
         var activeSource = requestedScope == RecipeScope.ALL_CRAFTABLE
                 ? received : ClientSyncedRecipes.Snapshot.unavailable();
+        var displayed = new HashSet<DisplayKey>();
+        for (var entry : byId.values()) {
+            displayed.add(new DisplayKey(entry.display(), entry.category()));
+        }
         boolean extractionFailed = false;
         for (var entry : activeSource.entries()) {
             try {
-                extracted.add(extract(entry));
+                if (displayed.add(new DisplayKey(entry.display(), entry.category()))) {
+                    extracted.add(extract(entry));
+                }
             } catch (RuntimeException | LinkageError failure) {
                 extractionFailed = true;
             }
@@ -732,6 +738,8 @@ public final class ClientRecipeCatalog {
             }
         }
     }
+
+    private record DisplayKey(RecipeDisplay display, RecipeBookCategory category) { }
 
     private record CatalogRecipe(String opaqueRef, ExtractedRecipe extracted) {
         private CatalogRecipe {
