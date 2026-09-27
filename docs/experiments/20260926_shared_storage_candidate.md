@@ -15,7 +15,7 @@
 
 `test harnessTest adminBridgeTest verifyHarnessIsolation build` が成功。主要な確認は、拡張stackからの指定数取出し・格納、非連続slot配置と保護slot不変、同品目の別個体・参照失効・消費、slot更新だけではcursorを確認しないこと、取消時のconfirmed prefixとUNKNOWN末尾の一度だけの記録、公開schemaと予算である。
 
-独立レビュー用Codex CLIはローカル読取基盤の欠落で対象差分を読めず、レビュー未完了。自身の差分確認は独立レビュー合格の代用としない。
+2026-09-27の独立Codex CLIレビューで、拡張stackの空cursor PICKUPを通常の64個で切っていた不一致を発見した。Minecraft 26.2の`AbstractContainerMenu.doClick`と`Slot.tryRemove`をbytecodeで再確認し、左clickはslot全量、右clickは半量を持つ規則へ修正した。2560個から1個を移す場合のclickごとのslot/cursor、保存則、14clickで計画不能な数量の事前拒否を回帰試験へ追加した。開封→click→再開封→readbackや取消の境界は実機・結合確認がなお必要である。
 
 隔離DockerへのSSHはAccess認証完了後もbanner timeoutとなった。ゲーム・通常プロファイルへの操作は実施していない。以下の実機確認が残るため、`release:verification-needed`を維持する。
 

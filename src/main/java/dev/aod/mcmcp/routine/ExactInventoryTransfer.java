@@ -13,6 +13,7 @@ import java.util.Optional;
 /** A fixed, bounded sequence of ordinary PICKUP clicks with packet-proven cursor transitions. */
 final class ExactInventoryTransfer {
     static final int MAX_CLICKS = 14;
+    private static final int MAX_SEARCH_STATES = 10_000;
     private final List<Click> clicks;
     private List<StackFingerprint> confirmedSlots;
     private StackFingerprint confirmedCursor = StackFingerprint.EMPTY;
@@ -76,7 +77,7 @@ final class ExactInventoryTransfer {
                         || to.count() > destinationLimit) return Optional.empty();
                 int moved = Math.min(remaining, Math.min(from.count(), destinationLimit - to.count()));
                 if (moved == 0) continue;
-                var path = split(from.count(), to.count(), moved, stackLimit, sourceLimit, destinationLimit,
+                var path = split(from.count(), to.count(), moved, sourceLimit, destinationLimit,
                         MAX_CLICKS - clicks.size());
                 if (path.isEmpty()) return Optional.empty();
                 var transitions = path.orElseThrow();
@@ -96,9 +97,9 @@ final class ExactInventoryTransfer {
         return Optional.empty();
     }
 
-    /** At most 65*65 states: both normal slots contain the same item/components. */
+    /** Simulate ordinary Menu PICKUP transitions with a finite search bound. */
     private static Optional<List<Transition>> split(
-            int source, int destination, int quantity, int cursorLimit,
+            int source, int destination, int quantity,
             int sourceLimit, int destinationLimit, int maxClicks) {
         var start = new Counts(source, destination, 0);
         var goal = new Counts(source - quantity, destination + quantity, 0);
@@ -122,18 +123,20 @@ final class ExactInventoryTransfer {
                     var before = current.counts();
                     int slot = fromSource ? before.source() : before.destination();
                     int cursor = before.cursor();
-                    int pickup = Math.min(slot, cursorLimit);
                     int limit = fromSource ? sourceLimit : destinationLimit;
                     int amount = cursor == 0
-                            ? (button == 0 ? pickup : Math.ceilDiv(pickup, 2))
+                            ? (button == 0 ? slot : Math.ceilDiv(slot, 2))
                             : Math.min(button == 0 ? cursor : 1, limit - slot);
                     if (amount == 0) continue;
                     int afterSlot = cursor == 0 ? slot - amount : slot + amount;
                     int afterCursor = cursor == 0 ? amount : cursor - amount;
                     var after = new Counts(fromSource ? afterSlot : before.source(),
                             fromSource ? before.destination() : afterSlot, afterCursor);
-                    if (visited.add(after)) queue.addLast(new Search(after, current,
-                            new Transition(fromSource, button, after), current.depth() + 1));
+                    if (visited.add(after)) {
+                        if (visited.size() > MAX_SEARCH_STATES) return Optional.empty();
+                        queue.addLast(new Search(after, current,
+                                new Transition(fromSource, button, after), current.depth() + 1));
+                    }
                 }
             }
         }
