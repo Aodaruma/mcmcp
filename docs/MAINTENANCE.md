@@ -3,6 +3,8 @@
 対象はIssue整理、PRレビュー、検証、配布判断です。[AGENTS.md](../AGENTS.md)の安全契約と[CONTRIBUTING.md](../CONTRIBUTING.md)の作業分離を維持します。CODEOWNERSの担当は **@Aodaruma** です。<br>
 This guide covers issue triage, PR review, verification, and release decisions. Preserve the safety contract in [AGENTS.md](../AGENTS.md) and the isolated workflow in [CONTRIBUTING.md](../CONTRIBUTING.md). The CODEOWNERS owner is **@Aodaruma**.
 
+**現在のowner指示:** 追加の明示指示があるまで変更はPR作成までとし、下記の通常merge手順は適用しません。main統合、タグ、Release公開を自動で行わないでください。公開API v2の目標と現行v1の区別は[PUBLIC_API_V2.md](PUBLIC_API_V2.md)に記録します。
+
 ## ラベルとProjects / Labels and Projects
 
 **[MCMCP 開発・保守 / Development](https://github.com/users/Aodaruma/projects/5)**を使います。接続先・Status field IDは[project.json](../.github/project.json)に記録しています。公開Issue/PRだけをこのProjectへ配置します。新規追加とラベルに合わせた状態更新は保守の1時間巡回で行い、常時稼働するGitHub側の即時同期とは区別します。<br>

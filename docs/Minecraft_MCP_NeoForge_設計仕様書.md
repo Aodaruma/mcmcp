@@ -1,5 +1,7 @@
 # MCMCP NeoForge — Minecraft MCP Client MOD 設計・仕様書
 
+> この文書の公開Tool・Action DSLに関する記述は、現在のv1実装と既存試験の仕様を記録するものです。公開API v2の開発目標は[PUBLIC_API_V2.md](PUBLIC_API_V2.md)を優先します。v2の実装・検証が完了するまで、両者を同じ公開機能として扱いません。
+
 - 文書版: 0.8
 - 作成日: 2026-08-26
 - 状態: 実装中、評価MCP hostはCodex CLI 0.146.1に固定
