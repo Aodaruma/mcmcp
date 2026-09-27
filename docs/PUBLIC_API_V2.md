@@ -45,13 +45,43 @@ move＋breakを利用側で毎ブロック交互に呼ぶ必要はない。`agen
 
 公開言語はJavaScript風の小さな同期言語。turtle／p5.jsのように`move(...)`、`breakBlocks(...)`、`place(...)`、`interact(...)`、`input(...)`を順に書ける。行動関数はオブジェクト引数ではなく`move(x=100, y=64, z=120)`のような名前付き引数を受ける。変数、数値・文字列・真偽値・配列・オブジェクト、`if`、回数上限付き`for`／`repeat`、利用者定義の小関数、比較を当面の対象とする。`async/await`、Promise、Node.js、module読込み、Javaへのアクセス、ネットワーク、ファイルI/Oは言語仕様に入れない。完全なECMAScriptを走らせる必要はない。
 
-例（構文は実装時に固定する）:
+実装済みの構文例（まだ公開toolからは実行できない）:
 
 ```js
 move(x=116, y=64, z=120, clearPath=true, maxBreaks=32);
+let count = 3;
+for (let i=0; i<count; i++) {
+    if (i < 2) { move(x=116+i, y=64, z=120); }
+    else { repeat(2) { interact(target="lever"); } }
+}
 ```
 
-各行動関数は、完了または明示的な失敗まで内部で待ってから次の文へ進む。ゲームthreadを塞がず、script実行器は別の作業threadで動き、ゲーム操作を既存の入力所有・安全停止へ渡す。source長、実行時間、演算数、メモリ、ゲーム操作回数、観測量、反復回数を有界にする。停止後の入力解放と途中結果の回収は一つのjobとして保証する。言語処理系を自作する場合は閉じた文法のparser/runnerを比較する。GraalJSを使う場合も公開構文を厳格に限定できるか、依存サイズと停止特性を確認する。
+各行動関数は、完了または明示的な失敗まで内部で待ってから次の文へ進む。ゲームthreadを塞がず、script実行器は別の作業threadで動き、ゲーム操作を既存の入力所有・安全停止へ渡す。source長、実行時間、演算数、メモリ、ゲーム操作回数、観測量、反復回数を有界にする。停止後の入力解放と途中結果の回収は一つのjobとして保証する。
+
+### このブランチで実装済みの内部言語処理
+
+`agent/script/ActionScript`と`ActionScriptParser`はpackage-privateのpure Java parser/interpreter。JS engineや外部依存を使わない。全文をparseし、構文と注入された命令名のallowlistを検証してから、immutableな名前付き引数を同期sinkへ順に渡す。未実行branchの不正構文・未知の命令も実行前に拒否する。変数解決と値の型は評価時に検査し、途中失敗で既に完了した命令は取り消さない。
+
+- 値: 有限のdouble数値（指数表記可）、引用符付き文字列、boolean、null、配列・object literal。配列/objectはimmutableなデータで、property/indexアクセス・mutation・method呼出しはない。objectの値を名前付き引数に渡せるが、`move({x:100})`や位置引数は不可。
+- 文: `let name=expression;`、既存のlocal変数への代入、`if (boolean) {...} else {...}`、`repeat(count) {...}`、`for (let i=initial; boolean; i++) {...}`。forの更新は`i=expression`も可、初期化したcounterだけを更新する。blockごとにlocal scopeを作り、外側変数の参照・更新とshadowingを許す。文末`;`と制御文の`{}`は必須。
+- 式: `+ - * / %`、`< <= > >= == !=`、`! && ||`、括弧。通常の演算優先順位とboolean短絡評価。算術は数値だけ、条件はbooleanだけで、暗黙変換・文字列連結はない。非有限値は失敗。等値比較はscalarだけで、共有collection graphを再帰比較・展開しない。
+- 文字列escapeは`\n`、`\r`、`\t`、`\\`、`\'`、`\"`。identifierはASCII英字・`_`で始まり、以降は数字も可。コメント、関数定義、再帰、while、async/await、Promise、module、hostアクセス等は未対応または禁止。
+
+上限は次の固定値。実行予算だけ呼出側で0以上の小さい値に減らせる。
+
+| 対象 | 最大値・数え方 |
+|---|---|
+| source | UTF-16 code unit 32,768個（空白も含む） |
+| AST | root/block/argument/propertyを含む4,096 node。rootを含む木の深さ64。parserのstatement/expression同時入場も64 |
+| work | 評価するnodeへの入場100,000回。root/blockも数え、argument/property wrapperはその値の評価だけ数える。上限到達後の次の評価を拒否 |
+| 反復 | 全loop合計10,000回。bodyへ入る直前に加算。repeatの回数式は一度だけ評価し、非負整数かつ残反復予算以内でなければ開始前に拒否。forは条件を毎回評価し、trueでも残予算0なら停止 |
+| 命令 | sink呼出し1,000回。呼出し直前に加算し、失敗した呼出しも含む。完了成功数は別に保持 |
+
+loopを事前展開せず、ASTを直接評価する。文字列はsource由来で増殖演算を持たず、collection slotや変数への格納回数もwork上限以内。collection参照を深くcopy/serializeしない。注入sink側でも共有・深いcollectionを無制限に展開せず、引数のschema・大きさを検証する必要がある。
+
+結果は`SUCCESS / INVALID / LIMIT / CANCELLED / FAILED`、消費work・反復数・呼出数・成功数を返す。sinkの失敗・例外・取消で直ちに停止し、再送しない。取消signalとthread interruptionをparseのtoken境界、評価node、loop、sink前後で確認する。sinkにも取消signalを渡す。同期sink自体を強制中断したり、wall-clock deadlineを保証する仕組みはこの増分にはなく、sinkが待機中も取消と有限期限に協調することが前提。
+
+**未実装:** 行動handler、worker/job接続、ゲーム入力の所有・解放、server照合、経過時間・観測量予算、実機試験、小関数。今回のsinkは注入interfaceと試験用実装だけで、ゲームを操作しない。`agent_run_script`はcatalog/runtimeへ公開していない。基本行動handlerと停止契約を接続・検証し、基本tool一式と同時公開するまで内部prototypeに留める。現行の公開catalog/schemaをこの内部実装のために変更しない。
 
 ## raw入力
 
