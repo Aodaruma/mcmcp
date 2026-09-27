@@ -229,3 +229,34 @@ budgetは成功予想ではなく、worst-caseを収める停止上限です。�
 schema違反はcatalog順に最大4件、budget不足は不足component名をまとめて返します。提出値や未知property名は診断へ反射されません。mutationやdrop生成後の`TARGET_UNKNOWN`をfield推測で直すのではなく、Actionを区切って新しいframeを観測してください。
 
 具体的な最小JSONは`docs/action-templates/`にあります。template内の座標は例であり、実行時には必ず同じworld/sessionの最新policy-visible recordから置き換えます。
+
+
+## 対象の再生成を待つ有限長押し
+
+`hold_bounded_inputs` は有限時間だけ入力を保持します。`target_guard` の座標・面は最新の配送済み観測からコピーし、`expected_state` は省略しません。完全stateがあればそのまま指定し、`state:null` なら `expected_state:null` と観測のblockをコピーした `expected_block` を指定します。両方にblock IDがある場合は一致が必須です。非公開propertyを推測する必要はありません。
+
+`target_guard.match_face` の既定は `true` で、観測面と実際のcrosshair面も一致させます。雪の採掘などでは `match_face:false` を明示すると、同じ座標・blockへ実際に当たった別の面を許可できます。`face` は観測記録の値として引き続き必須です。許可する入力は `attack` または `attack` と `sneak` の組合せだけで、面により効果が変わる `use` ではfalseを拒否します。通常reach、実BLOCK hit、loaded/world border、手持ち、静止・安全条件、非null時の完全state一致は維持します。実際に当たった面をVanillaへ渡し、照準や面を合成しません。
+
+既定の `repeat_target:false` は厳密停止です。現在のcrosshairが座標・block・指定state（`match_face:true` では面も）から外れると拒否を保持し、同じAction内では再開しません。
+
+`repeat_target:true` と有限の `duration_ticks` を明示すると、同じActionの中で対象の再生成を待てます。対象消失、MISS、entity、別の座標・block・state（`match_face:true` では別の面も）への照準中は新しい採掘・使用を出さず、同じ対象条件が戻ると再開します。照準を自動で動かしません。開始済みの弓・飲食等の使用は一時的な対象不一致だけでは解除せず、次の使用開始には改めて一致を要求します。
+
+回数指定の `max_repetitions` は廃止しました。反復モードでは1 client tickにつき最大1回の新規開始とし、`duration_ticks` から必要な試行枠を算出します。`budget.max_interactions` と、attackでは `budget.max_blocks_broken` に、それぞれ `duration_ticks` 以上を指定してください。時間分に満たない予算は実行前に拒否し、受理したActionを64回・2,048回など時間と独立した回数上限で打ち切りません。最大時間は1,728,000tick・86,400,000ms（24時間）です。通常のVanilla採掘・使用の新規開始ごとに1 interactionを記録し、継続・cooldown・待機tickは追加消費しません。同一tickの重複開始や予算を超える開始は送信前に拒否します。旧 `max_repetitions` fieldと移動だけの反復は拒否します。他のActionの予算上限は変更しません。
+
+例えば、観測済みの雪を現在の照準で最大60tickだけ採掘するnodeは次の形です。座標・面・block・手持ちは実観測から置き換え、programの唯一のbody nodeとして `block_break` capabilityで提出します。
+
+```json
+{
+  "id": "hold_attack", "op": "hold_bounded_inputs", "inputs": ["attack"],
+  "duration_ticks": 60, "repeat_target": true,
+  "target_guard": {
+    "target": {"dimension": "minecraft:overworld", "x": 204, "y": 200, "z": 194},
+    "face": "south", "match_face": false, "expected_state": null, "expected_block": "minecraft:snow"
+  },
+  "selected_item": "minecraft:wooden_shovel"
+}
+```
+
+この例のbudgetは `max_duration_ms:3000`、`max_ticks:60`、`max_interactions:60`、`max_blocks_broken:60`、その他の枠は0です。待機も元の時間・tick予算へ数え、対象復帰で期限を延長しません。実際のsimulation pauseは既存規則通り入力を中立化してactive timeを凍結し、再開時に検証します。
+
+位置・手持ち変更、reach外、health低下、Screen・overlay、安全中断、Esc、OFF、cancel、期限、world/session変更では既存の入力解放経路へ進みます。 対象照合の固定診断は `bounded_input_target_not_focused`、`target_position_changed`、`target_face_changed`、`target_block_changed`、`target_state_changed`、`target_unloaded`、`target_outside_world_border`、`target_out_of_reach`（後続も同じ `bounded_input_` 接頭辞）に分け、面不一致を距離外等と混同しません。入力開始直前にも再検証し、例外や安全違反は解除までラッチします。開始回数は保守的な試行数であり、破壊成功数・回収数・server確認済みeffectではありません。道具交換・耐久保護・収集量保証はありません。

@@ -3,6 +3,7 @@ package dev.aod.mcmcp.agent.action;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler.CompiledProgram;
 import dev.aod.mcmcp.agent.dsl.ActionDslSource;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
+import dev.aod.mcmcp.agent.dsl.ActionDslValidator;
 
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -25,8 +26,8 @@ public final class AgentActionStore {
     public static final double MAX_RECORDED_DISTANCE = 48.0D;
     public static final double MAX_RECORDED_CAMERA_DEGREES = 1_080.0D;
     public static final int MAX_RECORDED_BLOCKS_BROKEN = 64;
-    public static final int MAX_RECORDED_INTERACTIONS = 2_048;
-    public static final long MAX_EFFECT_SEQUENCE = MAX_RECORDED_INTERACTIONS + 2L;
+    public static final int MAX_RECORDED_INTERACTIONS = (int) ActionDslValidator.MAX_BOUNDED_INPUT_TICKS;
+    public static final long MAX_EFFECT_SEQUENCE = ActionDslValidator.MAX_KILL_ZONE_ATTACKS + 2L;
     public static final int MAX_RECORDED_BLOCKS_PLACED = 16;
     public static final int MAX_TERMINAL_WAIT_MILLIS = 25_000;
 
@@ -332,7 +333,11 @@ public final class AgentActionStore {
 
     public synchronized void recordInteraction(UUID actionId) {
         Mutable action = running(actionId);
-        if (action.interactions >= MAX_RECORDED_INTERACTIONS) {
+        var body = action.program.request().program().body();
+        long limit = body.size() == 1 && body.getFirst() instanceof ActionDsl.HoldBoundedInputs hold
+                && hold.repeatTarget() ? Math.min(hold.durationTicks(), MAX_RECORDED_INTERACTIONS)
+                        : ActionDslValidator.MAX_KILL_ZONE_ATTACKS;
+        if (action.interactions >= limit) {
             throw new IllegalStateException("Action interaction record limit exceeded");
         }
         action.interactions++;
@@ -702,7 +707,7 @@ public final class AgentActionStore {
                     || retainedEffects < 0 || retainedEffects > EFFECT_LIMIT
                     || confirmedEffects < 0 || qualifiedEffects < 0 || unknownEffects < 0
                     || confirmedEffects + qualifiedEffects + unknownEffects != totalEffects
-                    || dispatchedAttacks < 0 || dispatchedAttacks > MAX_RECORDED_INTERACTIONS
+                    || dispatchedAttacks < 0 || dispatchedAttacks > ActionDslValidator.MAX_KILL_ZONE_ATTACKS
                     || confirmedAttacks < 0 || unknownAttacks < 0
                     || confirmedAttacks + unknownAttacks > dispatchedAttacks) {
                 throw new IllegalArgumentException("Invalid effect aggregate");

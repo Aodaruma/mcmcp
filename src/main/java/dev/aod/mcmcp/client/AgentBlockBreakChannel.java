@@ -24,6 +24,10 @@ public final class AgentBlockBreakChannel {
             return;
         }
         var gameMode = minecraft.gameMode;
+        if (!inputState.allowsBoundedDispatch()) {
+            if (gameMode != null) gameMode.stopDestroyBlock();
+            return;
+        }
         var player = minecraft.player;
         var level = minecraft.level;
         if (gameMode == null || player == null || level == null
