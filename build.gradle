@@ -127,7 +127,8 @@ neoForge {
                         'cobblestone_generator',
                         'fishing',
                         'kill_zone',
-                        'iron_farm', 'reset'
+                        'iron_farm', 'tunnel_straight16', 'tunnel_straight160',
+                        'tunnel_branches', 'tunnel_hazard', 'reset'
                 ]
                 if (!supportedModes.contains(requestedMode)) {
                     throw new GradleException(

@@ -26,6 +26,7 @@ public final class ActionDslOperationManifest {
                     ActionDsl.OperateKnownCobblestoneGenerator.class,
                     "operate_known_cobblestone_generator",
                     caps("block_break")),
+            fixed(ActionDsl.ExcavateTunnel.class, "excavate_tunnel", caps("movement", "camera", "block_break")),
             inputUnion(
                     ActionDsl.HoldBoundedInputs.class,
                     "hold_bounded_inputs",

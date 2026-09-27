@@ -37,7 +37,11 @@ public record KnownConstructionRequest(ApplyBlockPlanRequest plan) {
             throw new IllegalArgumentException(
                     "construction must be homogeneous place-only or break-only");
         }
-        if (clear != (plan.breakSafety()
+        boolean tunnel = plan.breakSafety() == ApplyBlockPlanRequest.BreakSafety.SAFE_TUNNEL_BLOCK;
+        if (tunnel && plan.steps().size() != 1) {
+            throw new IllegalArgumentException("tunnel child must contain exactly one target");
+        }
+        if (clear != (tunnel || plan.breakSafety()
                 == ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK)) {
             throw new IllegalArgumentException("construction break safety does not match its mode");
         }
@@ -49,7 +53,14 @@ public record KnownConstructionRequest(ApplyBlockPlanRequest plan) {
                     throw new IllegalArgumentException(
                             "construction clear does not admit multi-cell doors");
                 }
-                SafeConstructionBlockPolicy.requireExpectedState(step.expectedBefore());
+                if (tunnel) {
+                    if (!dev.aod.mcmcp.agent.mining.SafeMiningBlocks.allowsState(
+                            step.expectedBefore().blockId(), step.expectedBefore().properties())) {
+                        throw new IllegalArgumentException("unsupported tunnel block");
+                    }
+                } else {
+                    SafeConstructionBlockPolicy.requireExpectedState(step.expectedBefore());
+                }
                 if (!"minecraft:air".equals(step.expectedAfter().blockId())
                         || !step.expectedAfter().properties().isEmpty()
                         || step.requiredItemId().isPresent()
@@ -115,8 +126,8 @@ public record KnownConstructionRequest(ApplyBlockPlanRequest plan) {
     }
 
     public boolean breakOnly() {
-        return plan.breakSafety()
-                == ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK;
+        return plan.breakSafety() == ApplyBlockPlanRequest.BreakSafety.SAFE_CONSTRUCTION_BLOCK
+                || plan.breakSafety() == ApplyBlockPlanRequest.BreakSafety.SAFE_TUNNEL_BLOCK;
     }
 
     public int placementCellCount(int index) {

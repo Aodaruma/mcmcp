@@ -161,6 +161,9 @@ function Invoke-GateTool {
     Add-GateEvent -Event 'tool_call_started' -Detail ([ordered]@{ tool = $Tool })
     if ($null -ne $script:ToolTransport) {
         $structured = & $script:ToolTransport $Tool $Arguments
+        if ($structured -is [array]) {
+            throw "$Tool returned an array instead of structured content"
+        }
         $domainError = Get-ObjectProperty $structured '__domain_error'
         if ($null -ne $domainError) {
             if (-not $ReturnDomainError) {
@@ -217,6 +220,7 @@ function Invoke-GateTool {
         $structured = Get-ObjectProperty $result 'structuredContent'
     }
     if ($null -eq $structured) { throw "$Tool returned no structured content" }
+    if ($structured -is [array]) { throw "$Tool returned an array instead of structured content" }
     Add-GateEvent -Event 'tool_call_completed' -Detail ([ordered]@{ tool = $Tool })
     return $structured
 }

@@ -115,15 +115,20 @@ final class FixturePhase5Autorun {
                 fail("security boundary rejected autorun: " + decision.rejection(), null);
                 return;
             }
-            FixtureArena.load(decision.context());
-            FixtureSecurity.Decision revalidated = FixtureSecurity.reauthorize(decision.context());
-            if (!revalidated.allowed()) {
-                fail("security boundary changed during arena setup: "
-                        + revalidated.rejection(), null);
-                return;
+            if (config.mode().tunnel()) {
+                FixtureTunnelScenario.prepareAutorun(decision.context(), config.mode(),
+                        component -> LOGGER.info("MCMCP Phase 5 fixture: {}", component.getString()));
+            } else {
+                FixtureArena.load(decision.context());
+                FixtureSecurity.Decision revalidated = FixtureSecurity.reauthorize(decision.context());
+                if (!revalidated.allowed()) {
+                    fail("security boundary changed during arena setup: "
+                            + revalidated.rejection(), null);
+                    return;
+                }
+                FixturePhase5Scenario.prepare(revalidated.context(), config.mode(),
+                        component -> LOGGER.info("MCMCP Phase 5 fixture: {}", component.getString()));
             }
-            FixturePhase5Scenario.prepare(revalidated.context(), config.mode(),
-                    component -> LOGGER.info("MCMCP Phase 5 fixture: {}", component.getString()));
             stage = Stage.PREPARED;
             LOGGER.info("MCMCP Phase 5 fixture server setup complete: mode={}",
                     config.mode().wireName());
@@ -133,6 +138,7 @@ final class FixturePhase5Autorun {
     }
 
     private void onClientStopping(ClientStoppingEvent event) {
+        if (config.mode().tunnel()) FixtureTunnelScenario.restoreAfterAutorunFailure();
         if (pauseOptionChanged) {
             event.getClient().options.pauseOnLostFocus = originalPauseOnLostFocus;
             pauseOptionChanged = false;
@@ -141,6 +147,7 @@ final class FixturePhase5Autorun {
 
     private void fail(String reason, RuntimeException exception) {
         stage = Stage.FAILED;
+        if (config.mode().tunnel()) FixtureTunnelScenario.restoreAfterAutorunFailure();
         if (exception == null) {
             LOGGER.error("MCMCP Phase 5 fixture autorun failed: {}. Local authorization remains unchanged",
                     reason);

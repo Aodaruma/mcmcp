@@ -74,6 +74,9 @@ final class AgentObservations {
     SoundPlaybackQueue soundPlaybacks() { return soundPlaybacks; }
     LocalObservationVolume.Snapshot localObservation() { return latestLocalObservation; }
     LocalObservationProjector.CurrentSafety localSafety() { return localSafety; }
+    OmnidirectionalObserver tunnelObserver() {
+        return Objects.requireNonNull(agentObserver, "tunnel observer unavailable");
+    }
     boolean soundPlaybackTruncated() { return soundPlaybackTruncated; }
 
     void startSession(UUID sessionId, String dimension, long revision) {

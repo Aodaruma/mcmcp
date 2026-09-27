@@ -7,7 +7,9 @@
 
 ## 基本の考え方
 
-1回の`agent_start_action`には、開始時点で根拠を確認できる同じ段階の処理だけを入れます。blockを変更すると新しいsurfaceやdropが生じるため、原則として「観測 → 同段階のbatch Action → terminal確認 → 再観測」を繰り返します。`apply_known_block_plan`内で明示した先行entryを後続entryのsupportにする場合だけ、閉じたdependency proofとして同じAction内の新設blockを利用できます。
+**坑道の連続掘進 / Continuous tunnel excavation:** `excavate_tunnel`は、入口から最大160マスを直線で進むか、固定した範囲に枝坑道を作る単独Actionです。デフォルトは直線です。内部の観測・安全確認・採掘・前進はMODが行います。[使い方と制限 / Usage and limits](MCMCP_坑道掘削ガイド.md)を参照してください。実機での受入と性能測定はIssue #21で別途管理します。<br>The mod performs the bounded excavation loop locally, using straight mode by default or a branching layout. Game acceptance and performance measurements remain tracked in Issue #21.
+
+1回の`agent_start_action`には、開始時点で根拠を確認できる同じ段階の処理だけを入れます。blockを変更すると新しいsurfaceやdropが生じるため、原則として「観測 → 同段階のbatch Action → terminal確認 → 再観測」を繰り返します。限定した例外は、`apply_known_block_plan`の明示したsupport依存と、`excavate_tunnel`の認可範囲内で新しく実観測した掘進面です。どちらも汎用nodeの未観測対象を認可するものではありません。
 
 畑仕事の場合は、次の段階を混ぜずに進めます。
 

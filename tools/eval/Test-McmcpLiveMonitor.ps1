@@ -385,7 +385,7 @@ if (-not $launcherText.Contains('.WaitForExit()', [StringComparison]::Ordinal) -
     throw 'visible launcherがchild終了連動契約を満たしていません。'
 }
 if (-not $launcherText.Contains(
-        "[ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy', 'container-inspect-recovery')]",
+        "[ValidateSet('short-regression', 'full-cycle', 'warehouse-smelt', 'hard-building-copy', 'container-inspect-recovery',",
         [StringComparison]::Ordinal)) {
     throw 'visible launcherが固定profileを受理しません。'
 }

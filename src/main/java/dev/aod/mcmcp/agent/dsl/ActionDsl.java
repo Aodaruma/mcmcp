@@ -38,7 +38,7 @@ public final class ActionDsl {
     public sealed interface Node permits NavigateToKnown, ApproachKnownSurface,
             ApproachKnownPlacement,
             FaceKnownPosition, FaceKnownBlockFace, BreakKnownFace, BreakKnownBlock,
-            OperateKnownCobblestoneGenerator,
+            OperateKnownCobblestoneGenerator, ExcavateTunnel,
             HoldBoundedInputs,
             TillKnownBlock, TillKnownBatch, PlantKnownWheat, PlantKnownWheatBatch,
             HarvestKnownWheat, HarvestKnownWheatBatch, ApplyKnownBlockPlan,
@@ -186,6 +186,29 @@ public final class ActionDsl {
             Objects.requireNonNull(toolItem, "toolItem");
             Objects.requireNonNull(expectedDrop, "expectedDrop");
         }
+    }
+
+    /** Fixed-Y, one-wide/two-high excavation; geometry is a finite scope, never hidden evidence. */
+    public record ExcavateTunnel(
+            String id, Position target, BlockFace face, BlockStateSpec expectedState,
+            String toolItem, int lengthBlocks, MiningPattern pattern,
+            int branchLengthBlocks, int branchSpacingBlocks) implements Node {
+        public ExcavateTunnel {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(face, "face");
+            Objects.requireNonNull(expectedState, "expectedState");
+            Objects.requireNonNull(toolItem, "toolItem");
+            Objects.requireNonNull(pattern, "pattern");
+        }
+    }
+
+    public enum MiningPattern {
+        STRAIGHT("straight"), BRANCHES("branches");
+
+        private final String wireName;
+        MiningPattern(String wireName) { this.wireName = wireName; }
+        public String wireName() { return wireName; }
     }
 
     /**

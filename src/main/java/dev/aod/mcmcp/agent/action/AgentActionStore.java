@@ -22,9 +22,9 @@ public final class AgentActionStore {
     public static final int EFFECT_LIMIT = 64;
     /** 24-hour bounded-input Action plus the existing 200-tick terminalization headroom. */
     public static final int MAX_RECORDED_TICKS = 1_728_200;
-    public static final double MAX_RECORDED_DISTANCE = 48.0D;
-    public static final double MAX_RECORDED_CAMERA_DEGREES = 1_080.0D;
-    public static final int MAX_RECORDED_BLOCKS_BROKEN = 64;
+    public static final double MAX_RECORDED_DISTANCE = 2_483.5D;
+    public static final double MAX_RECORDED_CAMERA_DEGREES = 736_880.0D;
+    public static final int MAX_RECORDED_BLOCKS_BROKEN = 1_804;
     public static final int MAX_RECORDED_INTERACTIONS = 2_048;
     public static final long MAX_EFFECT_SEQUENCE = MAX_RECORDED_INTERACTIONS + 2L;
     public static final int MAX_RECORDED_BLOCKS_PLACED = 16;

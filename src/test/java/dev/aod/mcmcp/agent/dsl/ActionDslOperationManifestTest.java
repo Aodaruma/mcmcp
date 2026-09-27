@@ -24,6 +24,7 @@ class ActionDslOperationManifestTest {
                         "break_known_face",
                         "break_known_block",
                         "operate_known_cobblestone_generator",
+                        "excavate_tunnel",
                         "hold_bounded_inputs",
                         "till_known_block",
                         "till_known_batch",

@@ -191,6 +191,25 @@ class AgentActionStoreTest {
     }
 
     @Test
+    void retainsChunkScaleConfirmedBreakTotalsBeyondTheBoundedEffectPage() {
+        var store = new AgentActionStore();
+        var accepted = store.start(program(), source(), Instant.EPOCH);
+        store.markRunning(accepted.actionId());
+        store.beginNode(accepted.actionId(), "hold");
+        for (int index = 0; index < AgentActionStore.MAX_RECORDED_BLOCKS_BROKEN; index++) {
+            store.recordBlockBreak(accepted.actionId());
+            store.recordEffect(accepted.actionId(), "block_break", "block:minecraft:overworld:" + index + ",64,0",
+                    java.util.Map.of("block", "minecraft:stone"), java.util.Map.of("block", "minecraft:air"),
+                    AgentActionStore.Verification.CONFIRMED, 1, 1);
+        }
+        var result = store.get(accepted.actionId());
+        assertThat(result.progress().blocksBroken()).isEqualTo(1_804);
+        assertThat(result.effects()).hasSize(64);
+        assertThat(result.effectAggregate().totalEffects()).isEqualTo(1_804);
+        assertThatThrownBy(() -> store.recordBlockBreak(accepted.actionId())).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
     void passiveFarmlandSettlingIsAuditedWithoutInflatingInputDistance() {
         var store = new AgentActionStore();
         var accepted = store.start(program(), source(), Instant.EPOCH);

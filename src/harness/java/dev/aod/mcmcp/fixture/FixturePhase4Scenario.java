@@ -73,6 +73,7 @@ final class FixturePhase4Scenario {
     }
 
     static void prepare(FixtureSecurity.Context context, Mode mode, Consumer<Component> output) {
+        FixtureTunnelScenario.restoreForReplacement(context);
         FixtureCombinedWheatScenario.rollbackForReplacement(context);
         FixturePhase2Scenario.stop();
         FixturePhase4RouteBlocker.stop();

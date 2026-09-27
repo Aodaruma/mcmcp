@@ -5,6 +5,8 @@ import dev.aod.mcmcp.agent.action.AgentPlannerGeometry.AimError;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
 import dev.aod.mcmcp.agent.dsl.ActionDslValidator;
+import dev.aod.mcmcp.agent.mining.TunnelGeometry;
+import dev.aod.mcmcp.agent.mining.SafeMiningBlocks;
 import dev.aod.mcmcp.agent.navigation.DeterministicAStar;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
 import dev.aod.mcmcp.agent.navigation.NavCell;
@@ -159,9 +161,70 @@ public final class AgentPrimitivePlanner {
             ToLongFunction<ActionDsl.Position> surfaceRevisionBarrier,
             BooleanSupplier canContinue,
             PlacementStateResolver placementStates) {
+        if (program.body().size() == 1
+                && program.body().getFirst() instanceof ActionDsl.ExcavateTunnel tunnel) {
+            return analyzeTunnel(
+                    tunnel, map, initialPose, latestFrame, surfaceRevisionBarrier);
+        }
         return AgentProgramPlanner.analyze(
                 program, map, pathfinder, initialPose, latestFrame, maxCameraDegreesPerTick,
                 visualBarrierWorldRevision, surfaceRevisionBarrier, canContinue, placementStates);
+    }
+
+    private static Analysis analyzeTunnel(
+            ActionDsl.ExcavateTunnel operation,
+            KnownTraversabilitySnapshot map,
+            Pose initialPose,
+            Optional<ObservationFrame> latestFrame,
+            ToLongFunction<ActionDsl.Position> surfaceRevisionBarrier) {
+        Objects.requireNonNull(operation, "operation");
+        Objects.requireNonNull(map, "map");
+        Objects.requireNonNull(initialPose, "initialPose");
+        Objects.requireNonNull(latestFrame, "latestFrame");
+        Objects.requireNonNull(surfaceRevisionBarrier, "surfaceRevisionBarrier");
+        if (!SafeMiningBlocks.allowsState(
+                operation.expectedState().block(), operation.expectedState().properties())
+                || !SafeMiningBlocks.allowsTool(operation.toolItem())) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Tunnel entrance state or tool is outside the mining policy");
+        }
+        TunnelGeometry.Plan tunnel = TunnelGeometry.plan(
+                operation.target(), operation.face(), operation.lengthBlocks(),
+                operation.pattern() == ActionDsl.MiningPattern.BRANCHES,
+                operation.branchLengthBlocks(), operation.branchSpacingBlocks());
+        if (!tunnelEntrancePose(initialPose, tunnel.startFeet())) {
+            throw new PlanningException(
+                    Code.TARGET_UNKNOWN,
+                    "Tunnel requires a centered feet cell directly outside its lower entrance face");
+        }
+        long barrier = surfaceRevisionBarrier.applyAsLong(operation.target());
+        AgentSurfaceEvidence.MutationSurface surface = AgentSurfaceEvidence.requireMutationSurface(
+                map, latestFrame, List.of(initialPose), operation.target(), barrier,
+                operation.expectedState().block(),
+                value -> value.face().name().equals(operation.face().name())
+                        && AgentSurfaceEvidence.exactObservedState(
+                                value, operation.expectedState()),
+                "Tunnel entrance requires a current delivered exact lower-wall face and state");
+        KnownSurface known = surface.surface();
+        MutationAim aim = new MutationAim(
+                operation.target(), operation.face(), surface.point());
+        return new Analysis(
+                Map.of(operation.id(), ActionDslCompiler.intrinsicExcavateTunnelCost(operation)),
+                Map.of(), Set.of(), Set.of(), Set.of(known),
+                Map.of(operation.id(), aim), Map.of());
+    }
+
+    /** Shared geometric entrance gate; runtime must additionally prove current local safety. */
+    public static boolean tunnelEntrancePose(Pose pose, TunnelGeometry.Cell start) {
+        return pose.cell().dimension().equals(start.dimension())
+                && pose.cell().x() == start.x() && pose.cell().y() == start.y()
+                && pose.cell().z() == start.z()
+                && Math.hypot(pose.x() - start.x() - 0.5D,
+                        pose.z() - start.z() - 0.5D)
+                        + pose.horizontalPositionError() <= 0.25D
+                && Math.abs(pose.y() - start.y())
+                        + Math.max(pose.yErrorBelow(), pose.yErrorAbove()) <= 0.05D;
     }
 
     public static RoutePlan requireRoute(

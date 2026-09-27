@@ -11,9 +11,21 @@ Hard safety boundary:
 - the singleplayer owner must be the only connected player;
 - worlds opened to LAN, dedicated servers, remote multiplayer, non-Overworld dimensions, and
   off-server-thread calls are rejected;
-- block writes are limited to the absolute inclusive box `192,199,192` through `207,207,207`;
+- block writes are limited to the mode-specific absolute inclusive boxes below; the generic
+  `FixtureArena` setter still rejects writes outside `192,199,192` through `207,207,207`;
 - commands accept no coordinates, block identifiers, item identifiers, or counts;
-- all implementation is under the `harness` source set. Production `main` cannot import it.
+- fixture behavior remains under the `harness` source set, which production `main` cannot import.
+  Production contains only fixed, read-only/config bridge entry points that require both
+  `mcmcp.testHarness=true` and the separately packaged fixture mod; they expose no world mutation.
+
+| Mode / モード | Allowed block-write box / ブロック書き込み範囲（両端を含む） | Chunk loading / チャンク読み込み |
+| --- | --- | --- |
+| Ordinary Phase 1–5 / 通常の Phase 1–5（下記の専用モードを除く） | `192,199,192`–`207,207,207`（generic arena。Phase 5作業範囲はその内側） | 通常のワールド読み込み |
+| `iron_farm` | 通常arenaに加え、専用lab `224,198,224`–`288,224,288` | 通常のワールド読み込み |
+| `tunnel_straight16`, `tunnel_straight160`, `tunnel_branches`, `tunnel_hazard` | 専用volume `256,196,248`–`418,203,264`、22,168ブロック。通常arenaは変更しない | chunk X=`16..26`, Z=`15..16` の22個だけを一時的にforce-load |
+
+各専用setterはそれぞれの閉じた範囲を検証します。上表はfixtureの直接書き込み範囲です。
+Vanillaの流体・ブロック更新による間接的な変化は別に扱います。
 
 Run `./gradlew runHarnessClient`, create or open a disposable singleplayer world, then use:
 
@@ -158,6 +170,50 @@ For the combined generalization smoke arena, run:
 This passes only the closed `mcmcp.fixture.phase5.mode` value. After server-authoritative setup and
 client slot synchronization, autorun stops in setup-only state. Open any Screen and press the MCMCP
 status button once before the live test; that explicit UI action is the local authorization.
+
+Tunnel acceptance uses four independent one-shot baselines. Start a fresh disposable client for
+each mode:
+
+```powershell
+.\gradlew.bat runHarnessClient -PmcmcpFixturePhase5Mode=tunnel_straight16
+.\gradlew.bat runHarnessClient -PmcmcpFixturePhase5Mode=tunnel_straight160
+.\gradlew.bat runHarnessClient -PmcmcpFixturePhase5Mode=tunnel_branches
+.\gradlew.bat runHarnessClient -PmcmcpFixturePhase5Mode=tunnel_hazard
+```
+
+The modes prepare a private fixed volume at `256,196,248` through `418,203,264`, place one new
+netherite pickaxe in hotbar slot 0, clear every other inventory slot, restore full health and hunger,
+and emit a setup-only status. Before any chunk change, they save all 22 original forced flags and
+temporarily force-load those chunks. A harness-only, in-memory lease also saves the current
+observation setting and applies **512 rays/tick**; it does not edit the production config file.
+`tunnel_status.ready` requires that override. No running-gameplay callback edits blocks, inventory,
+player pose, or input.
+Use `/mcmcp_fixture phase5 tunnel_status` before T0 and
+`/mcmcp_fixture phase5 tunnel_oracle` after the Action. Both commands are read-only and emit
+`mcmcp_fixture_tunnel_v1` JSON with the same random `setupId`. The oracle measures excavated
+two-block columns independently from the Action's visited-route counter. In `tunnel_hazard`, the
+fourth column is excavated but the floor gap prevents move four, so the fixed result is four
+excavated columns, three moves, eight confirmed breaks, and final feet block `260,200,256`.
+
+Action と評価leaseの terminal を記録し、上記の読み取り専用oracleを保存してから
+`/mcmcp_fixture phase5 tunnel_finish` を実行してください。終了時は元の観測設定と22個の
+forced状態を復元します。最初からforcedだったchunkは維持します。準備失敗、別fixtureへの
+置換、client終了、server停止時にも復元し、失敗した復元は所有ledgerを保持してserver lifecycleで
+再試行します。ブロック・inventoryの原状復旧はこのコマンドでは行いません。削除可能なcloneを
+再起動して同じone-shot baselineを再生成します。status/oracle自体は設定を変更しません。
+
+After both the Action and evaluation lease are terminal, save the read-only oracle and run
+`/mcmcp_fixture phase5 tunnel_finish`. This restores the original observation rate and every saved
+forced-chunk flag, including pre-existing `true` flags. Preparation failure, fixture replacement,
+client shutdown and server stopping also restore these resources; failed restoration retains its
+ledger for lifecycle retry. It does not restore blocks or inventory. Restart the disposable clone
+to regenerate its one-shot baseline. Status and oracle commands remain read-only.
+
+Run `Invoke-McmcpTunnelCapabilityGate.ps1` with `-FixtureStatusPath` pointing to the pre-run status
+JSON file. The gate records its SHA-256 and binds `setupId`, `mode`, and `worldSessionId` to the
+public client session. Then join the gate, status and
+oracle artifacts using `Test-McmcpTunnelAcceptance.ps1`. Fixture commands do not grant permission
+to mutate the world and are not available in production source sets.
 
 The container partial-contract modes are independent one-shot baselines. Use a fresh client restart
 for each mode:
