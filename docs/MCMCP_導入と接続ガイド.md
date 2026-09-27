@@ -44,7 +44,7 @@ minecraft\config\mcmcp\mcp-token
 
 作業を止める場合は、ゲーム内ボタンをもう一度押してOFFにする。実行中のAction、保持中のキー、左右クリックはすべて解除される。
 
-自動設定では、Codexの`~/.codex/config.toml`またはClaude Codeの`~/.claude.json`を更新する。既存ファイルは初回だけ`.mcmcp.bak`へ退避する。手動設定・解釈できない設定に加え、**同じURL・portでも別Prismプロファイルのhelperを参照する登録は上書きしない**。確認画面には秘密値を含まない参照診断を表示する。token自体は設定ファイルへ複製せず、MCMCPが登録するローカルheader helperが接続時にowner-onlyのtokenファイルから読み取る。
+自動設定では、Codexの`~/.codex/config.toml`またはClaude Codeの`~/.claude.json`を更新する。既存ファイルは初回だけ`.mcmcp.bak`へ退避する。手動設定・解釈できない設定に加え、**同じURL・portでも別Prismプロファイルのhelperを参照する登録は上書きしない**。同時起動した別ゲームとの競合も、設定ファイル横の`.mcmcp.lock`を用いた排他中に登録を再確認して防ぐ。このlockファイルは再利用するため残す。確認画面には秘密値を含まない参照診断を表示する。token自体は設定ファイルへ複製せず、MCMCPが登録するローカルheader helperが接続時にowner-onlyのtokenファイルから読み取る。
 
 ### 複数Prismプロファイル・検証専用Codex
 

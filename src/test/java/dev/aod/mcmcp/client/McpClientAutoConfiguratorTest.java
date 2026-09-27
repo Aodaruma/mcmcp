@@ -6,6 +6,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -51,6 +55,55 @@ class McpClientAutoConfiguratorTest {
                 McpClientAutoConfigurator.Target.CODEX, game, home, 8765).success()).isTrue();
         assertThat(Files.readString(config).split("BEGIN MCMCP AUTO-CONFIG", -1))
                 .hasSize(2);
+    }
+
+    @Test
+    void managedCodexRegistrationCoexistsWithAnUnrelatedMultilineValue() throws Exception {
+        Path game = gameWithToken();
+        Path home = temporary.resolve("multiline-home");
+        Path config = home.resolve(".codex/config.toml");
+        Files.createDirectories(config.getParent());
+        String unrelated = "notice = \"\"\"\nWelcome to this profile\n\"\"\"\n";
+        Files.writeString(config, unrelated);
+
+        assertThat(McpClientAutoConfigurator.configure(
+                McpClientAutoConfigurator.Target.CODEX, game, home, 8765).success()).isTrue();
+        assertThat(McpClientAutoConfigurator.diagnose(
+                McpClientAutoConfigurator.Target.CODEX, game, home, 8765)).isEqualTo("configured");
+        assertThat(McpClientAutoConfigurator.configure(
+                McpClientAutoConfigurator.Target.CODEX, game, home, 8765).success()).isTrue();
+        assertThat(Files.readString(config)).contains(unrelated.strip());
+    }
+
+    @Test
+    void concurrentSamePortProfilesCannotReplaceTheWinner() throws Exception {
+        for (var target : List.of(McpClientAutoConfigurator.Target.CODEX,
+                McpClientAutoConfigurator.Target.CLAUDE_CODE)) {
+            Path first = gameWithToken("parallel/" + target + "/first");
+            Path second = gameWithToken("parallel/" + target + "/second");
+            Path home = temporary.resolve("parallel-home-" + target);
+            var start = new CountDownLatch(1);
+            try (var workers = Executors.newFixedThreadPool(2)) {
+                var a = workers.submit(() -> {
+                    start.await();
+                    return McpClientAutoConfigurator.configure(target, first, home, 8765);
+                });
+                var b = workers.submit(() -> {
+                    start.await();
+                    return McpClientAutoConfigurator.configure(target, second, home, 8765);
+                });
+                start.countDown();
+                var results = List.of(a.get(10, TimeUnit.SECONDS), b.get(10, TimeUnit.SECONDS));
+                assertThat(results.stream().filter(McpClientAutoConfigurator.Result::success).count())
+                        .isEqualTo(1L);
+                assertThat(results.stream().filter(result -> "another_profile".equals(result.code())).count())
+                        .isEqualTo(1L);
+                assertThat(McpClientAutoConfigurator.diagnose(target, first, home, 8765))
+                        .isEqualTo(results.get(0).success() ? "configured" : "another_profile");
+                assertThat(McpClientAutoConfigurator.diagnose(target, second, home, 8765))
+                        .isEqualTo(results.get(1).success() ? "configured" : "another_profile");
+            }
+        }
     }
 
     @Test

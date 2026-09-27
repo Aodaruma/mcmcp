@@ -7,10 +7,14 @@ import com.electronwill.nightconfig.core.UnmodifiableConfig;
 import com.electronwill.nightconfig.toml.TomlParser;
 
 import java.io.IOException;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.StandardCopyOption;
 import java.util.Objects;
 import java.util.regex.Matcher;
@@ -27,7 +31,7 @@ public final class McpClientAutoConfigurator {
 
     private McpClientAutoConfigurator() { }
 
-    public static Result configure(
+    public static synchronized Result configure(
             Target target, Path gameDirectory, Path userHome, int port) {
         Objects.requireNonNull(target, "target");
         Objects.requireNonNull(gameDirectory, "gameDirectory");
@@ -45,16 +49,25 @@ public final class McpClientAutoConfigurator {
                 return new Result(false, "token_unavailable", token);
             }
             Path file = configPath(target, gameDirectory, userHome);
-            var registration = readRegistration(target, file);
-            Path helperPath = helperPath(token.getParent());
-            String conflict = registrationConflict(registration, helperPath);
-            if (conflict != null) return new Result(false, conflict, file);
-            String helper = installHeaderHelper(token.getParent());
-            String endpoint = ENDPOINT.formatted(port);
-            return switch (target) {
-                case CODEX, CODEX_ISOLATED -> configureCodex(file, endpoint, helper);
-                case CLAUDE_CODE -> configureClaudeCode(file, endpoint, helper);
-            };
+            Files.createDirectories(file.getParent());
+            Path lockPath = file.resolveSibling(file.getFileName() + ".mcmcp.lock");
+            if (Files.isSymbolicLink(lockPath)) return new Result(false, "write_failed", file);
+            // The persistent sidecar lock serializes separate Minecraft processes. Recheck
+            // ownership while holding it; atomic replacement alone does not protect read-modify-write.
+            try (FileChannel channel = FileChannel.open(lockPath,
+                    StandardOpenOption.CREATE, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
+                    FileLock ignored = channel.lock()) {
+                var registration = readRegistration(target, file);
+                Path helperPath = helperPath(token.getParent());
+                String conflict = registrationConflict(registration, helperPath);
+                if (conflict != null) return new Result(false, conflict, file);
+                String helper = installHeaderHelper(token.getParent());
+                String endpoint = ENDPOINT.formatted(port);
+                return switch (target) {
+                    case CODEX, CODEX_ISOLATED -> configureCodex(file, endpoint, helper);
+                    case CLAUDE_CODE -> configureClaudeCode(file, endpoint, helper);
+                };
+            }
         } catch (IOException | RuntimeException failure) {
             return new Result(false, "write_failed", null);
         }
@@ -244,8 +257,7 @@ public final class McpClientAutoConfigurator {
         }
         String block = blocks.group().strip();
         String outside = text.substring(0, blocks.start()) + text.substring(blocks.end());
-        if (blocks.find() || outside.contains(BEGIN) || outside.contains(END)
-                || text.contains("\"\"\"") || text.contains("'''")) {
+        if (blocks.find() || outside.contains(BEGIN) || outside.contains(END)) {
             return Registration.unknown();
         }
         String[] lines = block.split("\\R");
