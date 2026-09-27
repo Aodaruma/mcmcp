@@ -136,7 +136,7 @@ final class AgentObservations {
         ObservationFilter filter = RuntimeArguments.observationFilterArgument(arguments);
         try {
             ObservationPage page = agentObservationFrames.page(
-                    RuntimeArguments.stringArgument(arguments, "frame_id"),
+                    nullableFrameId(arguments.get("frame_id")),
                     kinds,
                     filter,
                     cursor,
@@ -149,6 +149,13 @@ final class AgentObservations {
         } catch (ObservationStoreException failure) {
             throw observationFailure(failure);
         }
+    }
+
+    private static String nullableFrameId(Object value) {
+        if (value == null || value instanceof String) {
+            return (String) value;
+        }
+        throw new IllegalArgumentException("frame_id must be a string or null");
     }
 
     private PreparedObservationResponse releaseObservationCursor(String cursor) {

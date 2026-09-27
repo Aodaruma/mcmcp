@@ -45,6 +45,8 @@ side-effect profileをitem IDだけから推測せず、trusted Runtimeが実sta
 
 ## 観測を絞る
 
+最初のpageは`frame_id=null,cursor=null`で呼ぶと、呼出し時点で最新のpublish済みimmutable frameを原子的に選べます。responseの具体的な`frame_id`を保持し、`next_cursor`がある続きpageでは両方をそのまま渡してください。frame未生成は`NO_FRAME`、保持外の具体IDは`FRAME_EXPIRED`、不正なcursorは`INVALID_CURSOR`です。この選択は観測時刻やTTLを更新しません。
+
 `agent_get_observation.filter`は、既にpolicy-visibleな同一frameから不要なrecordを削るdelivery-only filterです。record kindに適用可能な複数条件はANDで適用され、観測範囲やAction認可を拡張しません。
 
 `next_cursor`があるqueryを途中で打ち切るときは、`agent_get_observation`へ`{"schema_version":1,"release_cursor":"<next_cursor>"}`だけを渡します。`release_status=released`なら未完了leaseを解放済み、`completed`なら既に最終pageまで完了しており変更なしです。不明・期限切れ・別world sessionのcursorはすべて`INVALID_CURSOR`になります。解放呼出しは観測配送としてACKされず、以前に配送済みの認可やTTLも更新しません。
