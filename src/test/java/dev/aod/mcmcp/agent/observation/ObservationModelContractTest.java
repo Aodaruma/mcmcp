@@ -104,6 +104,32 @@ class ObservationModelContractTest {
     }
 
     @Test
+    void observationCursorReleaseHasAnExclusiveCatalogRequestAndBoundedResponse()
+            throws Exception {
+        JsonObject catalog = JsonParser.parseString(Files.readString(catalogPath())).getAsJsonObject();
+        JsonObject tool = tool(catalog, "agent_get_observation");
+        JsonObject input = tool.getAsJsonObject("inputSchema");
+        JsonObject output = tool.getAsJsonObject("outputSchema");
+
+        JsonElement release = JsonParser.parseString("""
+                {"schema_version":1,"release_cursor":"opaque-cursor"}
+                """);
+        JsonElement mixed = JsonParser.parseString("""
+                {"schema_version":1,"release_cursor":"opaque-cursor",
+                 "frame_id":"obs-0000000000000001","kinds":["visible_surface"],
+                 "cursor":null,"limit":1}
+                """);
+        assertThat(matches(input, release)).isTrue();
+        assertThat(matches(input, mixed)).isFalse();
+        assertThat(matches(output, JsonParser.parseString(
+                "{\"schema_version\":1,\"release_status\":\"released\"}"))).isTrue();
+        assertThat(matches(output, JsonParser.parseString(
+                "{\"schema_version\":1,\"release_status\":\"completed\"}"))).isTrue();
+        assertThat(matches(output, JsonParser.parseString(
+                "{\"schema_version\":1,\"release_status\":\"unknown\"}"))).isFalse();
+    }
+
+    @Test
     void frameAndSummaryDefensivelyCopyMutableInputs() {
         var mutableRecords = new ArrayList<ObservationRecord>();
         mutableRecords.add(surface(95, 0));

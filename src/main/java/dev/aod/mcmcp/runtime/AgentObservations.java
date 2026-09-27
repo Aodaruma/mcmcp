@@ -10,6 +10,7 @@ import dev.aod.mcmcp.agent.observation.DeliveredPolicyEvidenceStore;
 import dev.aod.mcmcp.agent.observation.ObservationFilter;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationFrameStore;
+import dev.aod.mcmcp.agent.observation.ObservationFrameStore.CursorReleaseStatus;
 import dev.aod.mcmcp.agent.observation.ObservationKind;
 import dev.aod.mcmcp.agent.observation.ObservationPage;
 import dev.aod.mcmcp.agent.observation.ObservationStoreException;
@@ -97,19 +98,28 @@ final class AgentObservations {
         if (agentObserver != null) agentObserver.reset();
     }
 
-    PreparedObservationPage getAgentObservation(Map<String, Object> arguments) {
+    PreparedObservationResponse getAgentObservation(Map<String, Object> arguments) {
         Set<String> required = Set.of("schema_version", "frame_id", "kinds", "cursor", "limit");
         RuntimeArguments.requireAllowedKeys(arguments, "agent_get_observation",
-                Set.of("schema_version", "frame_id", "kinds", "filter", "cursor", "limit"));
+                Set.of("schema_version", "frame_id", "kinds", "filter", "cursor", "limit",
+                        "release_cursor"));
+        if (RuntimeArguments.intArgument(arguments, "schema_version") != 1) {
+            throw new IllegalArgumentException("schema_version must be 1");
+        }
+        if (arguments.containsKey("release_cursor")) {
+            if (!arguments.keySet().equals(Set.of("schema_version", "release_cursor"))) {
+                throw new IllegalArgumentException(
+                        "release_cursor must not be combined with page query fields");
+            }
+            return releaseObservationCursor(
+                    RuntimeArguments.stringArgument(arguments, "release_cursor"));
+        }
         if (!arguments.keySet().containsAll(required)
                 || arguments.size() < required.size()
                 || arguments.size() > required.size() + 1) {
             throw new IllegalArgumentException(
                     "agent_get_observation must contain schema_version, frame_id, kinds, cursor, "
                             + "and limit; filter is optional");
-        }
-        if (RuntimeArguments.intArgument(arguments, "schema_version") != 1) {
-            throw new IllegalArgumentException("schema_version must be 1");
         }
         Object rawKinds = arguments.get("kinds");
         if (!(rawKinds instanceof List<?> values)) {
@@ -135,14 +145,30 @@ final class AgentObservations {
             Map<String, Object> wirePage = ObservationWireMapper.page(page, surface ->
                     deliveredAgentEvidence.preparedPlacementStateRef(receiptId, surface)
                             .orElse(null));
-            return new PreparedObservationPage(wirePage, receiptId);
+            return new PreparedObservationResponse(wirePage, receiptId);
         } catch (ObservationStoreException failure) {
-            throw new RuntimeInvocationException(
-                    failure.code().name().toLowerCase(Locale.ROOT),
-                    failure.getMessage(),
-                    failure.code() != ObservationStoreException.Code.INVALID_CURSOR,
-                    Map.of());
+            throw observationFailure(failure);
         }
+    }
+
+    private PreparedObservationResponse releaseObservationCursor(String cursor) {
+        try {
+            CursorReleaseStatus status = agentObservationFrames.releaseCursor(cursor);
+            return new PreparedObservationResponse(Map.of(
+                    "schema_version", 1,
+                    "release_status", status.name().toLowerCase(Locale.ROOT)), null);
+        } catch (ObservationStoreException failure) {
+            throw observationFailure(failure);
+        }
+    }
+
+    private static RuntimeInvocationException observationFailure(
+            ObservationStoreException failure) {
+        return new RuntimeInvocationException(
+                failure.code().name().toLowerCase(Locale.ROOT),
+                failure.getMessage(),
+                failure.code() != ObservationStoreException.Code.INVALID_CURSOR,
+                Map.of());
     }
 
     void abandonUnconfirmedDelivery(RuntimeReply reply) {
@@ -153,12 +179,11 @@ final class AgentObservations {
         }
     }
 
-    record PreparedObservationPage(Map<String, Object> wirePage, UUID receiptId) {
-        PreparedObservationPage {
-            wirePage = java.util.Collections.unmodifiableMap(
+    record PreparedObservationResponse(Map<String, Object> wireResponse, UUID receiptId) {
+        PreparedObservationResponse {
+            wireResponse = java.util.Collections.unmodifiableMap(
                     new java.util.LinkedHashMap<>(
-                            Objects.requireNonNull(wirePage, "wirePage")));
-            Objects.requireNonNull(receiptId, "receiptId");
+                            Objects.requireNonNull(wireResponse, "wireResponse")));
         }
     }
 
