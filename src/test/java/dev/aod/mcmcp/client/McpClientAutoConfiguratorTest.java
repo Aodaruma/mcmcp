@@ -136,7 +136,9 @@ class McpClientAutoConfiguratorTest {
                 Files.writeString(gate, "go");
                 waitForFile(firstAttempt);
                 waitForFile(secondAttempt);
-                Thread.sleep(300);
+                Thread.sleep(1_000);
+                assertThat(a.isAlive()).isTrue();
+                assertThat(b.isAlive()).isTrue();
                 assertThat(firstResult).doesNotExist();
                 assertThat(secondResult).doesNotExist();
             }
