@@ -1670,6 +1670,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             Minecraft minecraft,
             WorldSessionTracker.Snapshot session,
             Map<String, Object> arguments) {
+        Set<String> sections = requestedStateSections(arguments);
         var lock = arming.snapshot(session.worldSessionId());
         var inventory = new LinkedHashMap<String, Integer>();
         var standardPotions = new LinkedHashMap<StandardPotionKey, Integer>();
@@ -1677,9 +1678,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         Map<String, Object> merchantOffers = null;
         Map<String, Object> knownMenu = null;
         Map<String, Object> world = null;
+        Map<String, Object> playerPayload = null;
+        Map<String, Object> hotbarPayload = null;
 
         if (session.worldReady() && minecraft.player != null && minecraft.level != null) {
             var player = minecraft.player;
+            playerPayload = playerStatePayload(player, session.dimension());
+            hotbarPayload = hotbarPayload(player.getInventory());
             world = new LinkedHashMap<>();
             world.put("dimension", session.dimension());
             world.put("session_id", session.worldSessionId().toString());
@@ -1708,20 +1713,24 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     .toList());
 
             var playerInventory = player.getInventory();
-            for (int slot = 0; slot < playerInventory.getContainerSize(); slot++) {
-                var stack = playerInventory.getItem(slot);
-                if (!stack.isEmpty()) {
-                    placementStacks.add(stack.copy());
-                    String item = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
-                    inventory.merge(item, stack.getCount(), Integer::sum);
-                    StandardPotionPolicy.identify(stack).ifPresent(identity ->
-                            standardPotions.merge(
-                                    new StandardPotionKey(identity.item(), identity.potion()),
-                                    identity.count(),
-                                    Integer::sum));
+            if (sections.contains("inventory") || sections.contains("standard_potions")
+                    || sections.contains("placement_materials")) {
+                for (int slot = 0; slot < playerInventory.getContainerSize(); slot++) {
+                    var stack = playerInventory.getItem(slot);
+                    if (!stack.isEmpty()) {
+                        if (sections.contains("placement_materials")) placementStacks.add(stack.copy());
+                        String item = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+                        inventory.merge(item, stack.getCount(), Integer::sum);
+                        StandardPotionPolicy.identify(stack).ifPresent(identity ->
+                                standardPotions.merge(
+                                        new StandardPotionKey(identity.item(), identity.potion()),
+                                        identity.count(),
+                                        Integer::sum));
+                    }
                 }
             }
-            if (minecraft.gui.screen() instanceof MerchantScreen screen
+            if (sections.contains("merchant_offers")
+                    && minecraft.gui.screen() instanceof MerchantScreen screen
                     && screen.getMenu() == player.containerMenu) {
                 var snapshot = MerchantOfferSignals.global().latestAfter(
                                 minecraft.level,
@@ -1734,7 +1743,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 merchantOffers = ActionWireMapper.merchantOfferPayload(
                         session.worldSessionId(), screen.getMenu().containerId, open, snapshot);
             }
-            if (lock.mode() == LocalArmingState.Mode.READY) {
+            if (sections.contains("known_menu") && lock.mode() == LocalArmingState.Mode.READY) {
                 knownMenu = ActionWireMapper.knownMenuPayload(
                         minecraft, session, ContainerSyncSignals.global(), knownMenuOperationRefs);
             }
@@ -1753,8 +1762,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         "potion", entry.getKey().potion(),
                         "count", entry.getValue()))
                 .toList();
-        var result = new LinkedHashMap<>(
-                ActionWireMapper.statePayload(
+        Map<String, Object> details = sections.stream().anyMatch(Set.of(
+                "control", "world", "inventory", "standard_potions", "policy")::contains)
+                ? ActionWireMapper.statePayload(
                         lock,
                         paused,
                         world,
@@ -1762,11 +1772,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         standardPotionPayload,
                         minecraft.isMultiplayerServer() && multiplayerPolicyAllows(minecraft),
                         McmcpClientConfig.visualRadiusBlocks(),
-                        McmcpClientConfig.raysPerTick()));
-        result.put(
-                "entity_attack_consent",
-                ActionWireMapper.entityAttackConsentPayload(entityAttackConsentSnapshot(session, lock)));
-        if (!arguments.isEmpty()) {
+                        McmcpClientConfig.raysPerTick())
+                : Map.of();
+        var result = new LinkedHashMap<>(ActionWireMapper.lightweightStatePayload(
+                playerPayload, hotbarPayload, details, sections));
+        if (sections.contains("entity_attack_consent")) {
+            result.put("entity_attack_consent",
+                    ActionWireMapper.entityAttackConsentPayload(entityAttackConsentSnapshot(session, lock)));
+        }
+        if (arguments.containsKey("query")) {
             RuntimeFailures.requireReady(session);
             result.put("recipe_query", getRecipes(minecraft, session, arguments));
         }
@@ -1776,19 +1790,72 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (knownMenu != null) {
             result.put("known_menu", knownMenu);
         }
-        result.put("observation", agentObservations.frames().announceLatestSummary()
-                .map(ObservationWireMapper::summary)
-                .orElse(null));
-        result.put("action", agentActions.latestSummary()
-                .map(summary -> {
-                    var value = new LinkedHashMap<String, Object>();
-                    value.put("action_id", summary.actionId().toString());
-                    value.put("state", summary.state().wireName());
-                    value.put("end_reason", summary.endReason());
-                    return value;
-                })
-                .orElse(null));
-        return InventoryPlacementMaterials.prepare(result, placementStacks, agentObservations.deliveredEvidence());
+        if (sections.contains("observation")) {
+            result.put("observation", agentObservations.frames().announceLatestSummary()
+                    .map(ObservationWireMapper::summary)
+                    .orElse(null));
+        }
+        if (sections.contains("action")) {
+            result.put("action", agentActions.latestSummary()
+                    .map(summary -> {
+                        var value = new LinkedHashMap<String, Object>();
+                        value.put("action_id", summary.actionId().toString());
+                        value.put("state", summary.state().wireName());
+                        value.put("end_reason", summary.endReason());
+                        return value;
+                    })
+                    .orElse(null));
+        }
+        if (sections.contains("placement_materials")) {
+            return InventoryPlacementMaterials.prepare(
+                    result, placementStacks, agentObservations.deliveredEvidence());
+        }
+        return RuntimeReply.success(result);
+    }
+
+    private static Set<String> requestedStateSections(Map<String, Object> arguments) {
+        Object value = arguments.get("sections");
+        if (!(value instanceof List<?> requested)) return Set.of();
+        var sections = new java.util.LinkedHashSet<String>();
+        for (Object section : requested) {
+            if (section instanceof String name) sections.add(name);
+        }
+        return Set.copyOf(sections);
+    }
+
+    private static Map<String, Object> playerStatePayload(
+            net.minecraft.client.player.LocalPlayer player, String dimension) {
+        var result = new LinkedHashMap<String, Object>();
+        result.put("dimension", dimension);
+        result.put("position", Map.of("x", player.getX(), "y", player.getY(), "z", player.getZ()));
+        result.put("yaw", Mth.wrapDegrees(player.getYRot()));
+        result.put("pitch", Mth.clamp(player.getXRot(), -90.0F, 90.0F));
+        result.put("health", player.getHealth());
+        result.put("absorption", player.getAbsorptionAmount());
+        result.put("hunger", player.getFoodData().getFoodLevel());
+        result.put("air", player.getAirSupply());
+        result.put("max_air", player.getMaxAirSupply());
+        result.put("on_fire", player.isOnFire());
+        result.put("submerged", player.isUnderWater());
+        result.put("status_effects", player.getActiveEffects().stream()
+                .map(effect -> effect.getEffect().getRegisteredName()).distinct().sorted().limit(64).toList());
+        return Map.copyOf(result);
+    }
+
+    private static Map<String, Object> hotbarPayload(net.minecraft.world.entity.player.Inventory inventory) {
+        int selected = inventory.getSelectedSlot();
+        var slots = new ArrayList<Map<String, Object>>(9);
+        for (int slot = 0; slot < 9; slot++) {
+            var stack = inventory.getItem(slot);
+            var value = new LinkedHashMap<String, Object>();
+            value.put("slot", slot);
+            value.put("selected", slot == selected);
+            value.put("item", stack.isEmpty()
+                    ? null : BuiltInRegistries.ITEM.getKey(stack.getItem()).toString());
+            value.put("count", stack.isEmpty() ? 0 : stack.getCount());
+            slots.add(Collections.unmodifiableMap(value));
+        }
+        return Map.of("selected_slot", selected, "slots", List.copyOf(slots));
     }
 
     private ScopedEntityAttackConsentStore.Snapshot entityAttackConsentSnapshot(

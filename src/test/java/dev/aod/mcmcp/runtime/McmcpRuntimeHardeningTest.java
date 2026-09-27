@@ -1507,6 +1507,26 @@ class McmcpRuntimeHardeningTest {
     }
 
     @Test
+    void lightweightStateOmitsDetailedSectionsUnlessRequested() {
+        var player = Map.<String, Object>of("health", 20.0F);
+        var hotbar = Map.<String, Object>of("selected_slot", 0, "slots", List.of());
+        var details = Map.<String, Object>of(
+                "control", Map.of("mode", "ready"),
+                "inventory", List.of(Map.of("item", "minecraft:stone", "count", 64)));
+
+        assertThat(ActionWireMapper.lightweightStatePayload(
+                player, hotbar, details, Set.of()))
+                .containsOnlyKeys("schema_version", "player", "hotbar")
+                .containsEntry("schema_version", 2)
+                .containsEntry("player", player)
+                .containsEntry("hotbar", hotbar);
+        assertThat(ActionWireMapper.lightweightStatePayload(
+                player, hotbar, details, Set.of("inventory")))
+                .containsOnlyKeys("schema_version", "player", "hotbar", "inventory")
+                .containsEntry("inventory", details.get("inventory"));
+    }
+
+    @Test
     void grantedEntityAttackConsentPayloadExposesOnlyItsBoundScopeAndFiniteRef() {
         var store = new ScopedEntityAttackConsentStore();
         var session = UUID.fromString("00000000-0000-0000-0000-000000000001");

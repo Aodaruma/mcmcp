@@ -12,12 +12,18 @@
     {
       "name": "agent_get_state",
       "title": "Get MCMCP State",
-      "description": "Returns the latest immutable, policy-filtered client state and the latest observation-frame summary. control.granted_capabilities reports the current local lease; entity_attack_consent reports none/pending/granted local consent and exposes its short-lived ref only after a physical primary click on the dedicated local confirmation screen. It does not itself register consent or add a Tool. policy.action_dsl exposes all available opcode descriptors, opaque-reference refresh contracts, and machine-readable MISSING_CAPABILITY guidance without adding another Tool. Pass no arguments for state only. To search client-known recipe displays, use {\"query\":{\"kind\":\"result_item\",\"item\":\"minecraft:stick\"},\"max_results\":16} or {\"query\":{\"kind\":\"result_tag\",\"tag\":\"minecraft:planks\"},\"max_results\":16}; the bounded result appears in recipe_query. placement_materials provides successfully delivered session-local placement_state_ref identities for actually held ordinary Vanilla property-free full-cube building blocks, including black wool, without requiring a world sample; obtain fresh own-inventory refs here after a world/session change. It does not authorize target coordinates or replace JIT/server checks. inventory keeps item-ID totals; standard_potions separately validates component-exact unmodified Vanilla singleton potion stacks and groups them by item+potion across inventory slots, so brewing inputs and outputs are distinguishable without exposing custom components or impossible overstacks. merchant_offers is present only while the exact current merchant screen has a fresh same-session/container/open-revision server packet; it exposes typed item/count facts and registered stored-enchantment IDs+levels, never raw slots, components, NBT, lore, or display text. known_menu is present only for an exact current server-synchronized accepted Menu profile: Vanilla generic_9x1..9x6, or the version/hash/class-fixed Sophisticated Backpacks 3.25.90 normal backpack storage profile. Copy one single-use operation_ref into operate_known_menu and never infer raw slots or GUI coordinates; valid_through_client_tick is only the outer deadline and any exact-menu context change invalidates it earlier. Open upgrade/extra slots, inaccessible or oversized stacks, and insufficient full-stack capacity are omitted. With continuous visual invalidations, a bounded full-direction catch-up completes a fresh frame within twice the normal scan period (16 active ticks at the default setting), without camera input or stale-ray reuse. Calling this announces observation.latest_frame_id with a 60-second idle lifetime; at most 16 announced handles are retained, so an older handle may be evicted sooner. Recipe data comes only from displays synchronized into the current client recipe book. It never scans hidden world data.",
+      "description": "Returns lightweight policy-filtered player essentials and all nine hotbar slots without opening inventory. Detailed v1-compatible sections are returned only when named in sections. known_menu exposes a single-use operation_ref for a current synchronized menu; never infer raw slots. merchant_offers is present only for the current merchant screen and returns typed facts, never raw slots, components, NBT, lore, or display text. query plus max_results adds a bounded client-known recipe result. It never scans hidden world data.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "sections": {
+            "type": "array",
+            "maxItems": 11,
+            "uniqueItems": true,
+            "items": {"enum": ["control", "world", "inventory", "standard_potions", "placement_materials", "entity_attack_consent", "merchant_offers", "known_menu", "policy", "observation", "action"]}
+          },
           "query": {
             "oneOf": [
               {
@@ -54,7 +60,9 @@
         },
         "oneOf": [
           {"maxProperties": 0},
-          {"required": ["query", "max_results"], "minProperties": 2, "maxProperties": 2}
+          {"required": ["sections"], "minProperties": 1, "maxProperties": 1},
+          {"required": ["query", "max_results"], "minProperties": 2, "maxProperties": 2},
+          {"required": ["sections", "query", "max_results"], "minProperties": 3, "maxProperties": 3}
         ]
       },
       "outputSchema": {
@@ -270,7 +278,37 @@
           }
         },
         "properties": {
-          "schema_version": {"const": 1},
+          "schema_version": {"const": 2},
+          "player": {
+            "oneOf": [
+              {"type": "null"},
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "dimension": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 128},
+                  "position": {"type": "object", "additionalProperties": false, "properties": {"x": {"type": "number", "minimum": -30000000, "maximum": 30000000}, "y": {"type": "number", "minimum": -2048, "maximum": 2048}, "z": {"type": "number", "minimum": -30000000, "maximum": 30000000}}, "required": ["x", "y", "z"]},
+                  "yaw": {"type": "number", "minimum": -180, "maximum": 180},
+                  "pitch": {"type": "number", "minimum": -90, "maximum": 90},
+                  "health": {"type": "number", "minimum": 0, "maximum": 2048},
+                  "absorption": {"type": "number", "minimum": 0, "maximum": 2048},
+                  "hunger": {"type": "integer", "minimum": 0, "maximum": 20},
+                  "air": {"type": "integer", "minimum": -2048, "maximum": 2048},
+                  "max_air": {"type": "integer", "minimum": 1, "maximum": 2048},
+                  "on_fire": {"type": "boolean"},
+                  "submerged": {"type": "boolean"},
+                  "status_effects": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 128}}
+                },
+                "required": ["dimension", "position", "yaw", "pitch", "health", "absorption", "hunger", "air", "max_air", "on_fire", "submerged", "status_effects"]
+              }
+            ]
+          },
+          "hotbar": {
+            "oneOf": [
+              {"type": "null"},
+              {"type": "object", "additionalProperties": false, "properties": {"selected_slot": {"type": "integer", "minimum": 0, "maximum": 8}, "slots": {"type": "array", "minItems": 9, "maxItems": 9, "items": {"type": "object", "additionalProperties": false, "properties": {"slot": {"type": "integer", "minimum": 0, "maximum": 8}, "selected": {"type": "boolean"}, "item": {"type": ["string", "null"], "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 128}, "count": {"type": "integer", "minimum": 0, "maximum": 2147483647}}, "required": ["slot", "selected", "item", "count"]}}}, "required": ["selected_slot", "slots"]}
+            ]
+          },
           "control": {
             "type": "object",
             "additionalProperties": false,
@@ -812,7 +850,7 @@
             ]
           }
         },
-        "required": ["schema_version", "control", "world", "inventory", "standard_potions", "placement_materials", "entity_attack_consent", "recipe_query", "policy", "observation", "action"]
+        "required": ["schema_version", "player", "hotbar"]
       }
     },
     {

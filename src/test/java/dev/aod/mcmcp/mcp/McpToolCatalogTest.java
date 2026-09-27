@@ -321,10 +321,9 @@ class McpToolCatalogTest {
         String stateDescription = catalog.listResult().getAsJsonArray("tools").get(0)
                 .getAsJsonObject().get("description").getAsString();
         assertThat(stateDescription)
-                .contains("Sophisticated Backpacks 3.25.90")
-                .contains("version/hash/class-fixed")
-                .contains("Open upgrade/extra slots")
-                .contains("inaccessible or oversized stacks");
+                .contains("all nine hotbar slots")
+                .contains("without opening inventory")
+                .contains("only when named in sections");
     }
 
     @Test
@@ -1641,9 +1640,13 @@ class McpToolCatalogTest {
         var tagQuery = JsonParser.parseString("""
                 {"query":{"kind":"result_tag","tag":"minecraft:planks"},"max_results":64}
                 """).getAsJsonObject();
+        var sections = JsonParser.parseString("""
+                {"sections":["inventory","policy"]}
+                """).getAsJsonObject();
         assertThat(CatalogSchemaValidator.matches(schema, new com.google.gson.JsonObject())).isTrue();
         assertThat(CatalogSchemaValidator.matches(schema, itemQuery)).isTrue();
         assertThat(CatalogSchemaValidator.matches(schema, tagQuery)).isTrue();
+        assertThat(CatalogSchemaValidator.matches(schema, sections)).isTrue();
 
         var commands = new ArrayList<McpRuntimePort.RuntimeCommand>();
         var registry = new McmcpToolRegistry((command, context) -> {
@@ -1666,7 +1669,9 @@ class McpToolCatalogTest {
         for (String malformed : List.of(
                 "{\"query\":null}",
                 "{\"max_results\":null}",
-                "{\"query\":null,\"max_results\":null}")) {
+                "{\"query\":null,\"max_results\":null}",
+                "{\"sections\":[\"inventory\",\"inventory\"]}",
+                "{\"sections\":[\"private_data\"]}")) {
             var arguments = JsonParser.parseString(malformed).getAsJsonObject();
             assertThat(CatalogSchemaValidator.matches(schema, arguments)).isFalse();
             assertThat(registry.call("agent_get_state", arguments).get("isError").getAsBoolean())

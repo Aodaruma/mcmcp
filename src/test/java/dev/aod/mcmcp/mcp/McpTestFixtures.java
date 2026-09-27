@@ -14,6 +14,9 @@ final class McpTestFixtures {
 
     static Map<String, Object> state() {
         var result = new LinkedHashMap<>(baseState());
+        result.put("schema_version", 2);
+        result.put("player", nullValue());
+        result.put("hotbar", nullValue());
         result.put("placement_materials", List.of());
         return Map.copyOf(result);
     }

@@ -43,7 +43,7 @@ class CatalogSchemaValidatorDiagnosticTest {
         JsonObject untrusted = new JsonObject();
         untrusted.addProperty("secret-token-should-not-echo", "sensitive-value");
         String message = rejection("agent_get_state", untrusted);
-        assertThat(message).isEqualTo("$: above catalog maximum properties");
+        assertThat(message).isEqualTo("sections: required");
         assertThat(message).doesNotContain("secret", "sensitive");
     }
 

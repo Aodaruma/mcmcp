@@ -291,6 +291,23 @@ final class ActionWireMapper {
         return result;
     }
 
+    static Map<String, Object> lightweightStatePayload(
+            Map<String, Object> player,
+            Map<String, Object> hotbar,
+            Map<String, Object> details,
+            Set<String> requestedSections) {
+        Objects.requireNonNull(details, "details");
+        Objects.requireNonNull(requestedSections, "requestedSections");
+        var result = new LinkedHashMap<String, Object>();
+        result.put("schema_version", 2);
+        result.put("player", player);
+        result.put("hotbar", hotbar);
+        for (String section : requestedSections) {
+            if (details.containsKey(section)) result.put(section, details.get(section));
+        }
+        return result;
+    }
+
     static Map<String, Object> entityAttackConsentPayload(
             ScopedEntityAttackConsentStore.Snapshot snapshot) {
         Objects.requireNonNull(snapshot, "snapshot");
