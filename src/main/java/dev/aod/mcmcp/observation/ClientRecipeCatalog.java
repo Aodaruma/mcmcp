@@ -141,7 +141,7 @@ public final class ClientRecipeCatalog {
                     activeSource.entries(), activeSource.recipeTypes(), activeSource.omittedWithoutDisplay(),
                     activeSource.limited(), true);
         }
-        String signature = requestedScope.name() + ":" + received.generation() + ":" + signature(extracted);
+        String signature = requestedScope.name() + ":" + activeSource.generation() + ":" + signature(extracted);
         boolean newSession = !expectedWorldSessionId.equals(worldSessionId);
         if (newSession || !Objects.equals(signature, contentSignature)) {
             revision = newSession ? 1 : Math.addExact(revision, 1);

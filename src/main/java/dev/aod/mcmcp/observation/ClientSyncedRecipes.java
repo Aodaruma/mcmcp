@@ -12,6 +12,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.PriorityQueue;
 
 /** Only consumes the documented NeoForge client event; never requests server data. */
 public final class ClientSyncedRecipes {
@@ -35,9 +36,18 @@ public final class ClientSyncedRecipes {
         int omitted = 0;
         boolean limited = recipes.size() > MAX_RECIPES;
         boolean failed = false;
+        // Choose the same bounded subset regardless of the source map's iteration order.
         // Internal negative ids never authorize recipe-book placement packets.
-        for (var holder : recipes.stream().limit(MAX_RECIPES)
-                .sorted(Comparator.comparing(value -> value.id().identifier().toString())).toList()) {
+        Comparator<RecipeHolder<?>> byId = Comparator.comparing(value -> value.id().identifier().toString());
+        var selected = new PriorityQueue<RecipeHolder<?>>(MAX_RECIPES + 1, byId.reversed());
+        for (var holder : recipes) {
+            if (selected.size() < MAX_RECIPES) selected.add(holder);
+            else if (byId.compare(holder, selected.peek()) < 0) {
+                selected.remove();
+                selected.add(holder);
+            }
+        }
+        for (var holder : selected.stream().sorted(byId).toList()) {
             try {
                 var recipe = holder.value();
                 var displays = recipe.display();

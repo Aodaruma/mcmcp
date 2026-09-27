@@ -78,6 +78,12 @@ class ClientRecipeCatalogTest {
         assertThat(catalog.resolve(session, beforeReload.recipeRef(), beforeReload.fingerprint())).isEmpty();
         assertThat(catalog.refresh(session, 5, known, RecipeScope.UNLOCKED, reload)
                 .recipeBookRevision()).isEqualTo(4);
+        var unlocked = recipe(catalog, session, "minecraft:oak_planks");
+        var anotherReload = new ClientSyncedRecipes.Snapshot(3, true, reload.entries(),
+                reload.recipeTypes(), 1, false, false);
+        assertThat(catalog.refresh(session, 6, known, RecipeScope.UNLOCKED, anotherReload)
+                .recipeBookRevision()).isEqualTo(4);
+        assertThat(catalog.resolve(session, unlocked.recipeRef(), unlocked.fingerprint())).isPresent();
     }
 
     @Test

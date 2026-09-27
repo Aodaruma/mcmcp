@@ -4,6 +4,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.*;
 import net.minecraft.world.item.crafting.display.*;
@@ -11,6 +12,8 @@ import net.minecraft.world.level.Level;
 import net.neoforged.neoforge.client.event.RecipesReceivedEvent;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -59,12 +62,36 @@ class ClientSyncedRecipesTest {
         assertThat(source.forConnection(connection).available()).isTrue();
     }
 
+    @Test
+    void boundedSubsetIsStableWhenTheSmallestRecipeArrivesLast() {
+        var recipes = new ArrayList<RecipeHolder<?>>();
+        for (int index = 0; index < ClientSyncedRecipes.MAX_RECIPES; index++) {
+            recipes.add(holder("m" + index, special(false, false)));
+        }
+        recipes.add(holder("a", special(false, false, Items.DIAMOND)));
+        var source = new ClientSyncedRecipes();
+        Object connection = new Object();
+        source.receive(connection, recipes, List.of("minecraft:crafting"));
+        var forward = source.forConnection(connection).entries();
+        Collections.reverse(recipes);
+        source.receive(connection, recipes, List.of("minecraft:crafting"));
+        assertThat(source.forConnection(connection).entries()).isEqualTo(forward);
+        assertThat(forward).hasSize(ClientSyncedRecipes.MAX_RECIPES);
+        assertThat(forward.getFirst().display().result())
+                .isEqualTo(new SlotDisplay.ItemSlotDisplay(Items.DIAMOND));
+        assertThat(source.forConnection(connection).limited()).isTrue();
+    }
+
     private static RecipeHolder<?> holder(String name, CustomRecipe recipe) {
         return new RecipeHolder<>(ResourceKey.create(Registries.RECIPE,
                 Identifier.fromNamespaceAndPath("test", name)), recipe);
     }
 
     private static CustomRecipe special(boolean empty, boolean fail) {
+        return special(empty, fail, Items.STICK);
+    }
+
+    private static CustomRecipe special(boolean empty, boolean fail, Item result) {
         return new CustomRecipe() {
             @Override public boolean matches(CraftingInput input, Level level) { throw new AssertionError(); }
             @Override public ItemStack assemble(CraftingInput input) { throw new AssertionError(); }
@@ -73,7 +100,7 @@ class ClientSyncedRecipesTest {
                 if (fail) throw new IllegalStateException("must not be reflected");
                 return empty ? List.of() : List.of(new ShapelessCraftingRecipeDisplay(
                         List.of(new SlotDisplay.ItemSlotDisplay(Items.STONE)),
-                        new SlotDisplay.ItemSlotDisplay(Items.STICK),
+                        new SlotDisplay.ItemSlotDisplay(result),
                         new SlotDisplay.ItemSlotDisplay(Items.CRAFTING_TABLE)));
             }
         };
