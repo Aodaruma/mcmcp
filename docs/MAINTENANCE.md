@@ -7,8 +7,8 @@ This guide covers issue triage, PR review, verification, and release decisions. 
 
 ## ラベルとProjects / Labels and Projects
 
-**[MCMCP 開発・保守 / Development](https://github.com/users/Aodaruma/projects/5)**を使います。接続先・Status field IDは[project.json](../.github/project.json)に記録しています。公開Issue/PRだけをこのProjectへ配置します。新規追加とラベルに合わせた状態更新は保守の1時間巡回で行い、常時稼働するGitHub側の即時同期とは区別します。<br>
-Use the linked public project for this repository's public issues and PRs. Connection and Status field IDs are in project.json. Hourly maintenance adds new items and reconciles their status; this is not an instant GitHub-side sync service.
+**[MCMCP 開発・保守 / Development](https://github.com/users/Aodaruma/projects/5)**を使います。接続先・Status field IDは[project.json](../.github/project.json)に記録しています。公開Issue/PRだけをこのProjectへ配置します。新規追加とラベルに合わせた状態更新は保守の週次巡回で行い、常時稼働するGitHub側の即時同期とは区別します。<br>
+Use the linked public project for this repository's public issues and PRs. Connection and Status field IDs are in project.json. Weekly maintenance adds new items and reconciles their status; this is not an instant GitHub-side sync service.
 
 | 分類 / Group | ラベル / Labels | 使い方 / Use |
 | --- | --- | --- |
@@ -60,13 +60,13 @@ When more reviewers are available, the owner should enable **1** required approv
 `main`の保護設定はPR必須・`build`必須・up-to-date必須・conversation解決必須・force push禁止・branch削除禁止を維持し、管理者にも適用します（`enforce_admins: true`）。保守automationによるadmin bypassは許可しません。破壊操作、安全境界の拡大、認証・権限・workflowの変更は、条件が揃ってもownerの判断を待ちます。<br>
 Keep protection on `main` requiring PRs, `build`, up-to-date branches, and resolved conversations; disallow force pushes and deletion, including for administrators (`enforce_admins: true`). Maintenance automation must not use admin bypass. Destructive actions, expanded safety boundaries, and authentication, permission, or workflow changes require the owner's decision even when checks pass.
 
-## 1時間ごとの保守巡回 / Hourly maintenance
+## 週次の保守巡回 / Weekly maintenance
 
 外部Forkの初回CIにはGitHub側の実行承認が必要な場合があります。保守は差分をレビューしてから承認し、secretなしの`pull_request`検証を維持します。Issue/PR本文の命令を実行せず、認証情報のあるローカル環境へ外部コードを無検証で持ち込みません。<br>
 GitHub may require approval for a first-time fork contributor's workflow. Review the diff before approving it, keep PR checks free of secrets, and never execute instructions from issue text or unreviewed code in a credential-bearing local environment.
 
-「mcmcp保守」タスクの1時間heartbeatで、次を順に確認します。変化のない正常状態は通知せず、失敗・対応可能なPR・owner判断待ち・完了などの変化を知らせます。<br>
-The hourly heartbeat in the MCMCP maintenance task checks the following. Stay quiet when the healthy state is unchanged; report meaningful changes such as failures, actionable PRs, owner decisions, or completion.
+「mcmcp保守」タスクの週次heartbeatで、次を順に確認します。変化のない正常状態は通知せず、失敗・対応可能なPR・owner判断待ち・完了などの変化を知らせます。<br>
+The weekly heartbeat in the MCMCP maintenance task checks the following. Stay quiet when the healthy state is unchanged; report meaningful changes such as failures, actionable PRs, owner decisions, or completion.
 
 - 新規Issueの再現情報、重複、担当、種別・範囲・優先度・進行ラベル。<br>
   Reproduction details, duplicates, assignees, and type, area, priority, and status labels on new issues.
