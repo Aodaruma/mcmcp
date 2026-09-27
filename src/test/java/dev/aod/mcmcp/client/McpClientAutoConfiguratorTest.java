@@ -6,6 +6,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.file.StandardOpenOption;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -103,6 +106,85 @@ class McpClientAutoConfiguratorTest {
                 assertThat(McpClientAutoConfigurator.diagnose(target, second, home, 8765))
                         .isEqualTo(results.get(1).success() ? "configured" : "another_profile");
             }
+        }
+    }
+
+    @Test
+    void separateJvmRegistrationsWaitForTheSameConfigLock() throws Exception {
+        Path first = gameWithToken("process/first");
+        Path second = gameWithToken("process/second");
+        Path home = temporary.resolve("process-home");
+        Path config = McpClientAutoConfigurator.configPath(
+                McpClientAutoConfigurator.Target.CODEX, first, home);
+        Files.createDirectories(config.getParent());
+        Path lockPath = config.resolveSibling(config.getFileName() + ".mcmcp.lock");
+        Path gate = temporary.resolve("process-start");
+        Path firstReady = temporary.resolve("process-first-ready");
+        Path secondReady = temporary.resolve("process-second-ready");
+        Path firstAttempt = temporary.resolve("process-first-attempt");
+        Path secondAttempt = temporary.resolve("process-second-attempt");
+        Path firstResult = temporary.resolve("process-first-result");
+        Path secondResult = temporary.resolve("process-second-result");
+        Process a = processProbe(first, home, firstReady, gate, firstAttempt, firstResult);
+        Process b = processProbe(second, home, secondReady, gate, secondAttempt, secondResult);
+        try {
+            try (FileChannel channel = FileChannel.open(lockPath,
+                    StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+                    FileLock ignored = channel.lock()) {
+                waitForFile(firstReady);
+                waitForFile(secondReady);
+                Files.writeString(gate, "go");
+                waitForFile(firstAttempt);
+                waitForFile(secondAttempt);
+                Thread.sleep(300);
+                assertThat(firstResult).doesNotExist();
+                assertThat(secondResult).doesNotExist();
+            }
+            assertThat(a.waitFor(20, TimeUnit.SECONDS)).isTrue();
+            assertThat(b.waitFor(20, TimeUnit.SECONDS)).isTrue();
+            assertThat(a.exitValue()).as(new String(a.getInputStream().readAllBytes())).isZero();
+            assertThat(b.exitValue()).as(new String(b.getInputStream().readAllBytes())).isZero();
+            assertThat(List.of(Files.readString(firstResult), Files.readString(secondResult)))
+                    .containsExactlyInAnyOrder("configured", "another_profile");
+            assertThat(lockPath).isRegularFile();
+        } finally {
+            if (a.isAlive()) a.destroyForcibly();
+            if (b.isAlive()) b.destroyForcibly();
+        }
+    }
+
+    private Process processProbe(Path game, Path home, Path ready, Path gate,
+            Path attempt, Path result) throws Exception {
+        Path java = Path.of(System.getProperty("java.home"), "bin",
+                System.getProperty("os.name", "").toLowerCase().contains("win") ? "java.exe" : "java");
+        return new ProcessBuilder(java.toString(), "-cp", System.getProperty("java.class.path"),
+                RegistrationProcessProbe.class.getName(), game.toString(), home.toString(),
+                ready.toString(), gate.toString(), attempt.toString(), result.toString())
+                .redirectErrorStream(true).start();
+    }
+
+    private static void waitForFile(Path file) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        while (!Files.exists(file) && System.nanoTime() < deadline) Thread.sleep(20);
+        assertThat(file).exists();
+    }
+
+    public static final class RegistrationProcessProbe {
+        public static void main(String[] args) throws Exception {
+            Path game = Path.of(args[0]);
+            Path home = Path.of(args[1]);
+            Path ready = Path.of(args[2]);
+            Path gate = Path.of(args[3]);
+            Path attempt = Path.of(args[4]);
+            Path result = Path.of(args[5]);
+            Files.writeString(ready, "ready");
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+            while (!Files.exists(gate) && System.nanoTime() < deadline) Thread.sleep(20);
+            if (!Files.exists(gate)) throw new IllegalStateException("process gate timed out");
+            Files.writeString(attempt, "attempt");
+            var configured = McpClientAutoConfigurator.configure(
+                    McpClientAutoConfigurator.Target.CODEX, game, home, 8765);
+            Files.writeString(result, configured.code());
         }
     }
 
