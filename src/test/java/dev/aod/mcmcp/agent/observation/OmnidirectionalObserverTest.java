@@ -39,6 +39,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class OmnidirectionalObserverTest {
     @Test
+    void leverVisibleStateDoesNotAuthorizeConstructionOrRevealOtherRedstoneState() {
+        var lever = Blocks.LEVER.defaultBlockState();
+        var view = OmnidirectionalObserver.policyVisibleBlockState(lever);
+        assertThat(view.block().value()).isEqualTo("minecraft:lever");
+        assertThat(view.properties()).containsOnlyKeys("face", "facing", "powered");
+        assertThat(view.properties().get("powered")).isEqualTo("false");
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(
+                lever.setValue(BlockStateProperties.POWERED, true)).properties().get("powered")).isEqualTo("true");
+        assertThat(dev.aod.mcmcp.construction.SafeConstructionBlocks.allows("minecraft:lever")).isFalse();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(Blocks.REDSTONE_WIRE.defaultBlockState())).isNull();
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(Blocks.REPEATER.defaultBlockState())).isNull();
+    }
+
+    @Test
     void entityCrossingTheFogBoundaryCannotUseItsHiddenSamplePointsForLineOfSight() {
         var fog = new OmnidirectionalObserver.TickSample(DIMENSION,
                 new WorldPosition(DIMENSION, 0, 64, 0), 20, 100, 100,

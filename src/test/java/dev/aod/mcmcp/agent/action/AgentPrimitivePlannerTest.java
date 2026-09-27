@@ -30,6 +30,34 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AgentPrimitivePlannerTest {
     @Test
+    void leverRequiresCurrentCompleteVisibleStateAndReservesOneInteraction() {
+        var snapshot = map(UUID.randomUUID()).snapshot().orElseThrow();
+        var target = new ActionDsl.Position(DIMENSION, 3, 64, 0);
+        var properties = Map.of("face", "wall", "facing", "west", "powered", "false");
+        var node = new ActionDsl.SetKnownLever("lever", target,
+                new ActionDsl.BlockStateSpec("minecraft:lever", properties), true);
+        var program = new ActionDsl.Program(1, Optional.empty(),
+                Set.of(ActionDsl.Capability.CAMERA, ActionDsl.Capability.BLOCK_INTERACT), List.of(node));
+        var pose = new AgentPrimitivePlanner.Pose(cell(0), 0.5, 64, 0.5, 1.62, 0, 0);
+        var good = frame(List.of(surfaceWithState(
+                target, ObservationRecord.Face.WEST, "minecraft:lever", properties, 0)));
+        var analysis = AgentPrimitivePlanner.analyze(
+                program, snapshot, new DeterministicAStar(), pose, Optional.of(good), 4.5F);
+        assertThat(analysis.primitiveCosts().get("lever").interactions()).isOne();
+        assertThat(analysis.mutationAims()).containsKey("lever");
+        for (var bad : List.of(
+                frame(target, ObservationRecord.Face.WEST, "minecraft:lever", 0),
+                frame(List.of(surfaceWithState(target, ObservationRecord.Face.WEST, "minecraft:lever",
+                        Map.of("face", "wall", "facing", "west", "powered", "true"), 0))),
+                frame(List.of(surfaceWithState(target, ObservationRecord.Face.WEST, "minecraft:lever",
+                        Map.of("powered", "false"), 0))))) {
+            assertThatThrownBy(() -> AgentPrimitivePlanner.analyze(
+                    program, snapshot, new DeterministicAStar(), pose, Optional.of(bad), 4.5F))
+                    .isInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+        }
+    }
+
+    @Test
     void deliveredChestReobservedAfterUnrelatedUpdatesPassesWithoutWeakeningCommitBarrier() {
         var map = map(UUID.randomUUID());
         var chest = new ActionDsl.Position(DIMENSION, 3, 64, 0);

@@ -24,7 +24,7 @@ class McmcpRuntimeSurfaceRecoveryContractTest {
                 "KnownBreakSafety#breakProgramPreconditionsCurrent", "ActionAdmission#rendererRecoveryRevalidated");
         assertThat(calls("bindAgentPrimitive")).containsSubsequence(
                 "ActionBudgets#fitsRemainingBudget", "ActionAdmission#rendererRecoveryRevalidated");
-        assertThat(calls("initialContainerOpenWitness")).containsSubsequence(
+        assertThat(calls("initialSurfaceUseWitness")).containsSubsequence(
                 "AgentPrimitivePlanner#requireKnownSurface", "ActionAdmission#rendererRecoveryRevalidated")
                 .doesNotContain("MultiPlayerGameMode#useItemOn");
         assertThat(calls("commitAgentAction")).containsSubsequence(
@@ -66,12 +66,20 @@ class McmcpRuntimeSurfaceRecoveryContractTest {
                 "ActionAdmission#analyzePrimitive",
                 "ActionBudgets#firstRecoveredSurfacePrimitiveRemainingCost",
                 "ActionBudgets#fitsRemainingBudget");
-        assertThat(calls("initialContainerOpenWitness")).containsSubsequence(
+        assertThat(calls("initialSurfaceUseWitness")).containsSubsequence(
                 "ActionAdmission#sameAdmissionSession", "LocalArmingState$Snapshot#controlEpoch",
                 "McmcpRuntime#multiplayerPolicyAllows", "AgentObservations#requireAgentMap",
                 "ClientReconciliationSignals#bindAndSnapshot", "ActionEvidence#visualBarrierWorldRevision",
                 "ActionAdmission#surfaceRecoveryFailure", "AgentObservations#agentPlanningFrame",
                 "AgentPrimitivePlanner#requireKnownSurface");
+    }
+
+    @Test
+    void containerAndLeverUseShareTheCurrentSurfaceWitness() throws Exception {
+        assertThat(calls("initialContainerOpenWitness")).contains("McmcpRuntime#initialSurfaceUseWitness");
+        assertThat(calls("initialLeverUseWitness")).containsSubsequence(
+                "SurfacePreflightRecovery#lease", "SurfacePreflightRecovery#applies",
+                "McmcpRuntime#initialSurfaceUseWitness");
     }
 
     @Test

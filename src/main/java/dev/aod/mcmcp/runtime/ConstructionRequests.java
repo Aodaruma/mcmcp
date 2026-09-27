@@ -365,6 +365,7 @@ final class ConstructionRequests {
             case ActionDsl.HarvestKnownWheat value -> value.target();
             case ActionDsl.OpenKnownFenceGate value -> value.target();
             case ActionDsl.OpenKnownPassage value -> value.target();
+            case ActionDsl.SetKnownLever value -> value.target();
             default -> throw new IllegalArgumentException("node is not a known block mutation");
         };
         var target = new BlockTarget(
@@ -402,6 +403,14 @@ final class ConstructionRequests {
                             "minecraft:oak_fence_gate", Map.of("open", "true")),
                     bounds,
                     aim);
+            case ActionDsl.SetKnownLever lever -> {
+                var after = new java.util.LinkedHashMap<>(lever.expectedState().properties());
+                after.put("powered", Boolean.toString(lever.powered()));
+                yield new InteractBlockRequest(
+                        target,
+                        new BlockStateFingerprint("minecraft:lever", lever.expectedState().properties()),
+                        new BlockStateFingerprint("minecraft:lever", after), bounds, aim);
+            }
             case ActionDsl.OpenKnownPassage passage -> new InteractBlockRequest(
                     target,
                     new BlockStateFingerprint(passage.expectedBlock(), Map.of("open", "false")),

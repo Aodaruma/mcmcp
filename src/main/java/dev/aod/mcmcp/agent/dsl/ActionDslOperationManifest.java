@@ -55,6 +55,7 @@ public final class ActionDslOperationManifest {
                     caps("block_interact", "block_place", "camera")),
             fixed(ActionDsl.OpenKnownFenceGate.class, "open_known_fence_gate", caps("block_interact", "camera")),
             fixed(ActionDsl.OpenKnownPassage.class, "open_known_passage", caps("block_interact", "camera")),
+            fixed(ActionDsl.SetKnownLever.class, "set_known_lever", caps("block_interact", "camera")),
             fixed(
                     ActionDsl.InspectKnownContainer.class,
                     "inspect_known_container",

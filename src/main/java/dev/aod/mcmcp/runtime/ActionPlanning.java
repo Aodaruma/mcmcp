@@ -155,6 +155,7 @@ final class ActionPlanning {
         long interactions = node instanceof ActionDsl.TillKnownBlock
                         || node instanceof ActionDsl.OpenKnownFenceGate
                         || node instanceof ActionDsl.OpenKnownPassage
+                        || node instanceof ActionDsl.SetKnownLever
                         || node instanceof ActionDsl.InspectKnownContainer
                 ? 1L
                 : node instanceof ActionDsl.TillKnownBatch batch

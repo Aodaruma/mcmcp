@@ -32,6 +32,7 @@ final class SurfacePreflightRecovery {
     static Target target(ActionDsl.Node primitive) {
         return switch (primitive) {
             case ActionDsl.ApproachKnownSurface node -> new Target(node.target(), node.expectedBlock());
+            case ActionDsl.SetKnownLever node -> new Target(node.target(), node.expectedState().block());
             case ActionDsl.InspectKnownContainer node -> new Target(node.target(), node.expectedBlock());
             case ActionDsl.TakeKnownContainerStack node -> new Target(node.target(), node.expectedBlock());
             case ActionDsl.StoreKnownContainerStack node -> new Target(node.target(), node.expectedBlock());
