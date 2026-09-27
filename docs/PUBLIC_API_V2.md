@@ -83,6 +83,19 @@ loopを事前展開せず、ASTを直接評価する。文字列はsource由来�
 
 **未実装:** 行動handler、worker/job接続、ゲーム入力の所有・解放、server照合、経過時間・観測量予算、実機試験、小関数。今回のsinkは注入interfaceと試験用実装だけで、ゲームを操作しない。`agent_run_script`はcatalog/runtimeへ公開していない。基本行動handlerと停止契約を接続・検証し、基本tool一式と同時公開するまで内部prototypeに留める。現行の公開catalog/schemaをこの内部実装のために変更しない。
 
+## このブランチで実装済みの内部座標ナビゲーション
+
+`agent/navigation/CoordinateGoalPlanner`はpackage-privateのpure Java部品。1つのworld session・dimension・座標目標に対してjob全体で同じinstanceを保持する。入力はimmutableな`KnownTraversabilitySnapshot`、現在地、呼出側が確認したsession/revision、予算と取消signalだけで、world読取り・入力操作は行わない。目標は未観測・遠方でも指定できる。
+
+snapshotの既知の安全な停止候補を目標への直線距離、同距離なら`NavCell`順に評価し、既存`DeterministicAStar`で到達できる最初の候補を返す。unknownやSTALE/BLOCKEDのedgeは通らず、斜めの角・現在revisionの直接証拠、距離・実行時間の予約は既存A*／`RoutePlan`に従う。既存の`PROBE_ALLOWED`は支持・clearance等が確認された有限probeとして維持し、未観測cellへ踏み出す許可にはしない。影響を受けず保持された古いedgeは既存mapの無効化契約に従って利用する。
+
+- `REACHED_KNOWN_GOAL`: 入力の現在地が既知の目標と一致（移動edgeなし）。`KNOWN_GOAL_ROUTE`: 既知目標までの計画で、実移動の成功ではない。`PARTIAL_WAYPOINT`: 既知中間点までの計画で、到達後に新しい観測が必要。
+- `BLOCKED / LIMIT / CANCELLED / STALE_MAP / WORLD_MISMATCH`: 経路なし。現在session/revisionとの不一致・受理済みrevisionからの巻戻り・異world/future edgeを拒否する。実行直前・各tickの再検証は呼出側に必要。
+- 1回のplanの固定上限はsnapshot edge 4,096件、候補A*呼出し64回、A*全呼出し合計2,048展開。各予算は0まで縮小可能。edge上限超過は切り捨てずLIMIT。取消・thread interruptionは列挙・探索・結果確定前で確認する。
+- 中間点は現在地および過去に発行した中間点より目標に厳密に近いことを要求する。同じmapの再計画や実行失敗で同一点を再発行しない。新観測は同じrevisionでも追加可能だが、距離の進捗記録はリセットしない。既知経路内の迂回は可能。いったん目標から遠ざかる中間点が必要な袋小路の探索・網羅的frontier探索・失敗経路の再試行は未対応で、保守的に停止する。
+
+**未接続:** `agent_move`等のhandler、script/job、観測更新ループ、到達照合、入力所有・取消時の解放、各tickの安全再検証。今回は計画だけを単体試験し、v1実行経路・catalog/schema・公開MCP toolは変更しない。ゲームでの到達・停止試験は未実施。基本tool一式の公開はこれらの接続・検証後に行う。
+
 ## raw入力
 
 ゲーム内の論理キー／左右中クリックを指定する。`steps`に複数の同時入力、順番、`hold_ticks`、`gap_ticks`、`repeat`、`until`、最大総時間を記載できるようにする。入力頻度はgame tick単位で表す。world操作を起こしうるクリックには座標範囲・対象種類・手持ちなどの任意guardを付けられ、guardなしでも総時間と入力回数の上限を保つ。画面やワールドが変われば入力を解放して停止する。OSへキーを送る機能とは区別する。
