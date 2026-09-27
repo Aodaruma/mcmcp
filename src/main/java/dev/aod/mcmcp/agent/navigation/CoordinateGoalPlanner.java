@@ -3,9 +3,12 @@ package dev.aod.mcmcp.agent.navigation;
 import dev.aod.mcmcp.agent.safety.Locomotion;
 
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
@@ -17,9 +20,11 @@ final class CoordinateGoalPlanner {
     static final int MAX_EDGES = 4_096;
     static final int MAX_CANDIDATES = 64;
     static final int MAX_EXPANSIONS = DeterministicAStar.MAX_EXPANDED_NODES;
+    private static final int MAX_ISSUED_CELLS = 8_192;
     private final UUID session;
     private final NavCell goal;
-    private double issuedDistance = Double.POSITIVE_INFINITY;
+    private final Set<NavCell> issuedCells = new HashSet<>();
+    private Map<TraversabilityEdge.Key, TraversabilityEdge> lastIssuedEvidence;
     private long newestRevision = -1;
 
     CoordinateGoalPlanner(UUID session, NavCell goal) {
@@ -67,14 +72,18 @@ final class CoordinateGoalPlanner {
                     Optional.of(RoutePlan.from(map, List.of(start), List.of())), 0, 0);
         }
 
-        double threshold = Math.min(start.distanceTo(goal), issuedDistance);
+        // A detour may initially increase distance to the goal. Require fresh evidence after each
+        // waypoint and never select a cell already used by this job, even if replanning begins
+        // at an older position after an execution failure.
+        if (lastIssuedEvidence != null && lastIssuedEvidence.equals(map.edges())) {
+            return empty(Status.BLOCKED, 0, 0);
+        }
         int attempts = 0;
         int expanded = 0;
         var search = new DeterministicAStar();
         for (NavCell candidate : candidates) {
             if (stopped(cancelled)) return empty(Status.CANCELLED, attempts, expanded);
-            // Strict progress prevents reissuing a failed waypoint or cycling on unchanged evidence.
-            if (!(candidate.distanceTo(goal) < threshold)) continue;
+            if (candidate.equals(start) || issuedCells.contains(candidate)) continue;
             if (attempts >= budget.candidates() || expanded >= budget.expansions()) {
                 return empty(Status.LIMIT, attempts, expanded);
             }
@@ -84,7 +93,13 @@ final class CoordinateGoalPlanner {
             expanded += found.expandedCells().size();
             if (stopped(cancelled)) return empty(Status.CANCELLED, attempts, expanded);
             if (found.found()) {
-                issuedDistance = candidate.distanceTo(goal);
+                var newlyIssued = new HashSet<>(found.route().orElseThrow().cells());
+                newlyIssued.removeAll(issuedCells);
+                if (issuedCells.size() + newlyIssued.size() > MAX_ISSUED_CELLS) {
+                    return empty(Status.LIMIT, attempts, expanded);
+                }
+                issuedCells.addAll(newlyIssued);
+                lastIssuedEvidence = map.edges();
                 return new Result(candidate.equals(goal) ? Status.KNOWN_GOAL_ROUTE : Status.PARTIAL_WAYPOINT,
                         found.route(), attempts, expanded);
             }

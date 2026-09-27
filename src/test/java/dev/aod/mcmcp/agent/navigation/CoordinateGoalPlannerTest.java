@@ -91,12 +91,34 @@ class CoordinateGoalPlannerTest {
     }
 
     @Test
-    void noForwardProgressDoesNotEmitMovement() {
+    void detourCanMoveAwayFromGoalButWaitsForFreshEvidenceBeforeContinuing() {
         var map = map(edge(cell(0, 0), cell(-1, 0)), edge(cell(0, 0), cell(0, 1)));
-        var result = plan(new CoordinateGoalPlanner(SESSION, cell(100, 0)), map, cell(0, 0));
-        assertThat(result.status()).isEqualTo(BLOCKED);
-        assertThat(result.route()).isEmpty();
-        assertThat(result.expansions()).isZero();
+        var planner = new CoordinateGoalPlanner(SESSION, cell(100, 0));
+        var result = plan(planner, map, cell(0, 0));
+        assertThat(result.status()).isEqualTo(PARTIAL_WAYPOINT);
+        assertThat(result.route().orElseThrow().cells()).containsExactly(cell(0, 0), cell(0, 1));
+        assertThat(plan(planner, map, cell(0, 1)).status()).isEqualTo(BLOCKED);
+        assertThat(plan(planner, map, cell(0, 0)).status()).isEqualTo(BLOCKED);
+
+        // Freshly observed space around the corner permits another bounded segment.
+        map.observe(edge(cell(0, 1), cell(1, 1)));
+        assertThat(plan(planner, map, cell(0, 1)).route().orElseThrow().cells())
+                .containsExactly(cell(0, 1), cell(1, 1));
+        assertThat(plan(planner, map, cell(1, 1)).status()).isEqualTo(BLOCKED);
+    }
+
+    @Test
+    void evidenceUpdateDoesNotReissuePreviouslyVisitedDeadEnd() {
+        var map = map(edge(cell(0, 0), cell(0, 1)), edge(cell(0, 1), cell(0, 0)));
+        var planner = new CoordinateGoalPlanner(SESSION, cell(100, 0));
+        assertThat(plan(planner, map, cell(0, 0)).route().orElseThrow().cells())
+                .containsExactly(cell(0, 0), cell(0, 1));
+        map.observe(edge(cell(0, 0), cell(-1, 0)));
+        var next = plan(planner, map, cell(0, 1));
+        assertThat(next.status()).isEqualTo(PARTIAL_WAYPOINT);
+        assertThat(next.route().orElseThrow().cells())
+                .containsExactly(cell(0, 1), cell(0, 0), cell(-1, 0));
+        assertThat(plan(planner, map, cell(-1, 0)).status()).isEqualTo(BLOCKED);
     }
 
     @Test
