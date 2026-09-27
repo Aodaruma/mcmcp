@@ -811,11 +811,14 @@ public final class ActionDslParser {
 
     private static ActionDsl.OperateKnownMenu operateKnownMenu(
             JsonObject source, String path) {
-        exactKeys(source, path, Set.of("id", "op", "operation_ref"),
+        exactKeys(source, path, Set.of("id", "op", "operation_ref", "operation", "item", "transfer_count"),
                 Set.of("id", "op", "operation_ref"));
         return new ActionDsl.OperateKnownMenu(
                 string(source.get("id"), path + ".id"),
-                string(source.get("operation_ref"), path + ".operation_ref"));
+                string(source.get("operation_ref"), path + ".operation_ref"),
+                source.has("operation") ? string(source.get("operation"), path + ".operation") : null,
+                source.has("item") ? string(source.get("item"), path + ".item") : null,
+                source.has("transfer_count") ? integer(source.get("transfer_count"), path + ".transfer_count") : null);
     }
 
     private static ActionDsl.BrewKnownPotionBatch brewKnownPotionBatch(

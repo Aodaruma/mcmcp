@@ -741,11 +741,16 @@ public final class ActionDsl {
     }
 
     /** Executes one current opaque operation against its session-bound known menu. */
-    public record OperateKnownMenu(String id, String operationRef) implements Node {
+    public record OperateKnownMenu(String id, String operationRef,
+            String operation, String item, Integer transferCount) implements Node {
+        public OperateKnownMenu(String id, String operationRef) {
+            this(id, operationRef, null, null, null);
+        }
         public OperateKnownMenu {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(operationRef, "operationRef");
         }
+        public boolean opensStorage() { return operation != null; }
     }
 
     /** Brews one declared batch of 1..3 component-exact standard Vanilla potions. */

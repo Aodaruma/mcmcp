@@ -112,7 +112,8 @@ final class ActionPlanning {
     static boolean actionAdmissionRequiresLocalSafety(ActionDsl.Program program) {
         Objects.requireNonNull(program, "program");
         return program.body().size() != 1
-                || !(program.body().getFirst() instanceof ActionDsl.OperateKnownMenu);
+                || !(program.body().getFirst() instanceof ActionDsl.OperateKnownMenu menu)
+                || menu.opensStorage();
     }
 
     static Optional<ActionDslCompiler.Cost> structuralPrimitiveCost(ActionDsl.Node node) {
@@ -132,8 +133,8 @@ final class ActionPlanning {
                         ? ActionDslCompiler.knownContainerTransferTicks(store.maxClicks()) * 50L
                 : node instanceof ActionDsl.SmeltKnownRecipe smelt
                         ? ActionDslCompiler.knownSmeltingDurationMillis(smelt.maxSmelts())
-                : node instanceof ActionDsl.OperateKnownMenu
-                        ? ActionDslCompiler.KNOWN_MENU_OPERATION_DURATION_MILLIS
+                : node instanceof ActionDsl.OperateKnownMenu menu
+                        ? ActionDslCompiler.knownMenuTicks(menu) * 50L
                 : node instanceof ActionDsl.BrewKnownPotionBatch
                         ? ActionDslCompiler.KNOWN_BREWING_DURATION_MILLIS
                 : node instanceof ActionDsl.CastKnownFishingRod
@@ -146,8 +147,8 @@ final class ActionPlanning {
                         ? ActionDslCompiler.knownContainerTransferTicks(store.maxClicks())
                 : node instanceof ActionDsl.SmeltKnownRecipe smelt
                         ? ActionDslCompiler.knownSmeltingTicks(smelt.maxSmelts())
-                : node instanceof ActionDsl.OperateKnownMenu
-                        ? ActionDslCompiler.KNOWN_MENU_OPERATION_TICKS
+                : node instanceof ActionDsl.OperateKnownMenu menu
+                        ? ActionDslCompiler.knownMenuTicks(menu)
                 : node instanceof ActionDsl.BrewKnownPotionBatch
                         ? ActionDslCompiler.KNOWN_BREWING_TICKS
                 : node instanceof ActionDsl.CastKnownFishingRod
@@ -167,8 +168,8 @@ final class ActionPlanning {
                         ? ActionDslCompiler.knownCraftInteractions(craft.maxCrafts())
                 : node instanceof ActionDsl.SmeltKnownRecipe
                         ? ActionDslCompiler.KNOWN_SMELTING_INTERACTIONS
-                : node instanceof ActionDsl.OperateKnownMenu
-                        ? ActionDslCompiler.KNOWN_MENU_OPERATION_INTERACTIONS
+                : node instanceof ActionDsl.OperateKnownMenu menu
+                        ? ActionDslCompiler.knownMenuInteractions(menu)
                 : node instanceof ActionDsl.BrewKnownPotionBatch
                         ? ActionDslCompiler.KNOWN_BREWING_INTERACTIONS
                 : node instanceof ActionDsl.CastKnownFishingRod ? 2L : 0L;

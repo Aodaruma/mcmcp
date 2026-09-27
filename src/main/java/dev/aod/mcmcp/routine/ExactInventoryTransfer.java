@@ -13,6 +13,7 @@ import java.util.Optional;
 /** A fixed, bounded sequence of ordinary PICKUP clicks with packet-proven cursor transitions. */
 final class ExactInventoryTransfer {
     static final int MAX_CLICKS = 14;
+    private static final int MAX_SEARCH_STATES = 10_000;
     private final List<Click> clicks;
     private List<StackFingerprint> confirmedSlots;
     private StackFingerprint confirmedCursor = StackFingerprint.EMPTY;
@@ -35,9 +36,23 @@ final class ExactInventoryTransfer {
             List<StackFingerprint> initial, List<Integer> sources, List<Integer> destinations,
             String item, int defaultHash, boolean defaultOnly,
             int quantity, int maxSources, int stackLimit) {
+        return plan(initial, sources, destinations, item, defaultHash, defaultOnly,
+                quantity, maxSources, stackLimit,
+                Collections.nCopies(initial.size(), stackLimit));
+    }
+
+    /** Slot capacity and cursor pickup limit are separate, including expanded storage stacks. */
+    static Optional<ExactInventoryTransfer> plan(
+            List<StackFingerprint> initial, List<Integer> sources, List<Integer> destinations,
+            String item, int defaultHash, boolean defaultOnly,
+            int quantity, int maxSources, int stackLimit, List<Integer> capacities) {
         if (quantity < 1 || quantity > 896 || maxSources < 1 || maxSources > 14
                 || stackLimit < 1 || stackLimit > 64
+                || capacities.size() != initial.size()
+                || capacities.stream().anyMatch(limit -> limit == null || limit < 0)
                 || sources.isEmpty() || destinations.isEmpty()
+                || sources.stream().anyMatch(slot -> slot < 0 || slot >= initial.size())
+                || destinations.stream().anyMatch(slot -> slot < 0 || slot >= initial.size())
                 || new HashSet<>(sources).size() != sources.size()
                 || new HashSet<>(destinations).size() != destinations.size()
                 || sources.stream().anyMatch(destinations::contains)) return Optional.empty();
@@ -49,16 +64,20 @@ final class ExactInventoryTransfer {
             var original = initial.get(source);
             if (original.empty() || !original.itemId().equals(item)
                     || (defaultOnly && original.itemAndComponentsHash() != defaultHash)) continue;
-            if (original.count() > stackLimit || ++usedSources > maxSources) return Optional.empty();
+            if (original.count() > capacities.get(source) || ++usedSources > maxSources) return Optional.empty();
             for (int destination : destinations) {
                 var from = slots.get(source);
                 var to = slots.get(destination);
                 if (from.empty() || remaining == 0) break;
                 if (!to.empty() && !sameItem(from, to)) continue;
-                if (to.count() > stackLimit) return Optional.empty();
-                int moved = Math.min(remaining, Math.min(from.count(), stackLimit - to.count()));
+                int sourceLimit = capacities.get(source);
+                int destinationLimit = capacities.get(destination);
+                // One side must be an ordinary player slot. This also bounds the search space.
+                if (Math.min(sourceLimit, destinationLimit) > stackLimit
+                        || to.count() > destinationLimit) return Optional.empty();
+                int moved = Math.min(remaining, Math.min(from.count(), destinationLimit - to.count()));
                 if (moved == 0) continue;
-                var path = split(from.count(), to.count(), moved, stackLimit,
+                var path = split(from.count(), to.count(), moved, sourceLimit, destinationLimit,
                         MAX_CLICKS - clicks.size());
                 if (path.isEmpty()) return Optional.empty();
                 var transitions = path.orElseThrow();
@@ -78,9 +97,10 @@ final class ExactInventoryTransfer {
         return Optional.empty();
     }
 
-    /** At most 65*65 states: both normal slots contain the same item/components. */
+    /** Simulate ordinary Menu PICKUP transitions with a finite search bound. */
     private static Optional<List<Transition>> split(
-            int source, int destination, int quantity, int limit, int maxClicks) {
+            int source, int destination, int quantity,
+            int sourceLimit, int destinationLimit, int maxClicks) {
         var start = new Counts(source, destination, 0);
         var goal = new Counts(source - quantity, destination + quantity, 0);
         var queue = new ArrayDeque<Search>();
@@ -103,6 +123,7 @@ final class ExactInventoryTransfer {
                     var before = current.counts();
                     int slot = fromSource ? before.source() : before.destination();
                     int cursor = before.cursor();
+                    int limit = fromSource ? sourceLimit : destinationLimit;
                     int amount = cursor == 0
                             ? (button == 0 ? slot : Math.ceilDiv(slot, 2))
                             : Math.min(button == 0 ? cursor : 1, limit - slot);
@@ -111,8 +132,11 @@ final class ExactInventoryTransfer {
                     int afterCursor = cursor == 0 ? amount : cursor - amount;
                     var after = new Counts(fromSource ? afterSlot : before.source(),
                             fromSource ? before.destination() : afterSlot, afterCursor);
-                    if (visited.add(after)) queue.addLast(new Search(after, current,
-                            new Transition(fromSource, button, after), current.depth() + 1));
+                    if (visited.add(after)) {
+                        if (visited.size() > MAX_SEARCH_STATES) return Optional.empty();
+                        queue.addLast(new Search(after, current,
+                                new Transition(fromSource, button, after), current.depth() + 1));
+                    }
                 }
             }
         }
@@ -169,6 +193,7 @@ final class ExactInventoryTransfer {
     int confirmedCount() { return confirmedCount; }
     int confirmedGroups() { return confirmedGroups; }
     int clickCount() { return clicks.size(); }
+    long dispatchRevision() { return dispatchRevision; }
     List<Click> clicks() { return clicks; }
 
     private static boolean sameItem(StackFingerprint left, StackFingerprint right) {

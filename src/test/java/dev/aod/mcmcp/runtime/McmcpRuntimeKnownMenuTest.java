@@ -17,6 +17,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class McmcpRuntimeKnownMenuTest {
     @Test
+    void storageTransferReservesOpeningReadbackAndFourteenClicksAndRequiresLocalSafety() {
+        var operation = new ActionDsl.OperateKnownMenu("storage", "abcdefghijklmnopqrstuvwx", "take", "minecraft:red_dye", 24);
+        var request = InventoryRequests.knownMenuRequest(operation, new BlockTarget("minecraft:overworld", 1, 64, 2));
+        assertThat(request.parameters()).containsEntry("operation", "take").containsEntry("transfer_count", 24);
+        assertThat(request.expectedUnits()).isEqualTo(24);
+        assertThat(request.bounds().maxDurationSeconds()).isEqualTo(80);
+        assertThat(ActionPlanning.structuralPrimitiveCost(operation).orElseThrow())
+                .isEqualTo(new ActionDslCompiler.Cost(80000, 1600, 0, 0, 16, 0, 0));
+        assertThat(ActionPlanning.actionAdmissionRequiresLocalSafety(new ActionDsl.Program(
+                1, Optional.empty(), Set.of(ActionDsl.Capability.INVENTORY_TRANSFER), List.of(operation)))).isTrue();
+    }
+    @Test
     void opaqueMenuOperationUsesOneStationaryBoundedAdapterRequest() {
         var operation = new ActionDsl.OperateKnownMenu(
                 "transfer", "abcdefghijklmnopqrstuvwx");

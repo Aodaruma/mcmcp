@@ -43,6 +43,14 @@ public final class ActionDslCompiler {
     public static final long KNOWN_MENU_OPERATION_DURATION_MILLIS =
             KNOWN_MENU_OPERATION_TICKS * NOMINAL_TICK_MILLIS;
     public static final long KNOWN_MENU_OPERATION_INTERACTIONS = 1L;
+
+    public static long knownMenuTicks(ActionDsl.OperateKnownMenu menu) {
+        return menu.opensStorage() && !"inspect".equals(menu.operation()) ? 1600L : KNOWN_MENU_OPERATION_TICKS;
+    }
+
+    public static long knownMenuInteractions(ActionDsl.OperateKnownMenu menu) {
+        return menu.opensStorage() && !"inspect".equals(menu.operation()) ? 16L : 1L;
+    }
     public static final long KNOWN_FISHING_TICKS = 80L;
     public static final int KILL_ZONE_EFFECT_RESERVE_TICKS = 10;
     public static final long KNOWN_FISHING_DURATION_MILLIS =
@@ -266,12 +274,12 @@ public final class ActionDslCompiler {
                         || cost.ticks() != knownSmeltingTicks(smelt.maxSmelts())) {
                     throw unprovable("smelt_known_recipe has an invalid primitive time bound");
                 }
-            } else if (node instanceof ActionDsl.OperateKnownMenu) {
+            } else if (node instanceof ActionDsl.OperateKnownMenu menu) {
                 requireMutationCost(
-                        cost, KNOWN_MENU_OPERATION_INTERACTIONS, 0, 0,
+                        cost, knownMenuInteractions(menu), 0, 0,
                         "operate_known_menu");
-                if (cost.durationMillis() != KNOWN_MENU_OPERATION_DURATION_MILLIS
-                        || cost.ticks() != KNOWN_MENU_OPERATION_TICKS
+                if (cost.durationMillis() != knownMenuTicks(menu) * 50L
+                        || cost.ticks() != knownMenuTicks(menu)
                         || cost.cameraDegrees() != 0) {
                     throw unprovable("operate_known_menu has an invalid primitive bound");
                 }
