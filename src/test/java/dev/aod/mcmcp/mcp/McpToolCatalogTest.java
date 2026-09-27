@@ -32,6 +32,26 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class McpToolCatalogTest {
     @Test
+    void recipeScopeDiagnosticsMatchTheClosedSchemaForUnavailableAndPartialSources() {
+        var schema = new McpToolCatalog().outputSchema("agent_get_state")
+                .getAsJsonObject("$defs").getAsJsonObject("recipe_query");
+        var gson = new GsonBuilder().serializeNulls().create();
+        for (boolean available : List.of(false, true)) {
+            var source = new dev.aod.mcmcp.observation.ClientSyncedRecipes.Snapshot(
+                    available ? 1 : 0, available, List.of(), List.of(), available ? 1 : 0, false, false);
+            var coverage = new dev.aod.mcmcp.observation.ClientRecipeCatalog.Coverage(
+                    0, 0, 0, false, dev.aod.mcmcp.observation.RecipeScope.ALL_CRAFTABLE, source);
+            var result = new dev.aod.mcmcp.observation.ClientRecipeCatalog.QueryResult(
+                    new dev.aod.mcmcp.observation.ClientRecipeCatalog.Basis(UUID.randomUUID(), 0, 1),
+                    coverage, List.of());
+            var json = gson.toJsonTree(result.toMap());
+            assertThat(CatalogSchemaValidator.matches(schema, json)).isTrue();
+            json.getAsJsonObject().getAsJsonObject("coverage").addProperty("absence_proven", true);
+            assertThat(CatalogSchemaValidator.matches(schema, json)).isFalse();
+        }
+    }
+
+    @Test
     void exactContainerQuantityIsOptionalBoundedAndDiscoverable() {
         var definitions = new McpToolCatalog().inputSchema("agent_start_action").getAsJsonObject("$defs");
         for (String name : List.of("takeContainerStackNode", "storeContainerStackNode")) {

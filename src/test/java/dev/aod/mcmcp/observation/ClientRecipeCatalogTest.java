@@ -24,6 +24,59 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ClientRecipeCatalogTest {
     @Test
+    void scopeSwitchAndSourceReloadInvalidateRefsWithoutAuthorizingAdditionalRecipes() {
+        var catalog = new ClientRecipeCatalog();
+        UUID session = UUID.randomUUID();
+        var known = List.of(shapeless(1, Items.OAK_LOG, Items.OAK_PLANKS, 4));
+        var source = new ClientSyncedRecipes.Snapshot(1, true,
+                List.of(shapeless(-1, Items.STONE, Items.STICK, 1)),
+                List.of("minecraft:crafting"), 1, false, false);
+        catalog.refresh(session, 1, known, RecipeScope.UNLOCKED, source);
+        var old = recipe(catalog, session, "minecraft:oak_planks");
+        assertThat(catalog.query(session, new ClientRecipeCatalog.Query(
+                ClientRecipeCatalog.QueryKind.RESULT_ITEM, "minecraft:stick"), 1).recipes()).isEmpty();
+
+        assertThat(catalog.refresh(session, 2, known, RecipeScope.ALL_CRAFTABLE, source)
+                .recipeBookRevision()).isEqualTo(2);
+        assertThat(catalog.resolve(session, old.recipeRef(), old.fingerprint())).isEmpty();
+        var additional = recipe(catalog, session, "minecraft:stick");
+        assertThat(additional.supported()).isFalse();
+        assertThat(additional.unsupportedReason()).isEqualTo("client_synced_lookup_only");
+        assertThat(additional.toMap()).containsEntry("materials_status", "not_assessed")
+                .containsEntry("equipment_status", "not_assessed")
+                .containsEntry("source", "neoforge_recipes_received");
+        assertThat(catalog.resolve(session, additional.recipeRef(), additional.fingerprint())).isEmpty();
+        assertThat(recipe(catalog, session, "minecraft:oak_planks").supported()).isTrue();
+        assertThat(catalog.refresh(session, 3, known, RecipeScope.ALL_CRAFTABLE, source)
+                .recipeBookRevision()).isEqualTo(2);
+        var beforeReload = recipe(catalog, session, "minecraft:oak_planks");
+        var reload = new ClientSyncedRecipes.Snapshot(2, true, source.entries(), source.recipeTypes(), 1, false, false);
+        assertThat(catalog.refresh(session, 4, known, RecipeScope.ALL_CRAFTABLE, reload)
+                .recipeBookRevision()).isEqualTo(3);
+        assertThat(catalog.resolve(session, beforeReload.recipeRef(), beforeReload.fingerprint())).isEmpty();
+        assertThat(catalog.refresh(session, 5, known, RecipeScope.UNLOCKED, reload)
+                .recipeBookRevision()).isEqualTo(4);
+    }
+
+    @Test
+    void unavailableOrPartialSourcesAndZeroMatchesNeverProveAbsence() {
+        var catalog = new ClientRecipeCatalog();
+        UUID session = UUID.randomUUID();
+        for (var source : List.of(ClientSyncedRecipes.Snapshot.unavailable(),
+                new ClientSyncedRecipes.Snapshot(1, true, List.of(), List.of("minecraft:crafting"), 2, true, true))) {
+            catalog.refresh(session, 0, List.of(), RecipeScope.ALL_CRAFTABLE, source);
+            var result = catalog.query(session, new ClientRecipeCatalog.Query(
+                    ClientRecipeCatalog.QueryKind.RESULT_ITEM, "minecraft:stick"), 1);
+            assertThat(result.recipes()).isEmpty();
+            assertThat(result.coverage().toMap()).containsEntry("complete", false)
+                    .containsEntry("absence_proven", false)
+                    .containsEntry("scope_label", "すべての作成可能なレシピ");
+            assertThat(((java.util.Map<?, ?>) result.coverage().toMap().get("additional_source")).get("status"))
+                    .isEqualTo(source.available() ? "partial" : "unavailable");
+        }
+    }
+
+    @Test
     void exposesOnlyKnownClientDisplaysWithOpaqueSessionScopedReferences() {
         var catalog = new ClientRecipeCatalog();
         UUID session = UUID.randomUUID();

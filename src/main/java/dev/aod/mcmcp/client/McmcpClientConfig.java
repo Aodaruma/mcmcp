@@ -20,6 +20,11 @@ public final class McmcpClientConfig {
     public static final int DEFAULT_RECOVERY_MAX_BREAKS = 4;
 
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
+    private static final ModConfigSpec.EnumValue<dev.aod.mcmcp.observation.RecipeScope> RECIPE_SCOPE = BUILDER
+            .comment("UNLOCKED: 解放済みのレシピのみ（既定）",
+                    "ALL_CRAFTABLE: すべての作成可能なレシピ。既存MODが同期した公開client情報の範囲に限定。",
+                    "全件取得・材料充足・自動craft対応を保証せず、解放状態を変更しません。")
+            .defineEnum("recipe_scope", dev.aod.mcmcp.observation.RecipeScope.UNLOCKED);
     private static final ModConfigSpec.BooleanValue ENDPOINT_ENABLED = BUILDER
             .comment("Start the loopback-only embedded MCP endpoint")
             .define("endpoint_enabled", true);
@@ -107,6 +112,10 @@ public final class McmcpClientConfig {
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     private McmcpClientConfig() { }
+
+    public static dev.aod.mcmcp.observation.RecipeScope recipeScope() {
+        return RECIPE_SCOPE.get();
+    }
 
     public static boolean endpointEnabled() {
         return ENDPOINT_ENABLED.get();

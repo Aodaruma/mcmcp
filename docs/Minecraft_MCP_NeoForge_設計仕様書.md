@@ -1316,6 +1316,16 @@ Phase 3完成時に追加する上限:
 
 ### 9.7 crafting・精錬・workstation・MOD互換 — Phase 4
 
+レシピ参照の `mcmcp-client.toml` 設定 `recipe_scope` は `UNLOCKED`（**解放済みのレシピのみ**）を既定とし、`ALL_CRAFTABLE`（**すべての作成可能なレシピ**）へ切り替えられる。「作成可能」はワールドで有効なレシピの参照方針であり、全件取得、手持ち材料・設備の充足、自動craft対応を意味しない。ゲーム内の解放状態は変更しない。
+
+追加情報源はNeoForge 26.2.0.59の公開 `RecipesReceivedEvent` だけとする。既存MODが通常同期したrecipe型の `Recipe.display()` を読み、MCMCP側からserver companion・独自handshake・同期要求を追加しない。JEI固有API・内部cache・integrated serverのRecipeManager・ローカルdatapackは参照しない。同期しない環境でも既存recipe bookを利用できる。追加MODの導入は自動で行わない。
+
+`recipe_query.coverage` は設定名、主情報源と追加情報源、追加同期の利用不能／部分取得、受信型、表示を得られなかったrecipe数、上限打切り、固定失敗フラグを返す。`complete=false`・`absence_proven=false` を維持し、検索0件を不存在と断定しない。受信recipeは最大4,096件、displayは16,384件、公開型名は128件に制限する。表示のない特殊recipeは件数に含めて省略する。追加経路はレシピブックとの重複を含み得るため、既存情報源を優先して検索結果を返す。
+
+各recipeの `supported` は従来の自動craft対応判定であり、材料・設備の現在状態はそれぞれ `materials_status=not_assessed`・`equipment_status=not_assessed` と明示する。追加情報源はすべて `supported=false`、`unsupported_reason=client_synced_lookup_only` とし、実行用resolveでも拒否する。成分継承・独自材料を通常craftとして実行せず、材料表のない表示から材料を推測しない。追加情報源のingredientsは空であり、材料不要を意味しない。
+
+設定切替、接続・world/session境界、公開同期の再受信、既知display内容・結果tag変更でrevision／参照を失効させる。同期済み表示は接続instanceに束縛し、同接続のdimension変更・respawnでは新sessionで参照を再発行する。disconnect／shutdownで受信情報を破棄する。実機のMagnet upgrade取得とJEI固有表示の網羅性は未確認であり、対応完了の証拠にしない。調査根拠と検証条件は [Issue #71の記録](experiments/20260927_issue71_recipe_scope.md) に残す。
+
 現在の公開Action DSLは、既存のrecipe / container / screen同期基盤を直接再利用したcrafting-table限定の`craft_known_recipe`、furnace familyでexact stack 1〜64個を処理する`smelt_known_recipe`、共通Menu kernelの`operate_known_menu`を含む。最後のものは、ユーザーが現在開いているexactなVanilla `generic_9x1`〜`generic_9x6`純storage、または`Sophisticated Backpacks 3.25.90 + Sophisticated Core 1.4.99`の通常`backpack`画面だけを受理し、stateが発行したsingle-use `operation_ref`で通常最大数以下の1 stack全量をplayer inventoryへQUICK_MOVEする。player 2×2、専用workstation、backpack内upgrade / craft / smeltは未実装であり、製品機能として利用可能とは扱わない。
 
 公開Toolは5件のままとし、クラフトやworkstationごとのMCP Tool、raw slot番号・画面座標・key/mouse・packetを追加しない。recipe検索は既存のquery / output / resolve契約を固定5 Toolのread pathへ委譲し、第二の検索文法を作らない。`recipe_ref`とfingerprintはworld sessionとrecipe catalog revisionへ束縛し、`craft_known_recipe`開始時と各craft前に再解決する。実行は`agent_start_action`の閉じたsemantic opcodeだけを使う。
