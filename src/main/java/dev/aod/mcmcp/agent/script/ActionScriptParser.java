@@ -1,8 +1,11 @@
 package dev.aod.mcmcp.agent.script;
 
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
 
@@ -20,6 +23,7 @@ final class ActionScriptParser {
     private final String source;
     private final Set<String> commands;
     private final BooleanSupplier cancelled;
+    private final Map<String, Node> functions = new LinkedHashMap<>();
     private int offset, nodes, nesting;
     private Token token;
 
@@ -34,8 +38,87 @@ final class ActionScriptParser {
 
     Node parse() {
         var statements = new ArrayList<Node>();
-        while (!token.kind().equals("end")) statements.add(statement());
-        return node("block", "", null, statements);
+        while (!token.kind().equals("end")) statements.add(take("function") ? function() : statement());
+        Node root = node("block", "", null, statements);
+        validate(root);
+        return root;
+    }
+
+    Map<String, Node> functions() { return Map.copyOf(functions); }
+
+    private Node function() {
+        String name = bindingName();
+        if (functions.containsKey(name)) invalid("Duplicate function: " + name);
+        expect("(");
+        var parameters = new ArrayList<Node>();
+        var names = new HashSet<String>();
+        if (!is(")")) {
+            do {
+                String parameter = bindingName();
+                if (!names.add(parameter)) invalid("Duplicate parameter: " + parameter);
+                parameters.add(node("parameter", parameter, null));
+            } while (take(","));
+        }
+        expect(")");
+        parameters.add(block());
+        Node definition = node("function", name, null, parameters);
+        functions.put(name, definition);
+        return definition;
+    }
+
+    // Validate all bodies, including unused helpers and unreachable branches, without expansion.
+    private void validate(Node root) {
+        var dependencies = new LinkedHashMap<String, Set<String>>();
+        for (var entry : functions.entrySet()) {
+            var calls = new HashSet<String>();
+            validateCalls(entry.getValue().children().getLast(), calls);
+            dependencies.put(entry.getKey(), calls);
+        }
+        validateCalls(root, new HashSet<>());
+        var callers = new LinkedHashMap<String, List<String>>();
+        var remaining = new LinkedHashMap<String, Integer>();
+        var depths = new LinkedHashMap<String, Integer>();
+        var ready = new ArrayDeque<String>();
+        for (var entry : dependencies.entrySet()) {
+            checkCancelled();
+            remaining.put(entry.getKey(), entry.getValue().size());
+            depths.put(entry.getKey(), 1);
+            if (entry.getValue().isEmpty()) ready.add(entry.getKey());
+            for (String callee : entry.getValue())
+                callers.computeIfAbsent(callee, key -> new ArrayList<>()).add(entry.getKey());
+        }
+        int visited = 0;
+        int maximum = 0;
+        while (!ready.isEmpty()) {
+            checkCancelled();
+            String callee = ready.remove();
+            visited++;
+            maximum = Math.max(maximum, depths.get(callee));
+            for (String caller : callers.getOrDefault(callee, List.of())) {
+                checkCancelled();
+                depths.put(caller, Math.max(depths.get(caller), depths.get(callee) + 1));
+                if (remaining.merge(caller, -1, Integer::sum) == 0) ready.add(caller);
+            }
+        }
+        if (visited != functions.size()) invalid("Recursive function cycle");
+        if (maximum > MAX_CALL_DEPTH) throw new Stop(Status.LIMIT, "Function call depth limit");
+    }
+
+    private void validateCalls(Node node, Set<String> dependencies) {
+        checkCancelled();
+        if (node.kind().equals("function")) return; // Each body is checked separately.
+        if (node.kind().equals("call") && !commands.contains(node.text())) {
+            Node function = functions.get(node.text());
+            if (function == null) invalid("Unknown call: " + node.text());
+            var parameters = new HashSet<String>();
+            for (Node parameter : function.children())
+                if (parameter.kind().equals("parameter")) parameters.add(parameter.text());
+            for (Node argument : node.children())
+                if (!parameters.remove(argument.text())) invalid("Extra argument: " + argument.text());
+            if (!parameters.isEmpty()) invalid("Missing function arguments: " + node.text());
+            dependencies.add(node.text());
+        }
+        for (Node child : node.children()) validateCalls(child, dependencies);
     }
 
     private Node statement() {
@@ -86,7 +169,6 @@ final class ActionScriptParser {
                 expect(";");
                 return result;
             }
-            if (!commands.contains(name)) invalid("Unknown command: " + name);
             expect("(");
             var args = new ArrayList<Node>();
             var names = new HashSet<String>();
@@ -107,7 +189,7 @@ final class ActionScriptParser {
     }
 
     private Node binding(String kind) {
-        String name = identifier();
+        String name = bindingName();
         expect("=");
         return node(kind, name, null, expression(0));
     }
@@ -222,6 +304,11 @@ final class ActionScriptParser {
         advance();
         return name;
     }
+    private String bindingName() {
+        String name = identifier();
+        if (commands.contains(name)) invalid("Command name cannot be shadowed: " + name);
+        return name;
+    }
     private boolean is(String text) {
         return !token.kind().equals("string") && token.text().equals(text);
     }
@@ -233,9 +320,13 @@ final class ActionScriptParser {
     private void expect(String text) { if (!take(text)) invalid("Expected " + text); }
     private void invalid(String detail) { throw new Stop(Status.INVALID, detail + " at " + token.offset()); }
 
-    private void advance() {
+    private void checkCancelled() {
         if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
-            throw new Stop(Status.CANCELLED, "Cancelled while parsing");
+            throw new Stop(Status.CANCELLED, "Cancelled while parsing or validating");
+    }
+
+    private void advance() {
+        checkCancelled();
         while (offset < source.length() && Character.isWhitespace(source.charAt(offset))) offset++;
         int start = offset;
         if (offset == source.length()) {

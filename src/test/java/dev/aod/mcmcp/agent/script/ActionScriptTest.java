@@ -26,6 +26,162 @@ class ActionScriptTest {
     }
 
     @Test
+    void helpersComposeWithForwardCallsNamedArgumentsAndIndependentLocals() {
+        var result = run("""
+                let x=90;
+                row(count=2, start=10);
+                row(start=x, count=1);
+                move(x=x);
+                function row(start, count) {
+                    for(let i=0;i<count;i++) { pair(x=start+i, active=i==0); }
+                }
+                function pair(x, active) {
+                    let local=x;
+                    if(active) { repeat(2) { move(x=local); local=local+1; } }
+                    else { place(x=local); }
+                    x=0;
+                }
+                """);
+        assertThat(result.status()).isEqualTo(Status.SUCCESS);
+        assertThat(result.iterations()).isEqualTo(7);
+        assertThat(result.calls()).isEqualTo(6);
+        assertThat(sent).extracting(Command::name).containsExactly("move", "move", "place", "move", "move", "move");
+        assertThat(sent).extracting(c -> c.arguments().get("x")).containsExactly(10.0, 11.0, 11.0, 90.0, 91.0, 90.0);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "function f(){} function f(){}",
+            "function f(x,x){}",
+            "function move(){}",
+            "function f(move){}",
+            "function f(){let move=1;}",
+            "if(false){let move=1;}",
+            "function f(){unknown();}",
+            "function f(){if(false){f();}}",
+            "function f(){g();} function g(){f();}",
+            "function f(x){} if(false){f();}",
+            "function f(x){} function unused(){f(y=1);}",
+            "function f(x){} f(x=1,y=2);",
+            "function f(x){} f(x=1,x=2);",
+            "function f(x=1){}",
+            "function f(){function g(){}}",
+            "if(false){function f(){}}",
+            "function f(){return;}",
+            "function f(){return 1;}",
+            "function f(){} let x=f();",
+            "function f(){} f(1);"
+    })
+    void invalidHelperGraphsAreRejectedBeforeAnySinkCommand(String source) {
+        var result = run("move();" + source);
+        assertThat(result.status()).isEqualTo(Status.INVALID);
+        assertThat(result.calls()).isZero();
+        assertThat(result.work()).isZero();
+        assertThat(sent).isEmpty();
+    }
+
+    @Test
+    void helpersCannotCaptureCallerOrGlobalVariablesOrLeakTheirLocals() {
+        for (String source : List.of(
+                "let x=1; function f(){move(x=x);} f();",
+                "function f(){x=2;} let x=1; f();",
+                "function f(x){g();} function g(){move(x=x);} f(x=1);",
+                "function f(){let x=1;} f(); move(x=x);")) {
+            assertThat(run(source).status()).isEqualTo(Status.INVALID);
+            assertThat(sent).isEmpty();
+        }
+    }
+
+    private static String helperChain(int depth) {
+        var source = new StringBuilder("f0();");
+        for (int i=0; i<depth; i++) {
+            source.append("function f").append(i).append("(){");
+            source.append(i+1 == depth ? "move();" : "f" + (i+1) + "();");
+            source.append("}");
+        }
+        return source.toString();
+    }
+
+    @Test
+    void helperDepthAndDeclarationAstAreBoundedBeforeDispatch() {
+        assertThat(run(helperChain(MAX_CALL_DEPTH)).status()).isEqualTo(Status.SUCCESS);
+        assertThat(sent).hasSize(1);
+        sent.clear();
+        assertThat(run("move();" + helperChain(MAX_CALL_DEPTH+1)).detail()).isEqualTo("Function call depth limit");
+        assertThat(run("move(); function unused(){" + "let x=0;".repeat(2100) + "}").detail())
+                .isEqualTo("AST node limit");
+        assertThat(run("function unused(){" + "repeat(1){".repeat(100) + "}".repeat(101)).status())
+                .isEqualTo(Status.LIMIT);
+        assertThat(sent).isEmpty();
+    }
+
+    @Test
+    void helpersShareWorkIterationAndSinkBudgetsAcrossInvocations() {
+        String source = "function f(){repeat(2){move();}} f(); f();";
+        var iterations = run(source, new Budget(100, 3, 10));
+        assertThat(iterations.status()).isEqualTo(Status.LIMIT);
+        assertThat(iterations.iterations()).isEqualTo(2);
+        assertThat(iterations.completed()).isEqualTo(2);
+        sent.clear();
+        var calls = run(source, new Budget(100, 10, 3));
+        assertThat(calls.detail()).isEqualTo("Call limit");
+        assertThat(calls.calls()).isEqualTo(3);
+        assertThat(calls.completed()).isEqualTo(3);
+        assertThat(sent).hasSize(3);
+        var exact = run("function f(){} f(); f();", new Budget(6, 0, 0));
+        assertThat(exact.status()).isEqualTo(Status.SUCCESS); // root, declaration, two calls and bodies
+        var work = run("function f(){} f(); f();", new Budget(5, 0, 0));
+        assertThat(work.detail()).isEqualTo("Work limit");
+        assertThat(work.work()).isEqualTo(5);
+        var loop = run("function f(){for(let i=0;true;i=i){}} f();", new Budget(100, 4, 0));
+        assertThat(loop.detail()).isEqualTo("Iteration limit");
+        assertThat(loop.iterations()).isEqualTo(4);
+    }
+
+    @Test
+    void nestedHelpersPreservePartialResultsOnFailureExceptionAndCancellation() {
+        String source = "function outer(){inner(); input();} function inner(){move(); place();} outer();";
+        for (int mode=0; mode<4; mode++) {
+            sent.clear();
+            int failureMode = mode;
+            var cancelled = new AtomicBoolean();
+            var result = ActionScript.run(source, COMMANDS, (command, signal) -> {
+                sent.add(command);
+                if (!command.name().equals("place")) return Outcome.SUCCESS;
+                if (failureMode == 0) return Outcome.FAILURE;
+                if (failureMode == 1) throw new IllegalStateException("private detail");
+                if (failureMode == 2) return Outcome.CANCELLED;
+                cancelled.set(true);
+                assertThat(signal.getAsBoolean()).isTrue();
+                return Outcome.SUCCESS;
+            }, cancelled::get, DEFAULT_BUDGET);
+            assertThat(result.status()).isEqualTo(mode < 2 ? Status.FAILED : Status.CANCELLED);
+            assertThat(result.calls()).isEqualTo(2);
+            assertThat(result.completed()).isEqualTo(mode == 3 ? 2 : 1);
+            assertThat(result.detail()).doesNotContain("private detail");
+            assertThat(sent).extracting(Command::name).containsExactly("move", "place");
+        }
+    }
+
+    @Test
+    void cancellationStopsHelperValidationAndPureFunctionWork() {
+        String source = helperChain(MAX_CALL_DEPTH);
+        var parseChecks = new AtomicInteger();
+        new ActionScriptParser(source, COMMANDS, () -> { parseChecks.incrementAndGet(); return false; }).parse();
+        var checks = new AtomicInteger();
+        var validation = ActionScript.run(source, COMMANDS, sink,
+                () -> checks.incrementAndGet() >= parseChecks.get(), DEFAULT_BUDGET);
+        assertThat(validation.status()).isEqualTo(Status.CANCELLED);
+        assertThat(validation.work()).isZero();
+        checks.set(0);
+        var pure = ActionScript.run("function f(){for(let i=0;true;i=i){}} f();", COMMANDS, sink,
+                () -> checks.incrementAndGet() > 200, DEFAULT_BUDGET);
+        assertThat(pure.status()).isEqualTo(Status.CANCELLED);
+        assertThat(pure.iterations()).isPositive();
+        assertThat(sent).isEmpty();
+    }
+
+    @Test
     void namedArgumentsEvaluateExpressionsWithoutAssigningVariables() {
         var result = run("let x=7; move(x=100, y=8*8, z=120); move(x=x);");
         assertThat(result.status()).isEqualTo(Status.SUCCESS);

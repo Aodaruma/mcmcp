@@ -13,6 +13,7 @@ final class ActionScript {
     static final int MAX_SOURCE = 32_768;
     static final int MAX_NODES = 4_096;
     static final int MAX_DEPTH = 64;
+    static final int MAX_CALL_DEPTH = 16;
     static final Budget DEFAULT_BUDGET = new Budget(100_000, 10_000, 1_000);
 
     record Budget(int work, int iterations, int calls) {
@@ -36,7 +37,9 @@ final class ActionScript {
         var execution = new Execution(budget, cancelled, sink);
         try {
             execution.checkCancelled();
-            var program = new ActionScriptParser(source, Set.copyOf(commands), cancelled).parse();
+            var parser = new ActionScriptParser(source, Set.copyOf(commands), cancelled);
+            var program = parser.parse();
+            execution.functions = parser.functions();
             execution.eval(program, new Scope(null));
             execution.checkCancelled();
             return execution.result(Status.SUCCESS, "");
@@ -66,6 +69,8 @@ final class ActionScript {
         final BooleanSupplier cancelled;
         final Sink sink;
         int work, iterations, calls, completed;
+        int callDepth;
+        Map<String, ActionScriptParser.Node> functions = Map.of();
 
         Execution(Budget budget, BooleanSupplier cancelled, Sink sink) {
             this.budget = Objects.requireNonNull(budget);
@@ -94,6 +99,7 @@ final class ActionScript {
             step();
             var children = node.children();
             return switch (node.kind()) {
+                case "function" -> null;
                 case "literal" -> node.value();
                 case "variable" -> scope.owner(node.text()).values.get(node.text());
                 case "array" -> {
@@ -149,6 +155,19 @@ final class ActionScript {
                     var args = new LinkedHashMap<String, Object>();
                     for (var arg : children) args.put(arg.text(), eval(arg.children().getFirst(), scope));
                     checkCancelled();
+                    var function = functions.get(node.text());
+                    if (function != null) {
+                        if (callDepth == MAX_CALL_DEPTH) throw new Stop(Status.LIMIT, "Function call depth limit");
+                        var local = new Scope(null); // No caller/global capture or closures.
+                        local.values.putAll(args);
+                        callDepth++;
+                        try {
+                            eval(function.children().getLast(), local);
+                        } finally {
+                            callDepth--;
+                        }
+                        yield null;
+                    }
                     if (calls == budget.calls()) throw new Stop(Status.LIMIT, "Call limit");
                     calls++;
                     Outcome outcome;
