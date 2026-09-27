@@ -1124,18 +1124,15 @@ class McpToolCatalogTest {
                 .filter(tool -> tool.get("name").getAsString().equals("agent_get_observation"))
                 .findFirst().orElseThrow().get("description").getAsString();
         assertThat(observation)
-                .contains("Use the smallest useful limit")
-                .contains("Use optional filter")
-                .contains("displayed_items")
-                .contains("faces")
-                .contains("before the one-face-per-position representative")
-                .contains("position_bounds")
-                .contains("traversability at navigation_target")
-                .contains("two paged queries")
-                .contains("On FRAME_EXPIRED, call agent_get_state")
-                .contains("observation.latest_frame_id");
+                .contains("With no arguments, atomically pins and returns the latest observation frame")
+                .contains("default omits unknown_boundary")
+                .contains("absence never means air")
+                .contains("pass schema_version=1")
+                .contains("call with no arguments to read the newest frame");
 
         var observationSchema = new McpToolCatalog().inputSchema("agent_get_observation");
+        assertThat(CatalogSchemaValidator.matches(
+                observationSchema, JsonParser.parseString("{}").getAsJsonObject())).isTrue();
         var filteredObservation = JsonParser.parseString("""
                 {"schema_version":1,"frame_id":"obs-0000000000000000",
                  "kinds":["visible_surface","visible_entity","traversability"],

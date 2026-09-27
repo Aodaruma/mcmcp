@@ -818,7 +818,7 @@
     {
       "name": "agent_get_observation",
       "title": "Get MCMCP Observation",
-      "description": "Returns a stable, paged projection of one policy-filtered omnidirectional frame; it accepts no arbitrary center or radius. Ask for one purpose at a time: crop/chest/gate=visible_surface, drops or item-frame labels=visible_entity, route=traversability. Use optional filter to return only relevant block_ids, faces, entity_types, displayed_items, crop_mature, or one inclusive position_bounds; filters applicable to a record kind are ANDed and only remove already-policy-visible records, so they cannot weaken safety evidence or expose hidden state. Query labels with entity_types=[\"minecraft:item_frame\",\"minecraft:glow_item_frame\"]; a non-empty frame directly attached to a policy-visible single wooden/copper chest or barrel face may include container_label. displayed_items remains exclusive to dropped minecraft:item entities. faces filters visible_surface before the one-face-per-position representative is selected. position_bounds anchors visible_surface at position, visible_entity/hazard/unknown_boundary/sound_clue at floor(position), and traversability at navigation_target. For harvest use {block_ids:[\"minecraft:wheat\"],crop_mature:true}; for drops use {entity_types:[\"minecraft:item\"],displayed_items:[\"minecraft:wheat\",\"minecraft:wheat_seeds\"]}. visible_surface is one representative face per block position and is ordered mature crop, immature crop, then other surfaces, near-first. Every visible_surface includes required nullable state, placement_item, and placement_state_ref fields. state is complete only for the closed construction copy/support and furnace-family target allowlist, plus exact source water used as a fishing cast witness; non-source water and all other blocks remain null so non-rendered properties never cross the visual boundary. A non-null placement_item has a non-null state and session-scoped opaque placement_state_ref. The ref becomes usable only after successful response delivery, survives the 60-second coordinate-evidence TTL, and is cleared at the world-session boundary; target/support/pose evidence remains current and JIT-checked. Use the smallest useful limit. If next_cursor is non-null, either continue that exact frame/kinds/filter query immediately or allow its bounded 60-second lease to expire; abandoning two paged queries makes a third root query SERVER_BUSY. Only static visible_surface coordinate records actually returned may remain planner-usable for at most 60 seconds; dynamic records, including container labels, are never extended. On FRAME_EXPIRED, call agent_get_state and retry with observation.latest_frame_id.",
+      "description": "With no arguments, atomically pins and returns the latest observation frame, up to 64 visible surfaces, visible entities, traversability records, and hazards. The default omits unknown_boundary and sound_clue records; absence never means air. For precise evidence or paging, pass schema_version=1, an announced frame_id, kinds, cursor=null on the first page, limit=1..256, and optional filter. Filters only narrow already visible records and do not scan unseen world state. If a frame expires, call with no arguments to read the newest frame.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -892,7 +892,10 @@
           },
           "limit": {"type": "integer", "minimum": 1, "maximum": 256}
         },
-        "required": ["schema_version", "frame_id", "kinds", "cursor", "limit"]
+        "oneOf": [
+          {"maxProperties": 0},
+          {"required": ["schema_version", "frame_id", "kinds", "cursor", "limit"], "minProperties": 5}
+        ]
       },
       "outputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",

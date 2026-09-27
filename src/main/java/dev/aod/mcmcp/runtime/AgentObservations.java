@@ -98,6 +98,22 @@ final class AgentObservations {
     }
 
     PreparedObservationPage getAgentObservation(Map<String, Object> arguments) {
+        if (arguments.isEmpty()) {
+            String frameId = agentObservationFrames.announceLatestSummary()
+                    .orElseThrow(() -> new RuntimeInvocationException(
+                            "frame_expired", "No observation frame is available yet.", true, Map.of()))
+                    .latestFrameId();
+            arguments = new LinkedHashMap<>();
+            arguments.put("schema_version", 1);
+            arguments.put("frame_id", frameId);
+            arguments.put("kinds", List.of(
+                    ObservationKind.VISIBLE_SURFACE.wireName(),
+                    ObservationKind.VISIBLE_ENTITY.wireName(),
+                    ObservationKind.TRAVERSABILITY.wireName(),
+                    ObservationKind.HAZARD.wireName()));
+            arguments.put("cursor", null);
+            arguments.put("limit", 64);
+        }
         Set<String> required = Set.of("schema_version", "frame_id", "kinds", "cursor", "limit");
         RuntimeArguments.requireAllowedKeys(arguments, "agent_get_observation",
                 Set.of("schema_version", "frame_id", "kinds", "filter", "cursor", "limit"));
