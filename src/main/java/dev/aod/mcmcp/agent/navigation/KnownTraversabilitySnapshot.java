@@ -80,7 +80,7 @@ public final class KnownTraversabilitySnapshot {
         return false;
     }
 
-    /** True only for a delivered safe endpoint, never for an unsupported ladder rung. */
+    /** Includes verified resting ladder rungs; unsupported scaffolding stays transit-only. */
     public boolean containsDestination(NavCell cell) {
         Objects.requireNonNull(cell, "cell");
         for (TraversabilityEdge edge : edges.values()) {

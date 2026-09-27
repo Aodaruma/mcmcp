@@ -187,6 +187,27 @@ class LocalObservationVolumeTest {
     }
 
     @Test
+    void raisedLadderLandingCanStartItsVerticalClimbWithoutAuthorizingUnknownOrDistantFloors() {
+        var start = new Point(-2.5D, 80.9D, -2.5D);
+        var end = new Point(-2.5D, 80.82D, -2.5D);
+        var target = new AgentInputState.NavigationIntent(
+                new Vec3(-1.5D, 81.9D, -2.5D), 1, Locomotion.LADDER, 0.3D);
+        var path = ladderPath(Clearance.CLEAR, Fluid.NONE, false, Hazard.FALL);
+        var endpoint = ladderEndpoint(Clearance.CLEAR, Fluid.NONE, false, Hazard.FALL);
+        var delta = new Vec3(0, -0.08, 0);
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(path, endpoint, start, end, target,
+                true, true, false, true, false, delta, delta)).isTrue();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(path, endpoint, start, end, target,
+                true, true, false, false, false, delta, delta)).isFalse();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(path, endpoint, start, end,
+                new AgentInputState.NavigationIntent(new Vec3(0.5D, 81.9D, -2.5D), 1, Locomotion.LADDER, 0.3D),
+                true, true, false, true, false, delta, delta)).isFalse();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(
+                ladderPath(Clearance.CLEAR, Fluid.WATER, false, Hazard.NONE), endpoint, start, end, target,
+                true, true, false, true, false, delta, delta)).isFalse();
+    }
+
+    @Test
     void ladderAscentAllowsBoundedNonDivergingBootstrapBeforeVanillaJumpBoost() {
         var start = new Point(204.669921664D, 200.9D, 200.5D);
         var bootstrapEnd = new Point(204.669921664D, 200.82D, 200.5D);

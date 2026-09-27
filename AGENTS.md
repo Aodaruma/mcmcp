@@ -24,7 +24,7 @@
 - 配送済みの静的表面がrevision更新で失効した場合、planning・予約・JITで同じ面の既知ray hitへ現在のeyeから通常の全周観測policyで再raycastできる。位置・面・block・公開state/item・shapeの一致を必須とし、配送TTL、fog、距離、遮蔽、unload、revision barrierを緩めない。内部再観測を公開frameの書き換えや未配送の対象・動的情報の認可へ転用しない。
 - Actionは有限budget、停止条件、Esc緊急停止、監査traceを持ち、DSL nodeの順を変えない。同一targetの照準・経路失敗は有限回で再配置、replan、またはterminal failureへ進む。配送ACKはresponse受領だけを確認し、安全preflightは予約直前と実行開始直前に行う。
 - renderer回復のtrace要約は欠測が起きたActionに最大1件だけ残し、固定段階ごとの欠測・完全再検証の累積履歴を記録する。fogの復帰だけを再検証成功にせず、要約を現在の実行可否・操作送信・server ACKの証拠として扱わない。
-- terminal resultを公開する前にAgent所有の入力・使用/破壊状態・追跡velocityを解放する。解放未確認なら有限retryしてOFFへlockし、最初のterminal intentを保持したまま、解放確認後に同じ結果を公開する。
+- terminal resultを公開する前にAction所有の入力・使用/破壊状態・追跡velocityを解放する。利用者が指定したladder区間停止では、現在の安全なladder接触を確認したSHIFTだけを別の静止所有権として保持し、`agent_get_state.ladder_hold`へ公開する。この保持は次のmovement leaseより優先せず、手動移動/JUMP、MCP OFF、ladder離脱、player/world境界で解除する。解放未確認なら有限retryしてOFFへlockし、最初のterminal intentを保持したまま、解放確認後に同じ結果を公開する。
 - container cleanupの期限切れは所有権を破棄する証拠にしない。期限後は新しいserver ACKまたは画面・menu・cursor・操作境界の変化がある場合だけ既存の解放証拠を再検証し、同じ失敗境界でcloseを反復しない。FAILED画面の破棄前に同一ownerのserver空cursor証拠を保持する。cleanup待機中もcancel要求へ応答し、新規Actionを拒否したまま、元例外と初回faultを記録する。
 - Action不在の通常tickでは入力解放を繰り返さない。終了処理と未完了の解放retryに限定し、待機中の利用者の弓・飲食・採掘を中断しない。
 - UIでONにした操作leaseは自動失効させない。通常Actionの成功・失敗と実行中のEscは入力を解放して`READY`へ戻し、MCP ONは維持する。`READY`中のEscは通常の画面操作とし、明示UI OFF、world境界、shutdown、入力解放安全faultだけが`OFF`へ遷移できる。
