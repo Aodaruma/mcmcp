@@ -44,7 +44,22 @@ minecraft\config\mcmcp\mcp-token
 
 作業を止める場合は、ゲーム内ボタンをもう一度押してOFFにする。実行中のAction、保持中のキー、左右クリックはすべて解除される。
 
-自動設定では、Codexの`~/.codex/config.toml`またはClaude Codeの`~/.claude.json`を更新する。既存ファイルは初回だけ`.mcmcp.bak`へ退避し、別の接続先として手動設定済みの`mcmcp`項目は上書きしない。token自体は設定ファイルへ複製せず、MCMCPが登録するローカルheader helperが接続時にowner-onlyのtokenファイルから読み取る。
+自動設定では、Codexの`~/.codex/config.toml`またはClaude Codeの`~/.claude.json`を更新する。既存ファイルは初回だけ`.mcmcp.bak`へ退避する。手動設定・解釈できない設定に加え、**同じURL・portでも別Prismプロファイルのhelperを参照する登録は上書きしない**。同時起動した別ゲームとの競合も、設定ファイル横の`.mcmcp.lock`を用いた排他中に登録を再確認して防ぐ。このlockファイルは再利用するため残す。確認画面には秘密値を含まない参照診断を表示する。token自体は設定ファイルへ複製せず、MCMCPが登録するローカルheader helperが接続時にowner-onlyのtokenファイルから読み取る。
+
+### 複数Prismプロファイル・検証専用Codex
+
+通常プロファイルの登録を保持したまま検証する場合、**Esc → MCP接続設定 → Codexの分離設定（検証用）**を選ぶ。現在のゲームフォルダーの`config/mcmcp/codex-home/config.toml`に独立した登録を生成し、常用のCodex/Claude設定は変更しない。同じプロファイルの生成済み登録だけを更新できる。別プロファイルへの自動切替や既存登録の強制上書きは提供しない。
+
+生成するだけではクライアントの接続先は切り替わらない。利用者が別のPowerShellウィンドウを開き、対象ゲームのパスへ置き換えて起動する。プロジェクト側の`.codex/config.toml`で同名接続を上書きしていない作業フォルダーを使う。
+
+```powershell
+$env:CODEX_HOME = 'C:\path\to\validation\minecraft\config\mcmcp\codex-home'
+codex
+```
+
+これはそのシェルから起動するCodex専用の選択であり、永続ユーザー環境変数を変更しない。終了後はそのウィンドウを閉じる。常用`auth.json`・token・私有ログをコピーせず、必要なCodexログインは利用者が分離環境で行う。正式Validation受入では、この分離設定または一時CODEX_HOMEを使い、常用登録を置換しない。CODEX_HOME配下には設定だけでなく認証・履歴等も保存されるため、生成後のディレクトリーを配布・報告へ添付しない。[Codex公式の設定保存先](https://learn.chatgpt.com/docs/config-file/config-advanced#config-and-state-locations)も参照。
+
+通常自動設定が検査するのはゲーム側の`user.home`にある既定ファイルである。別CODEX_HOME・プロジェクト設定・MSIXの仮想化されたコピーを含むクライアント全体のeffective configを自動発見したという意味ではない。分離設定を生成済みでも、実際に選択されたか不明なので初回案内は抑止しない。
 
 ### 別のアプリを開きながら操作する場合
 
@@ -168,7 +183,7 @@ MCMCPで現在の状態だけを確認してください。まだ行動は開始
 ## 9. トラブルシューティング
 
 - 接続拒否: Minecraftが起動中か、`mcmcp-client.toml`の`endpoint_enabled=true`とportを確認する。
-- `401 Unauthorized`: 環境変数のtokenが現在の`mcp-token`と一致しているか確認し、MCPクライアントを再起動する。
+- `401 Unauthorized`: 認証拒否は正常な保護動作。まず下表でhelperの参照プロファイル・古い設定を確認し、対象設定だけを復旧してMCPクライアントを再起動する。認証を無効化しない。
 - タイトル画面にボタンがない: 正常。ワールドへ入ってから`Esc`を押す。
 - 初回案内が出ない: Prism LauncherだけでなくMinecraftのワールドへ入り、`Esc`メニューの「MCP接続設定」を確認する。
 - ボタンが押せない: world/playerの準備、死亡画面、multiplayer設定、allowlistを確認する。
@@ -176,6 +191,26 @@ MCMCPで現在の状態だけを確認してください。まだ行動は開始
 - ツールが見えない: Minecraftを先に起動してからCodex/Claude Codeを再起動し、`/mcp`を確認する。
 
 tokenそのものをトラブル報告へ添付してはいけない。
+
+### Windowsのプロファイル参照診断と復旧
+
+ゲームの設定確認画面の診断は、token本文・hashを読まず、helperも実行せず、設定の参照先と生成内容だけを調べる。`configured`でも通信成功やBearer一致を保証しない。通信は[共通診断の`-Check`](../tools/mcp/README.md)で別に確認する。`-Check`もT0前またはrun terminal後に行う。
+
+| 参照診断・通信結果 | 意味と復旧 |
+| --- | --- |
+| `unconfigured` | 検査対象ファイルに登録なし。通常用なら自動設定、検証用なら分離設定を選ぶ。 |
+| `another_profile` | helperが別ゲームフォルダーを参照。同じURL・portでも上書きせず、分離設定を選ぶ。削除済みの旧プロファイル参照も保持する。 |
+| `helper_missing` / `stale_helper` | 同じプロファイルのhelperがない／現行の生成内容と異なる。同じ対象への自動設定で再生成し、クライアントを再起動する。 |
+| `endpoint_mismatch` | 同じプロファイルの登録URLとゲーム側portが異なる。意図したportを確認して同じ対象を再設定する。 |
+| `unmanaged_unknown` / `existing_unmanaged_entry` | 手動設定、追加の認証指定、非標準のhelper、曖昧な管理ブロックなど。URLだけで認可せず保持する。分離設定、または利用者による対象項目だけの確認を使う。 |
+| `config_unreadable` / `token_unavailable` | 形式・サイズ・アクセス権またはtokenファイルのメタデータを確認できない。本文や生の例外を共有しない。 |
+| HTTP 401 (`http_non_success`) | 到達したendpointが認証を拒否。上記参照診断を先に行う。静的tokenや環境変数の古いコピーは参照診断だけでは判定不能。 |
+| `http_request_failed` / `request_timeout` | endpointへ接続できない／期限切れ。ゲーム起動・endpoint有効化・portを確認。401とは区別する。 |
+| `discovery_mismatch` / `jsonrpc_error` | protocol/version/method等の不一致。対応するJARとクライアントを確認し、認証やprotocol検証を緩めない。 |
+
+MSIXの通常パスとcanonical/UNC表現が同じディレクトリーを指す場合は同一プロファイルとして扱う。一方、LocalCache等にある独立した私有コピーは、内容・URLが同じでも同一とは扱わない。ゲームから見える設定とクライアントが実際に読む設定が異なる場合は、利用者が双方の**設定ファイルの場所とhelper参照先**を確認する。私有コピーの作成原因を特定アプリの不具合と決めつけない。
+
+以前の操作で常用登録を別プロファイルへ切り替えた場合は、バックアップを保持し、利用者が常用プロファイルのMCMCP管理ブロックだけを復旧する。設定ファイル全体の復元・削除、token削除、Bearer値の貼り付けは避ける。今回の自動設定は、その復旧を無断で代行しない。
 
 ### 接続とActionの失敗を分けて確認する / Separate connection and Action failures
 
