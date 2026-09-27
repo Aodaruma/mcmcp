@@ -17,6 +17,22 @@ class ObservationCursorReleaseTest {
     private static final ResourceId DIMENSION = new ResourceId("minecraft:overworld");
 
     @Test
+    void nullFrameSelectsLatestAndReturnsConcreteFrameId() {
+        var observations = new AgentObservations(null, null, null, null);
+        observations.frames().publish(frame());
+        var arguments = new java.util.LinkedHashMap<>(pageArguments());
+        arguments.put("frame_id", null);
+
+        AgentObservations.PreparedObservationResponse response =
+                observations.getAgentObservation(arguments);
+
+        assertThat(response.wireResponse()).containsEntry(
+                "frame_id", "obs-0000000000000001");
+        assertThat(response.wireResponse().get("next_cursor")).isNotNull();
+        assertThat(response.receiptId()).isNotNull();
+    }
+
+    @Test
     void releaseHasNoDeliveryReceiptPreservesPendingAuthorizationAndAllowsNewQuery() {
         var observations = new AgentObservations(null, null, null, null);
         observations.frames().publish(frame());
