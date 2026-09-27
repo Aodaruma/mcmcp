@@ -9,6 +9,7 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.ScaffoldingBlock;
 import net.minecraft.world.level.block.SweetBerryBushBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -193,7 +194,7 @@ public final class LocalObservationVolume {
                 source.loaded(),
                 source.drop(),
                 source.neutralizeAgentHorizontal(),
-                source.locomotion());
+                source.locomotion(), source.supportedDiagonal());
     }
 
     public Optional<Snapshot> latestFor(LocalPlayer player) {
@@ -1077,6 +1078,8 @@ public final class LocalObservationVolume {
                         node.depth() + 1,
                         worldRevision,
                         true);
+                evaluation = new Evaluation(withDiagonalEvidence(evaluation.record(), player,
+                        level, origin, node.box(), evaluation.endBox()), evaluation.endBox());
                 if (!evaluation.record().canExpand()
                         && Math.abs(direction.x()) + Math.abs(direction.z()) == 1) {
                     evaluation = evaluateAdjacentJumpUp(
@@ -1107,6 +1110,35 @@ public final class LocalObservationVolume {
         return new Vec3(Mth.floor(center.x) + dx + 0.5D - center.x,
                 Mth.floor(start.minY + 1.0E-6D) + dy - start.minY,
                 Mth.floor(center.z) + dz + 0.5D - center.z);
+    }
+
+    private static ObservationRecord withDiagonalEvidence(ObservationRecord record,
+            LocalPlayer player, ClientLevel level, Point origin, AABB start, AABB end) {
+        if (record.locomotion() != Locomotion.GROUND || record.loaded() != LoadedState.LOADED
+                || record.support() != Support.PRESENT || record.clearance() != Clearance.CLEAR
+                || record.fluid() != Fluid.NONE || record.hazard() != Hazard.NONE
+                || record.suffocation() || record.drop() != Drop.SUPPORTED
+                || record.neutralizeAgentHorizontal()
+                || record.transition() != Transition.PROBE_ALLOWED && record.transition() != Transition.CONTACT) {
+            return record;
+        }
+        var geometry = DiagonalGroundPath.between(start, end).orElse(null);
+        if (geometry == null) return record;
+        var supports = List.of(new AABB(geometry.fromSupport()), new AABB(geometry.toSupport()));
+        var regions = append(supports, geometry.corridor());
+        if (loadedState(level, origin, regions) != LoadedState.LOADED
+                || !level.noCollision(player, geometry.corridor())
+                || fluid(level, origin, regions) != Fluid.NONE
+                || damageBlockHazard(level, origin, regions) != Hazard.NONE) return record;
+        for (var pos : List.of(geometry.fromSupport(), geometry.toSupport())) {
+            if (!Block.isShapeFullBlock(level.getBlockState(pos)
+                    .getCollisionShape(level, pos, CollisionContext.of(player)))) return record;
+        }
+        return new ObservationRecord(record.observedTick(), record.worldRevision(),
+                record.transitionDepth(), record.from(), record.requestedTo(), record.to(),
+                record.support(), record.clearance(), record.transition(), record.fluid(),
+                record.suffocation(), record.hazard(), record.loaded(), record.drop(),
+                record.neutralizeAgentHorizontal(), record.locomotion(), true);
     }
 
     /** Only ordinary source water is admitted; flowing water and bubble columns stay unknown. */
@@ -1960,7 +1992,7 @@ public final class LocalObservationVolume {
         if (locomotion != Locomotion.GROUND && drop == Drop.EXCEEDS_WALKING_LIMIT) {
             drop = Drop.AIRBORNE_OR_SWIMMING;
         }
-        return new ObservationRecord(
+        return withDiagonalEvidence(new ObservationRecord(
                 frame.tick(),
                 worldRevision,
                 1,
@@ -1979,7 +2011,7 @@ public final class LocalObservationVolume {
                 loaded,
                 drop,
                 locomotion == Locomotion.GROUND && shouldNeutralize(support, drop),
-                locomotion);
+                locomotion), player, level, origin, start, end);
     }
 
     static Transition actualTransition(

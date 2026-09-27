@@ -94,8 +94,9 @@ public record RoutePlan(
         long transitions = Math.max(1L, edges.size());
         long waterTicks = edges.stream().filter(edge -> edge.locomotion()
                 == dev.aod.mcmcp.agent.safety.Locomotion.WATER).count() * 40L;
+        long diagonalTicks = edges.stream().filter(TraversabilityEdge::supportedDiagonal).count() * 40L;
         return Math.addExact(
-                BASE_SETTLE_TICKS + waterTicks,
+                BASE_SETTLE_TICKS + waterTicks + diagonalTicks,
                 Math.addExact(
                         Math.multiplyExact(transitions, TICKS_PER_TRANSITION),
                         Math.multiplyExact((long) probes, EXTRA_TICKS_PER_PROBE)));
