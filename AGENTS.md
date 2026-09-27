@@ -45,6 +45,7 @@
 - 多区画作業は公開DSLでbatch化できるようにし、植付け、代表成熟待機、batch収穫、drop回収、再植付けの順を基本とする。container、pickup、camera等の具体的な期限・予算はcatalog、runtime、testで一元管理する。
 - 建築材料はVanillaの通常建材familyを共通policyで判定し、観測と設置で一致させる。ID namespaceや継承だけで独自挙動を許可せず、完全state、通常の無改変item、支持面、設置予測とserver確認を維持する。床置きtorchとwall_torchを区別し、階段shape・pane接続のplan内閉包と最終照合を材料familyの拡張時にも適用する。
 - 状態が一意な通常full-cubeの所持建材は、実所持stack・default components・正常個数・既存建築policyを検証した`agent_get_state.placement_materials`から材料identityを配送できる。配送成功前や別sessionのrefを認可せず、所持品からworld座標・方向state・支持証拠を生成しない。
+- 角だけで接する水平full-cube足場の斜め候補は設計仕様書7.4の追加支持・立位corridor証拠へ限定する。証拠を現在revisionへ束縛し、crouch予算を予約する。各tickのVanilla最終安全gateや、証拠のない斜め候補の従来条件を省略しない。
 - 既存の安全境界、入力検証、fail-closedなエラー処理、fixture isolationを簡略化しない。
 - MOD収納の拡張は既存の共通Menu基盤へ接続し、MOD別の数量移送エンジンや専用Toolを増やさない。対象の発見・通常開閉とslot役割・容量・同期の契約を共通の計画・実行・確認から分け、個別連携は必要な差分に限定する。現在の対応範囲と拡張計画は設計仕様書9.7.1で区別し、未知の画面を見た目だけで認可しない。
 - 水平の端設置は`extend_known_floor`の単独有限Actionへ閉じる。配送済みfull-cube支持と中心姿勢を認可し、crouch中の身体が元の支持と重なる範囲だけ端へ移動する。実可視側面への通常設置とblock・inventoryのserver確認後だけ新床へ進む。支持変更、補正、damage、障害、期限では停止し、取消時もconstruction effectを回収して入力を解放する。通常navigationの未知空間への移動許可へ転用しない。

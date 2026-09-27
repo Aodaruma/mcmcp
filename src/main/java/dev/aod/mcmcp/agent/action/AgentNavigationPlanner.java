@@ -7,6 +7,7 @@ import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner.Pose;
 import dev.aod.mcmcp.agent.action.AgentProgramPlanner.PlanningWork;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.navigation.DeterministicAStar;
+import dev.aod.mcmcp.agent.navigation.DiagonalTraversal;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
 import dev.aod.mcmcp.agent.navigation.NavCell;
 import dev.aod.mcmcp.agent.navigation.RoutePlan;
@@ -61,13 +62,7 @@ final class AgentNavigationPlanner {
             Map<TraversabilityEdge.Key, TraversabilityEdge> dependencies) {
         for (var edge : route.edges()) {
             dependencies.putIfAbsent(edge.key(), edge);
-            var from = edge.key().from();
-            var to = edge.key().to();
-            if (!from.horizontallyDiagonalTo(to)) continue;
-            for (var side : List.of(
-                    new NavCell(from.dimension(), to.x(), from.y(), from.z()),
-                    new NavCell(from.dimension(), from.x(), from.y(), to.z()))) {
-                var key = new TraversabilityEdge.Key(from, side);
+            for (var key : DiagonalTraversal.requiredSides(map, edge)) {
                 dependencies.putIfAbsent(
                         key,
                         map.edge(key).orElseThrow(() -> new PlanningException(
