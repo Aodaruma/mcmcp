@@ -93,13 +93,13 @@ function Invoke-McmcpClient {
             $listed = Send-Request 'tools/list' $null @{ _meta = $meta } 15
             try {
                 Assert-McmcpServerMeta $listed 'tools/list'
-                if ($listed.resultType -cne 'complete' -or @($listed.tools).Count -ne 5 -or
+                if ($listed.resultType -cne 'complete' -or @($listed.tools).Count -ne 6 -or
                     (@($listed.tools.name | Sort-Object) -join ',') -cne
                     (@($catalog.tools.name | Sort-Object) -join ',')) { throw 'tool mismatch' }
             } catch {
                 throw (New-McmcpClientFailure 'protocol_validation' 'tool_catalog_mismatch')
             }
-            return [ordered]@{ ok = $true; connection = 'reachable'; tool_count = 5 }
+            return [ordered]@{ ok = $true; connection = 'reachable'; tool_count = 6 }
         }
         $clock = [Diagnostics.Stopwatch]::StartNew()
         do {

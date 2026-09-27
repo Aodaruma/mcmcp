@@ -92,6 +92,18 @@ final class McpTestFixtures {
         return result;
     }
 
+    static Map<String, Object> mcpStatus() {
+        var result = new LinkedHashMap<String, Object>();
+        result.put("schema_version", 2);
+        result.put("control_mode", "off");
+        result.put("game_paused", false);
+        result.put("ready_expires_at", nullValue());
+        result.put("world_session_id", nullValue());
+        result.put("latest_frame_id", nullValue());
+        result.put("running_action_id", nullValue());
+        return result;
+    }
+
     /** Map.of rejects null; this marker is replaced by Gson as JsonNull through a mutable map helper. */
     private static Object nullValue() {
         return com.google.gson.JsonNull.INSTANCE;

@@ -304,7 +304,7 @@ class McpToolCatalogTest {
     }
 
     @Test
-    void shippedCatalogIsTheNormativeFileAndHasTheFixedFiveTools() throws Exception {
+    void shippedCatalogIsTheNormativeFileAndHasThePublicTools() throws Exception {
         var file = JsonParser.parseReader(Files.newBufferedReader(
                 Path.of(System.getProperty("mcmcp.projectDir"), "docs", "MCMCP_MCP_Tool_Catalog.json"),
                 StandardCharsets.UTF_8));
@@ -324,6 +324,28 @@ class McpToolCatalogTest {
                 .contains("all nine hotbar slots")
                 .contains("without opening inventory")
                 .contains("only when named in sections");
+    }
+
+    @Test
+    void mcpStatusIsArgumentlessCompactV2AndDefaultStateOmitsItsMetadata() {
+        var catalog = new McpToolCatalog();
+        assertThat(CatalogSchemaValidator.matches(
+                catalog.inputSchema("agent_get_mcp_status"), new com.google.gson.JsonObject()))
+                .isTrue();
+        var invalid = JsonParser.parseString("{\"details\":true}");
+        assertThat(CatalogSchemaValidator.matches(
+                catalog.inputSchema("agent_get_mcp_status"), invalid)).isFalse();
+        var statusPayload = com.google.gson.JsonParser.parseString("""
+                {"schema_version":2,"control_mode":"off","game_paused":false,
+                 "ready_expires_at":null,"world_session_id":null,
+                 "latest_frame_id":null,"running_action_id":null}
+                """);
+        assertThat(CatalogSchemaValidator.matches(
+                catalog.outputSchema("agent_get_mcp_status"), statusPayload))
+                .as(CatalogSchemaValidator.failures(
+                        catalog.outputSchema("agent_get_mcp_status"), statusPayload).summary())
+                .isTrue();
+
     }
 
     @Test
@@ -1259,7 +1281,7 @@ class McpToolCatalogTest {
         assertThat(output.getAsJsonArray("required").asList().stream()
                 .map(JsonElement::getAsString))
                 .contains("source", "template", "reference_requirements");
-        assertThat(catalog.listResult().getAsJsonArray("tools")).hasSize(5);
+        assertThat(catalog.listResult().getAsJsonArray("tools")).hasSize(6);
     }
 
     @Test
@@ -1459,7 +1481,7 @@ class McpToolCatalogTest {
                 .getAsJsonObject().getAsJsonObject("routing_label")
                 .addProperty("entity_ref", "raw-uuid");
         assertThat(CatalogSchemaValidator.matches(schema, rawRoutingRef)).isFalse();
-        assertThat(new McpToolCatalog().listResult().getAsJsonArray("tools")).hasSize(5);
+        assertThat(new McpToolCatalog().listResult().getAsJsonArray("tools")).hasSize(6);
     }
 
     @Test
@@ -1592,7 +1614,7 @@ class McpToolCatalogTest {
     }
 
     @Test
-    void registryDispatchesExactlyTheFixedFiveToolsAndValidatesTheirOutputs() throws Exception {
+    void registryDispatchesExactlyThePublicToolsAndValidatesTheirOutputs() throws Exception {
         AtomicInteger calls = new AtomicInteger();
         var registry = new McmcpToolRegistry((command, context) -> {
             calls.incrementAndGet();
@@ -1604,6 +1626,8 @@ class McpToolCatalogTest {
         assertThat(state.get("isError").getAsBoolean()).isFalse();
         assertThat(state.has("structuredContent")).isTrue();
         assertThat(state.getAsJsonArray("content")).hasSize(1);
+        assertThat(registry.call("agent_get_mcp_status", new com.google.gson.JsonObject())
+                .get("isError").getAsBoolean()).isFalse();
 
         var malformed = new com.google.gson.JsonObject();
         malformed.addProperty("raw_mouse", true);
@@ -1629,7 +1653,7 @@ class McpToolCatalogTest {
                 .isFalse();
         assertThat(registry.call("agent_cancel_action", action).get("isError").getAsBoolean())
                 .isFalse();
-        assertThat(calls).hasValue(6);
+        assertThat(calls).hasValue(7);
     }
 
     @Test
@@ -1703,6 +1727,7 @@ class McpToolCatalogTest {
             case McpRuntimePort.GetState state -> state.arguments().isEmpty()
                     ? McpTestFixtures.state()
                     : McpTestFixtures.stateWithEmptyRecipeQuery();
+            case McpRuntimePort.GetMcpStatus ignored -> McpTestFixtures.mcpStatus();
             case McpRuntimePort.GetObservation ignored -> nullableMap(
                     "schema_version", 1,
                     "frame_id", "obs-0000000000000000",
@@ -1768,7 +1793,7 @@ class McpToolCatalogTest {
             case McpRuntimePort.AbandonObservationDelivery delivery -> Map.of(
                     "receipt_id", delivery.receiptId().toString(),
                     "abandoned", true);
-            default -> throw new AssertionError("Legacy runtime command escaped the five-tool registry");
+            default -> throw new AssertionError("Legacy runtime command escaped the public registry");
         };
     }
 

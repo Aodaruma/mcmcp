@@ -91,10 +91,11 @@ $AuthExpirySafetyMargin = [TimeSpan]::FromMinutes(5)
 $MinimumMcpRequestIntervalMilliseconds = 60
 $ExpectedMcmcpServerName = 'mcmcp'
 $ExpectedMcmcpServerVersion = '0.1.0'
-$ExpectedCatalogFileSha256 = '630721dfd6ca983ef20c70cd0b8f98e1d42901268a30d725a1deb2ef52cc21f8'
-$ExpectedToolSurfaceSha256 = '0cee114cc17c5391f46ffec2fa58d3722f37d7766e0a520d49d286b32385a9fb'
+$ExpectedCatalogFileSha256 = '9c5e02a8b430182d819c1a715dbf0fe12345487fa77d6c317df9ab09ba01cb8d'
+$ExpectedToolSurfaceSha256 = 'a53fd6461c6bc1c3d0112254ee0ce088a7430034d41b73a16310efda553505c4'
 $AllowedTools = @(
     'agent_get_state',
+    'agent_get_mcp_status',
     'agent_get_observation',
     'agent_start_action',
     'agent_get_action',
@@ -256,7 +257,7 @@ function Get-PinnedCatalogSurface {
     $catalog = [IO.File]::ReadAllText($CatalogPath) | ConvertFrom-Json -Depth 100
     $catalogTools = @(Get-PropertyValue -Object $catalog -Name 'tools')
     if ($catalogTools.Count -ne $AllowedTools.Count) {
-        throw 'canonical MCP Tool catalog must contain exactly five tools'
+        throw "canonical MCP Tool catalog must contain exactly $($AllowedTools.Count) tools"
     }
     $surface = [Collections.Generic.List[object]]::new()
     for ($index = 0; $index -lt $AllowedTools.Count; $index++) {

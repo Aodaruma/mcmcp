@@ -308,6 +308,25 @@ final class ActionWireMapper {
         return result;
     }
 
+    static Map<String, Object> mcpStatusPayload(
+            LocalArmingState.Snapshot control,
+            boolean gamePaused,
+            java.util.UUID worldSessionId,
+            String latestFrameId,
+            java.util.UUID runningActionId) {
+        Objects.requireNonNull(control, "control");
+        var result = new LinkedHashMap<String, Object>();
+        result.put("schema_version", 2);
+        result.put("control_mode", control.mode().name().toLowerCase(Locale.ROOT));
+        result.put("game_paused", gamePaused);
+        // READY is persistent until a local stop or world boundary; it currently has no expiry.
+        result.put("ready_expires_at", null);
+        result.put("world_session_id", worldSessionId == null ? null : worldSessionId.toString());
+        result.put("latest_frame_id", latestFrameId);
+        result.put("running_action_id", runningActionId == null ? null : runningActionId.toString());
+        return result;
+    }
+
     static Map<String, Object> entityAttackConsentPayload(
             ScopedEntityAttackConsentStore.Snapshot snapshot) {
         Objects.requireNonNull(snapshot, "snapshot");

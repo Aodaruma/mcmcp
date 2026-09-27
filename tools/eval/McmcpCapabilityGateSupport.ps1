@@ -11,6 +11,7 @@ Add-Type -AssemblyName System.Net.Http
 $script:ProtocolVersion = '2026-07-28'
 $script:AllowedTools = @(
     'agent_get_state',
+    'agent_get_mcp_status',
     'agent_get_observation',
     'agent_start_action',
     'agent_get_action',

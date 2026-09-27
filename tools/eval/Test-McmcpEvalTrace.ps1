@@ -62,8 +62,8 @@ $AuditPromptProfile = if ($PSCmdlet.ParameterSetName -eq 'Audit') {
 }
 $AuditProfile = $EvaluationProfiles[$AuditPromptProfile]
 $ProductionPrompt = [string]$AuditProfile['prompt']
-$ExpectedCatalogFileSha256 = '630721dfd6ca983ef20c70cd0b8f98e1d42901268a30d725a1deb2ef52cc21f8'
-$ExpectedToolSurfaceSha256 = '0cee114cc17c5391f46ffec2fa58d3722f37d7766e0a520d49d286b32385a9fb'
+$ExpectedCatalogFileSha256 = '9c5e02a8b430182d819c1a715dbf0fe12345487fa77d6c317df9ab09ba01cb8d'
+$ExpectedToolSurfaceSha256 = 'a53fd6461c6bc1c3d0112254ee0ce088a7430034d41b73a16310efda553505c4'
 $ExpectedEvaluatorTimeoutSeconds = [int]$AuditProfile['timeout_minutes'] * 60
 $TurnCompletionReserveSeconds = 15
 $MaximumMcpForwardSeconds = 35
@@ -72,6 +72,7 @@ $DeadlineCleanupCancelTimeoutSeconds = 5
 $DeadlineRejectedOutputText = '{"code":"EVALUATION_DEADLINE_IMMINENT","message":"The evaluation deadline is too close to safely forward another MCP request.","recoverable":false}'
 $AllowedTools = @(
     'agent_get_state',
+    'agent_get_mcp_status',
     'agent_get_observation',
     'agent_start_action',
     'agent_get_action',

@@ -19,11 +19,18 @@ import java.util.UUID;
 public interface McpRuntimePort {
     CompletionStage<RuntimeReply> submit(RuntimeCommand command, RuntimeCallContext context);
 
-    sealed interface RuntimeCommand permits GetState, GetObservation, StartAction, GetAction,
+    sealed interface RuntimeCommand permits GetState, GetMcpStatus, GetObservation, StartAction, GetAction,
             CancelAction, ConfirmActionDelivery, AbandonActionDelivery,
             ConfirmObservationDelivery, AbandonObservationDelivery, GetSnapshot, CompareBlockPlan,
             GetRecipes, ListRoutines, GetRoutine, StartRoutine, CancelRoutine, EmergencyStop {
         String toolName();
+    }
+
+    record GetMcpStatus() implements RuntimeCommand {
+        @Override
+        public String toolName() {
+            return "agent_get_mcp_status";
+        }
     }
 
     record GetState(Map<String, Object> arguments) implements RuntimeCommand {

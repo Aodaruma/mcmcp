@@ -2,13 +2,13 @@
 
 MCMCPはMinecraft **client内で完結するNeoForge MOD**です。HTTPから届いた要求をclient threadへ渡し、配送した観測の範囲内で有限のActionを実行します。最初にこの案内で責務を選び、該当する実装・テスト・仕様の節を読むと、全ファイルを読み直さずに変更を始められます。
 
-安全契約は[AGENTS.md](../AGENTS.md)、公開5 Toolの正本は[Tool Catalog](MCMCP_MCP_Tool_Catalog.json)、詳細仕様は[設計仕様書](Minecraft_MCP_NeoForge_設計仕様書.md)です。この案内は仕様の代わりではありません。
+安全契約は[AGENTS.md](../AGENTS.md)、公開Toolの正本は[Tool Catalog](MCMCP_MCP_Tool_Catalog.json)、詳細仕様は[設計仕様書](Minecraft_MCP_NeoForge_設計仕様書.md)です。この案内は仕様の代わりではありません。
 
 ## 要求から結果まで
 
 ```mermaid
 flowchart LR
-    HTTP[MCP HTTP / 固定5 Tool] --> Inbox[client thread inbox]
+    HTTP[MCP HTTP / 公開Tool] --> Inbox[client thread inbox]
     Inbox --> Admission[Action admission]
     Observation[配送済み観測] --> Admission
     DSL[DSL parser / compiler] --> Admission

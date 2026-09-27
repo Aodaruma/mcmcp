@@ -1527,6 +1527,36 @@ class McmcpRuntimeHardeningTest {
     }
 
     @Test
+    void compactMcpStatusCarriesOnlyControlAndCorrelationMetadata() {
+        UUID sessionId = UUID.randomUUID();
+        UUID actionId = UUID.randomUUID();
+        var control = new LocalArmingState.Snapshot(
+                LocalArmingState.Mode.AGENT, sessionId, Set.of("movement"), null, 2L);
+
+        assertThat(ActionWireMapper.mcpStatusPayload(
+                control, true, sessionId, "obs-0123456789abcdef", actionId))
+                .containsOnlyKeys(
+                        "schema_version", "control_mode", "game_paused", "ready_expires_at",
+                        "world_session_id", "latest_frame_id", "running_action_id")
+                .containsEntry("schema_version", 2)
+                .containsEntry("control_mode", "agent")
+                .containsEntry("game_paused", true)
+                .containsEntry("world_session_id", sessionId.toString())
+                .containsEntry("latest_frame_id", "obs-0123456789abcdef")
+                .containsEntry("running_action_id", actionId.toString());
+        assertThat(ActionWireMapper.mcpStatusPayload(
+                new LocalArmingState.Snapshot(
+                        LocalArmingState.Mode.OFF, null, Set.of(), "startup", 0L),
+                false, null, null, null))
+                .containsEntry("control_mode", "off")
+                .containsEntry("game_paused", false)
+                .containsEntry("ready_expires_at", null)
+                .containsEntry("world_session_id", null)
+                .containsEntry("latest_frame_id", null)
+                .containsEntry("running_action_id", null);
+    }
+
+    @Test
     void grantedEntityAttackConsentPayloadExposesOnlyItsBoundScopeAndFiniteRef() {
         var store = new ScopedEntityAttackConsentStore();
         var session = UUID.fromString("00000000-0000-0000-0000-000000000001");

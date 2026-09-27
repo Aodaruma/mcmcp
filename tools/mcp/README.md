@@ -17,7 +17,7 @@ pwsh -NoProfile -File tools/mcp/Invoke-Mcmcp.ps1 `
   -TokenPath 'C:\path\to\minecraft\config\mcmcp\mcp-token' -Check
 ```
 
-`-Check` は接続と5 Toolの登録だけを確認します。worldの読み取り・Action開始・ONへの切替は行いません。成功時は `{"ok":true,"connection":"reachable","tool_count":5}` を返します。ゲーム内の操作許可とは別の判定です。
+`-Check` は接続と6 Toolの登録だけを確認します。worldの読み取り・Action開始・ONへの切替は行いません。成功時は `{"ok":true,"connection":"reachable","tool_count":6}` を返します。ゲーム内の操作許可とは別の判定です。
 
 `-Check` only discovers the server and lists tools. A reachable connection does not imply that gameplay is enabled. No Action is started and no control setting is changed.
 

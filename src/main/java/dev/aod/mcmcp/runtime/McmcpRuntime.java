@@ -1016,6 +1016,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 assertClientThread(minecraft);
                 return status(minecraft, sessions.snapshot(), state.arguments());
             }
+            if (command instanceof GetMcpStatus) {
+                var minecraft = Minecraft.getInstance();
+                assertClientThread(minecraft);
+                return RuntimeReply.success(mcpStatus(sessions.snapshot()));
+            }
             if (command instanceof GetObservation observation) {
                 var minecraft = Minecraft.getInstance();
                 assertClientThread(minecraft);
@@ -1182,6 +1187,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return switch (command) {
             case GetState ignored ->
                     throw new AssertionError("agent_get_state must stage placement identity delivery");
+            case GetMcpStatus ignored ->
+                    throw new AssertionError("agent_get_mcp_status is handled by the read dispatcher");
             case GetObservation ignored ->
                     throw new AssertionError("agent_get_observation must stage delivery metadata");
             case StartAction action -> {
@@ -1811,6 +1818,18 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     result, placementStacks, agentObservations.deliveredEvidence());
         }
         return RuntimeReply.success(result);
+    }
+
+    private Map<String, Object> mcpStatus(WorldSessionTracker.Snapshot session) {
+        var control = arming.snapshot(session.worldSessionId());
+        String latestFrameId = agentObservations.frames().latestFrame()
+                .map(dev.aod.mcmcp.agent.observation.ObservationFrame::frameId)
+                .orElse(null);
+        UUID runningActionId = agentActions.active()
+                .map(dev.aod.mcmcp.agent.action.AgentActionStore.Active::actionId)
+                .orElse(null);
+        return ActionWireMapper.mcpStatusPayload(
+                control, paused, session.worldSessionId(), latestFrameId, runningActionId);
     }
 
     private static Set<String> requestedStateSections(Map<String, Object> arguments) {

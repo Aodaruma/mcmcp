@@ -105,7 +105,7 @@ class TransportTests(unittest.TestCase):
                         capabilities={'tools': {'listChanged': False}})
         if request['method'] == 'tools/list':
             return dict(resultType='complete', _meta=META, tools=[{'name': n} for n in
-                ['agent_get_state', 'agent_get_observation', 'agent_start_action',
+                ['agent_get_state', 'agent_get_mcp_status', 'agent_get_observation', 'agent_start_action',
                  'agent_get_action', 'agent_cancel_action']])
         if request['params']['name'] == 'agent_start_action':
             return tool_result(dict(schema_version=1, action_id=ACTION, state='queued',

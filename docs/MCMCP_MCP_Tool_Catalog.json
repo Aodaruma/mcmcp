@@ -854,6 +854,41 @@
       }
     },
     {
+      "name": "agent_get_mcp_status",
+      "title": "Get MCMCP Status",
+      "description": "Returns compact MCP control and correlation metadata without player or inventory state. Reports the current control mode, pause state, nullable READY expiry, world session, latest observation frame, and currently running action. Null IDs mean that no corresponding world, frame, or running action exists.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "maxProperties": 0
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {"const": 2},
+          "control_mode": {"enum": ["off", "ready", "agent", "recovering"]},
+          "game_paused": {"type": "boolean"},
+          "ready_expires_at": {
+            "oneOf": [{"type": "null"}, {"type": "integer", "minimum": 0}],
+            "description": "Absolute client tick when READY expires, or null while READY has no expiry or is not active"
+          },
+          "world_session_id": {
+            "oneOf": [{"type": "null"}, {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}]
+          },
+          "latest_frame_id": {
+            "oneOf": [{"type": "null"}, {"type": "string", "pattern": "^obs-[0-9a-f]{16}$"}]
+          },
+          "running_action_id": {
+            "oneOf": [{"type": "null"}, {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}]
+          }
+        },
+        "required": ["schema_version", "control_mode", "game_paused", "ready_expires_at", "world_session_id", "latest_frame_id", "running_action_id"]
+      }
+    },
+    {
       "name": "agent_get_observation",
       "title": "Get MCMCP Observation",
       "description": "With no arguments, atomically pins and returns the latest observation frame, up to 64 compact block, visible entity, traversability, and hazard records. Compact blocks group only actually visible faces by position plus block/state and encode faces with D/U/N/S/W/E; they never imply unseen faces or air. The default omits unknown_boundary and sound_clue records; absence never means air. For precise evidence or paging, pass schema_version=1, an announced frame_id, kinds, cursor=null on the first page, limit=1..256, and optional filter; explicit queries retain detailed visible_surface records. Filters only narrow already visible records and do not scan unseen world state. If a frame expires, call with no arguments to read the newest frame.",

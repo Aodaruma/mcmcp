@@ -13,7 +13,7 @@ LLMは行き先、作業範囲、条件、反復の意図を伝える。MODは�
 | ツール | 既定で返す内容 | 明示要求／別ツール |
 |---|---|---|
 | `agent_get_state` | プレイヤーのdimension、位置・向き、体力・空腹・状態異常、手元のhotbar 9枠と選択枠。各枠のitem ID、個数、使用可否など公開可能な事実 | 全inventory、装備、レシピ、所持品集計はsection指定。session ID、MCP制御、最新frame/action IDは含めない |
-| `agent_get_control`（新） | MCPのON/READY/OFF、許可capability、session、実行中action ID、最新frame ID、公開API version | 詳しいpolicy／利用可能命令は詳細要求時だけ |
+| `agent_get_mcp_status`（新） | MCP control mode、game pause、READY期限（該当時）、world session ID、実行中action ID、最新frame ID、公開schema version | 詳しいpolicy／利用可能命令は`agent_get_state`の明示sectionで当面維持 |
 | `agent_get_observation` | 引数なしで最新の観測を**一回で取得**。既定では近くのblock、entity、危険、通行候補を短く返す。要件ごとに範囲・種類・件数を指定可能 | 既知frameのページング、見えた面の詳しい証拠、音等は明示要求。毎回`get_state`でframe IDを取る必要をなくす |
 
 観測は`visible_surface`ごとの長いrecordから、位置で束ねた`block` recordへ変える。見えた面は`faces:"UN"`のように1字コード（U/D/N/S/W/E）を並べるか、必要時に短い配列を返す。利用側が面の集合を解析する必要がない行動では表示自体を省き、MODは内部の実rayを保管する。座標のdimensionは応答共通部に置き、各recordに重複させない。tick/revisionは共通部へ寄せ、異なるものだけrecordに差分を残す。公開できない詳細stateは`null`のままにする。
@@ -63,7 +63,7 @@ for (let i = 0; i < 16; i++) {
 ## 実施順・確認
 
 1. `AGENTS.md`と規範仕様を新しい責任境界に短く改める。専用worktree／Issueで実装する。
-2. 観測の小型化と`get_control`、手元9枠、引数なしのatomic observationを実装する。
+2. 観測の小型化と`agent_get_mcp_status`、手元9枠、引数なしのatomic observationを実装する。
 3. 基本行動ツールを一組で公開する。まず既存の内部実行器を再利用し、目標は公開DSLの撤去と単一のjob実行基盤に収束させること。
 4. 範囲指定の破壊・設置、経路中の破壊・移動、道具fallbackを隔離fixtureで試験する。
 5. 制限付きスクリプトと入力sequenceを接続し、有限ループ・取消・部分成功・入力解放を試験する。
