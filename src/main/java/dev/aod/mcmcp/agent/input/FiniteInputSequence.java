@@ -61,7 +61,9 @@ public final class FiniteInputSequence {
         }
     }
 
-    /** Call exactly once per client tick. Empty inputs mean release all inputs owned by this job. */
+    /** Call exactly once per client tick. The caller releases the prior lease before publishing
+     * a changed set, including zero-gap transitions, and releases it on empty or terminal frames.
+     */
     public final class Cursor {
         private int stepIndex;
         private int repetition;
