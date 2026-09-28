@@ -20,7 +20,8 @@ public interface McpRuntimePort {
     CompletionStage<RuntimeReply> submit(RuntimeCommand command, RuntimeCallContext context);
 
     sealed interface RuntimeCommand permits GetState, GetMcpStatus, GetObservation, StartAction,
-            StartMove, StartBreakBlock, StartPlaceBlock, StartInputSequence, StartClick, GetAction,
+            StartMove, StartBreakBlock, StartPlaceBlock, StartInventory,
+            StartInputSequence, StartClick, GetAction,
             CancelAction, ConfirmActionDelivery, AbandonActionDelivery,
             ConfirmObservationDelivery, AbandonObservationDelivery, GetSnapshot, CompareBlockPlan,
             GetRecipes, ListRoutines, GetRoutine, StartRoutine, CancelRoutine, EmergencyStop {
@@ -128,6 +129,18 @@ public interface McpRuntimePort {
         @Override
         public String toolName() {
             return "agent_place_block";
+        }
+    }
+
+    /** Internal v2 inventory readback; not discoverable until every basic tool is ready. */
+    record StartInventory(Map<String, Object> arguments) implements RuntimeCommand {
+        public StartInventory {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "agent_inventory";
         }
     }
 

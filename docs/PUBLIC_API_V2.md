@@ -39,6 +39,8 @@ LLMは行き先、作業範囲、条件、反復の意図を伝える。MODは�
 
 内部の`AgentJobStore`はDSLから独立した共通job状態を保持する。HTTP応答の配送確認前は開始できず、world session違い・取消・操作回数上限で次の操作を拒否する。取消と既に発行した操作の結果が競合しても進行数を記録し、入力解放が確認されるまでterminal結果を公表しない。保持する結果は最新jobと直前の完了jobに限る。内部のinput sequenceと座標moveはruntimeのclient tick、配送確認、進行取得、取消へ接続済み。**公開toolには未接続で、ゲームでの入力所有・lease解放は未検証**。他の行動種別、部分結果の詳細は接続時に実装・試験する。
 
+`AgentJobStore`はjob固有の小さな`result`もterminal後と直前jobまで保持する。内部の`StartInventory({operation:"inspect"})`は配送確認後のclient tickでプレイヤーの全所持枠を読み、非空slotの番号・item ID・個数、空枠数、選択中のhotbar枠を返す。任意のitem IDで絞り込め、MOD itemも同じ形式で扱う。menuは開かず、inventory移送や投棄はまだ行わない。`agent_inventory`は公開catalog未接続であり、`transfer`／`drop`、containerやMOD収納への汎用操作、server同期を伴う実機確認が残る。
+
 move＋breakを利用側で毎ブロック交互に呼ぶ必要はない。`agent_move`に`clear_path`を指定する、または`agent_break_block`に`advance:true`を指定して坑道を連続施工できる。範囲内で新たに露出したblockはMODが局所的に観測し、液体、落下、危険な敵、inventory満杯等で停止・報告する。既存PR #26の坑道専用DSLは参考にするが、公開上の専用命令増殖は避ける。
 
 破壊の`expected_drop`や完全な`expected_state`は必須にしない。道具は採掘可能性、速度、耐久、Silk Touch/Fortune等の条件を見て選び、適切なものがなければ他の道具または素手へfallbackできる。ただし指定した成果物が得られない可能性は結果に表す。位置、上限、block条件、除外条件を優先して、誤って別blockまで壊さない。設置ではitemと座標を基本にし、向き等のstate指定は任意にする。

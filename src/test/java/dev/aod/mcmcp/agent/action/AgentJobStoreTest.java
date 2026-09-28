@@ -2,6 +2,7 @@ package dev.aod.mcmcp.agent.action;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
 import java.util.UUID;
 
 import static dev.aod.mcmcp.agent.action.AgentJobStore.Kind.MOVE;
@@ -92,5 +93,23 @@ class AgentJobStoreTest {
         store.reserve(MOVE, session, 1, 100);
         assertThatThrownBy(() -> store.get(first)).isInstanceOf(AgentJobStore.NotFoundException.class);
         assertThat(store.get(second).failure()).isEqualTo("blocked");
+    }
+
+    @Test
+    void retainsImmutableResultAfterTheNextJobStarts() {
+        var store = new AgentJobStore();
+        var session = UUID.randomUUID();
+        var first = store.reserve(AgentJobStore.Kind.INVENTORY, session, 1, 100);
+        assertThatThrownBy(() -> store.recordResult(first, Map.of("count", 2)))
+                .isInstanceOf(IllegalArgumentException.class);
+        store.confirm(first, 1);
+        store.start(first, session);
+        store.recordResult(first, Map.of("count", 2));
+        store.recordOperation(first);
+        store.finish(first, SUCCEEDED, null, true);
+        store.reserve(MOVE, session, 1, 100);
+        assertThat(store.get(first).result()).containsEntry("count", 2);
+        assertThatThrownBy(() -> store.get(first).result().put("count", 3))
+                .isInstanceOf(UnsupportedOperationException.class);
     }
 }

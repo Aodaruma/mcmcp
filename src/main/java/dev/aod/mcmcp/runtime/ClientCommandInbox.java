@@ -461,7 +461,8 @@ public final class ClientCommandInbox {
                         || command.name().equals("agent_click")
                         || command.name().equals("agent_move")
                         || command.name().equals("agent_break_block")
-                        || command.name().equals("agent_place_block"))
+                        || command.name().equals("agent_place_block")
+                        || command.name().equals("agent_inventory"))
                 .count());
         pending.forEach(command -> command.completeFailure(failure));
         return discardedStarts;

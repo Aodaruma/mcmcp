@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.agent.action;
 
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -108,6 +109,16 @@ public final class AgentJobStore {
         notifyAll();
     }
 
+    /** Retains one bounded, immutable job result through cancellation and the next terminal job. */
+    public synchronized void recordResult(UUID actionId, Map<String, Object> result) {
+        Job job = current(actionId);
+        if (job.state != State.RUNNING || result.size() > 32) {
+            throw new IllegalArgumentException("invalid job result");
+        }
+        job.result = Map.copyOf(result);
+        notifyAll();
+    }
+
     /** Cancellation is a request; the owner must release inputs before publishing a terminal state. */
     public synchronized boolean requestCancel(UUID actionId) {
         Job job = current(actionId);
@@ -201,7 +212,8 @@ public final class AgentJobStore {
     public record Snapshot(UUID actionId, Kind kind, UUID worldSessionId, State state,
                            int completedOperations, int maxOperations,
                            int scannedCells, int completedBlocks,
-                           boolean cancelRequested, String failure) { }
+                           boolean cancelRequested, String failure,
+                           Map<String, Object> result) { }
 
     public static final class NotFoundException extends RuntimeException { }
 
@@ -217,6 +229,7 @@ public final class AgentJobStore {
         int completedBlocks;
         boolean cancelRequested;
         String failure;
+        Map<String, Object> result = Map.of();
 
         Job(UUID id, Kind kind, UUID worldSessionId, int maxOperations,
             long confirmationDeadlineNanos) {
@@ -229,7 +242,7 @@ public final class AgentJobStore {
 
         Snapshot snapshot() {
             return new Snapshot(id, kind, worldSessionId, state, completedOperations,
-                    maxOperations, scannedCells, completedBlocks, cancelRequested, failure);
+                    maxOperations, scannedCells, completedBlocks, cancelRequested, failure, result);
         }
     }
 }
