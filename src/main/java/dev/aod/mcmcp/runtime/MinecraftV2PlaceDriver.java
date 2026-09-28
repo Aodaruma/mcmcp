@@ -2,7 +2,9 @@ package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.agent.action.V2BlockAimResolver;
+import dev.aod.mcmcp.agent.navigation.CoordinateGoalPlanner;
 import dev.aod.mcmcp.agent.navigation.NavCell;
+import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
 import dev.aod.mcmcp.client.AgentInputState;
@@ -34,6 +36,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
+import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
 /** Uses a current observed support face, one normal placement, and server confirmation. */
@@ -41,6 +44,8 @@ final class MinecraftV2PlaceDriver
         implements V2BlockJobExecution.Driver<V2PlaceArguments> {
     private static final int MAX_CROSSHAIR_WAIT_TICKS = 20;
     private static final int MAX_CONFIRM_WAIT_TICKS = 60;
+    private static final int MAX_APPROACH_EVIDENCE_WAIT_TICKS = 80;
+    private static final double APPROACH_TOLERANCE = 0.35D;
     private static final Duration SNEAK_LEASE = Duration.ofSeconds(1);
 
     private final Minecraft minecraft;
@@ -48,6 +53,11 @@ final class MinecraftV2PlaceDriver
     private final AgentObservations observations;
     private final ClientReconciliationSignals reconciliationSignals;
     private final ClientPredictionSignals predictions;
+    private final DoubleSupplier remainingDistance;
+    private MinecraftActionPrimitiveExecutor navigation;
+    private CoordinateGoalPlanner planner;
+    private Map<TraversabilityEdge.Key, TraversabilityEdge> waitingEvidence;
+    private int approachEvidenceWaitTicks;
     private MinecraftActionPrimitiveExecutor facing;
     private BoundedInputLease sneak;
     private ClientPredictionSignals.PredictionAttempt prediction;
@@ -64,13 +74,14 @@ final class MinecraftV2PlaceDriver
             Supplier<WorldSessionTracker.Snapshot> sessions,
             AgentObservations observations,
             ClientReconciliationSignals reconciliationSignals,
-            ClientPredictionSignals predictions) {
+            ClientPredictionSignals predictions, DoubleSupplier remainingDistance) {
         this.minecraft = Objects.requireNonNull(minecraft, "minecraft");
         this.sessions = Objects.requireNonNull(sessions, "sessions");
         this.observations = Objects.requireNonNull(observations, "observations");
         this.reconciliationSignals = Objects.requireNonNull(
                 reconciliationSignals, "reconciliationSignals");
         this.predictions = Objects.requireNonNull(predictions, "predictions");
+        this.remainingDistance = Objects.requireNonNull(remainingDistance, "remainingDistance");
     }
 
     @Override
@@ -83,6 +94,22 @@ final class MinecraftV2PlaceDriver
             V2PlaceArguments request, BooleanSupplier outputAllowed) {
         if (stage != Stage.IDLE) throw new IllegalStateException("place driver already active");
         if (!outputAllowed.getAsBoolean()) return V2BlockJobExecution.BeginResult.FAILED;
+        var observed = beginObservedTarget(next, request, outputAllowed);
+        if (observed != V2BlockJobExecution.BeginResult.WAITING
+                || !request.advance() || request.maxDistance() <= 0.0D) return observed;
+        target = next;
+        this.request = request;
+        // An empty placement target must remain empty; it is not a standing waypoint.
+        planner = new CoordinateGoalPlanner(sessions.get().worldSessionId(), next,
+                cell -> !cell.equals(next));
+        navigation = new MinecraftActionPrimitiveExecutor(
+                McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
+        stage = Stage.APPROACH;
+        return V2BlockJobExecution.BeginResult.STARTED;
+    }
+
+    private V2BlockJobExecution.BeginResult beginObservedTarget(NavCell next,
+            V2PlaceArguments request, BooleanSupplier outputAllowed) {
         var session = sessions.get();
         var player = minecraft.player;
         var level = minecraft.level;
@@ -183,6 +210,9 @@ final class MinecraftV2PlaceDriver
                 || minecraft.player == null || minecraft.level == null) {
             return V2BlockJobExecution.StepResult.FAILED;
         }
+        if (stage == Stage.APPROACH) {
+            return tickApproach(session, clientTick, outputAllowed);
+        }
         if (stage == Stage.FACING) {
             var result = facing.tick(minecraft, observations.requireAgentMap(session),
                     LocalObservationVolume.global(), 0.0D, 1_080.0D,
@@ -259,6 +289,57 @@ final class MinecraftV2PlaceDriver
             return V2BlockJobExecution.StepResult.FAILED;
         }
         return V2BlockJobExecution.StepResult.RUNNING;
+    }
+
+    private V2BlockJobExecution.StepResult tickApproach(
+            WorldSessionTracker.Snapshot session, long clientTick,
+            BooleanSupplier outputAllowed) {
+        var map = observations.requireAgentMap(session);
+        if (navigation.active()) {
+            var motion = navigation.tick(minecraft, map, LocalObservationVolume.global(),
+                    Math.max(0.0D, remainingDistance.getAsDouble()),
+                    1_080.0D, clientTick, outputAllowed);
+            return switch (motion.status()) {
+                case RUNNING -> V2BlockJobExecution.StepResult.RUNNING;
+                case SUCCEEDED, REPLAN_REQUIRED -> {
+                    navigation.close();
+                    waitingEvidence = map.edges();
+                    approachEvidenceWaitTicks = 0;
+                    yield V2BlockJobExecution.StepResult.RUNNING;
+                }
+                case FAILED -> V2BlockJobExecution.StepResult.FAILED;
+            };
+        }
+        var observed = beginObservedTarget(target, request, outputAllowed);
+        switch (observed) {
+            case STARTED -> { return V2BlockJobExecution.StepResult.RUNNING; }
+            case SKIPPED -> { return V2BlockJobExecution.StepResult.SKIPPED; }
+            case FAILED -> { return V2BlockJobExecution.StepResult.FAILED; }
+            case WAITING -> { }
+        }
+        if (waitingEvidence != null && waitingEvidence.equals(map.edges())) {
+            return ++approachEvidenceWaitTicks <= MAX_APPROACH_EVIDENCE_WAIT_TICKS
+                    ? V2BlockJobExecution.StepResult.RUNNING
+                    : V2BlockJobExecution.StepResult.FAILED;
+        }
+        var current = ActionPlanning.playerCell(minecraft.player, session.dimension());
+        var plan = planner.plan(map, current, session.worldSessionId(), map.worldRevision(),
+                CoordinateGoalPlanner.Budget.DEFAULT,
+                () -> !outputAllowed.getAsBoolean());
+        return switch (plan.status()) {
+            case KNOWN_GOAL_ROUTE, PARTIAL_WAYPOINT -> {
+                navigation.beginNavigate(plan.route().orElseThrow(), APPROACH_TOLERANCE);
+                waitingEvidence = null;
+                yield V2BlockJobExecution.StepResult.RUNNING;
+            }
+            case BLOCKED, REACHED_KNOWN_GOAL -> {
+                waitingEvidence = map.edges();
+                approachEvidenceWaitTicks = 0;
+                yield V2BlockJobExecution.StepResult.RUNNING;
+            }
+            case LIMIT, CANCELLED, STALE_MAP, WORLD_MISMATCH ->
+                    V2BlockJobExecution.StepResult.FAILED;
+        };
     }
 
     private boolean heartbeatSneak(WorldSessionTracker.Snapshot session) {
@@ -363,6 +444,15 @@ final class MinecraftV2PlaceDriver
                 else failure.addSuppressed(closeFailure);
             }
         }
+        if (navigation != null) {
+            try {
+                navigation.close();
+                navigation = null;
+            } catch (RuntimeException | LinkageError closeFailure) {
+                if (failure == null) failure = closeFailure;
+                else failure.addSuppressed(closeFailure);
+            }
+        }
         if (failure instanceof RuntimeException runtime) throw runtime;
         if (failure instanceof LinkageError linkage) throw linkage;
         var player = minecraft.player;
@@ -374,6 +464,9 @@ final class MinecraftV2PlaceDriver
         selectedSlot = -1;
         target = null;
         request = null;
+        planner = null;
+        waitingEvidence = null;
+        approachEvidenceWaitTicks = 0;
         candidate = null;
         crosshairWaitTicks = 0;
         dispatchedTick = 0L;
@@ -398,6 +491,6 @@ final class MinecraftV2PlaceDriver
     private record Candidate(BlockPos support, Direction face,
                              MinecraftActionPrimitiveExecutor.KnownFaceTarget aim) { }
     private enum Stage {
-        IDLE, FACING, WAIT_SNEAK, FACING_CROUCHED, WAIT_CROSSHAIR, CONFIRMING
+        IDLE, APPROACH, FACING, WAIT_SNEAK, FACING_CROUCHED, WAIT_CROSSHAIR, CONFIRMING
     }
 }

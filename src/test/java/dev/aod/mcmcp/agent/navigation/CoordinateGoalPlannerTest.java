@@ -43,6 +43,40 @@ class CoordinateGoalPlannerTest {
     }
 
     @Test
+    void blockWorkNeverUsesTheTargetBlockAsAStandingWaypoint() {
+        var map = map(edge(cell(0, 0), cell(1, 0)),
+                edge(cell(1, 0), cell(2, 0)));
+        var target = cell(2, 0);
+        var planner = new CoordinateGoalPlanner(SESSION, target,
+                cell -> !cell.equals(target));
+
+        var result = plan(planner, map, cell(0, 0));
+
+        assertThat(result.status()).isEqualTo(PARTIAL_WAYPOINT);
+        assertThat(result.route().orElseThrow().cells())
+                .containsExactly(cell(0, 0), cell(1, 0));
+    }
+
+    @Test
+    void pathSearchDoesNotCrossAnExcludedPlacementCell() {
+        var target = cell(1, 0);
+        var destination = cell(2, 0);
+        var map = map(edge(cell(0, 0), target), edge(target, destination),
+                edge(cell(0, 0), cell(0, 1)),
+                edge(cell(0, 1), cell(1, 1)),
+                edge(cell(1, 1), cell(2, 1)),
+                edge(cell(2, 1), destination));
+
+        var result = new DeterministicAStar().findRoute(
+                map.snapshot().orElseThrow(), cell(0, 0), destination,
+                DeterministicAStar.MAX_EXPANDED_NODES,
+                () -> true, () -> { }, cell -> !cell.equals(target));
+
+        assertThat(result.route().orElseThrow().cells()).containsExactly(
+                cell(0, 0), cell(0, 1), cell(1, 1), cell(2, 1), destination);
+    }
+
+    @Test
     void routesAroundBlockedEdgeAndSkipsUnreachableClosestCandidate() {
         var map = map(blocked(cell(0, 0), cell(1, 0)),
                 edge(cell(0, 0), cell(0, 1)), edge(cell(0, 1), cell(1, 1)),

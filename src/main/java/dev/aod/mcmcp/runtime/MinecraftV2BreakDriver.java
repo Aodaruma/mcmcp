@@ -90,7 +90,9 @@ final class MinecraftV2BreakDriver
                 || !request.advance() || request.maxDistance() <= 0.0D) return observed;
         target = next;
         this.request = request;
-        planner = new CoordinateGoalPlanner(sessions.get().worldSessionId(), next);
+        // The block being mined is a target to face, never a standing waypoint.
+        planner = new CoordinateGoalPlanner(sessions.get().worldSessionId(), next,
+                cell -> !cell.equals(next));
         navigation = new MinecraftActionPrimitiveExecutor(
                 McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
         stage = Stage.APPROACH;

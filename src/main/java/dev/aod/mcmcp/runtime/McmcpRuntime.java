@@ -1459,7 +1459,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             actionId = v2Jobs.reserve(AgentJobStore.Kind.PLACE_BLOCK, session.worldSessionId(),
                     request.maxTicks(), System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS);
             var driver = new MinecraftV2PlaceDriver(minecraft, sessions::snapshot,
-                    agentObservations, reconciliationSignals, ClientPredictionSignals.global());
+                    agentObservations, reconciliationSignals, ClientPredictionSignals.global(),
+                    () -> v2PlaceMaxDistance - v2PlaceTravelled);
             v2PlaceExecution = new V2BlockJobExecution<>(v2Jobs, actionId,
                     session.worldSessionId(), AgentJobStore.Kind.PLACE_BLOCK,
                     request, driver, () -> {

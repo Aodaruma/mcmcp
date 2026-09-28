@@ -13,6 +13,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
+import java.util.function.Predicate;
 
 /** Internal, single-owner planning state for one coordinate goal; never performs movement.
  * Retain this instance for the whole job, including failed execution and fresh observations.
@@ -24,13 +25,20 @@ public final class CoordinateGoalPlanner {
     private static final int MAX_ISSUED_CELLS = 8_192;
     private final UUID session;
     private final NavCell goal;
+    private final Predicate<NavCell> cellAllowed;
     private final Set<NavCell> issuedCells = new HashSet<>();
     private Map<TraversabilityEdge.Key, TraversabilityEdge> lastIssuedEvidence;
     private long newestRevision = -1;
 
     public CoordinateGoalPlanner(UUID session, NavCell goal) {
+        this(session, goal, cell -> true);
+    }
+
+    public CoordinateGoalPlanner(UUID session, NavCell goal,
+            Predicate<NavCell> cellAllowed) {
         this.session = Objects.requireNonNull(session, "session");
         this.goal = Objects.requireNonNull(goal, "goal");
+        this.cellAllowed = Objects.requireNonNull(cellAllowed, "cellAllowed");
     }
 
     public Result plan(KnownTraversabilitySnapshot map, NavCell start, UUID currentSession,
@@ -68,7 +76,7 @@ public final class CoordinateGoalPlanner {
             }
         }
         if (stopped(cancelled)) return empty(Status.CANCELLED, 0, 0);
-        if (start.equals(goal) && candidates.contains(goal)) {
+        if (start.equals(goal) && candidates.contains(goal) && cellAllowed.test(goal)) {
             return new Result(Status.REACHED_KNOWN_GOAL,
                     Optional.of(RoutePlan.from(map, List.of(start), List.of())), 0, 0);
         }
@@ -88,7 +96,8 @@ public final class CoordinateGoalPlanner {
         while (!pending.isEmpty()) {
             if (stopped(cancelled)) return empty(Status.CANCELLED, 0, 0);
             for (TraversabilityEdge edge : map.outgoing(pending.removeFirst())) {
-                if (edge.traversable() && DiagonalTraversal.clear(map, edge)
+                if (edge.traversable() && cellAllowed.test(edge.key().to())
+                        && DiagonalTraversal.clear(map, edge)
                         && connected.add(edge.key().to())) {
                     pending.addLast(edge.key().to());
                 }
@@ -99,14 +108,15 @@ public final class CoordinateGoalPlanner {
         var search = new DeterministicAStar();
         for (NavCell candidate : candidates) {
             if (stopped(cancelled)) return empty(Status.CANCELLED, attempts, expanded);
-            if (candidate.equals(start) || issuedCells.contains(candidate)
+            if (candidate.equals(start) || !cellAllowed.test(candidate)
+                    || issuedCells.contains(candidate)
                     || !connected.contains(candidate)) continue;
             if (attempts >= budget.candidates() || expanded >= budget.expansions()) {
                 return empty(Status.LIMIT, attempts, expanded);
             }
             attempts++;
             var found = search.findRoute(map, start, candidate, budget.expansions() - expanded,
-                    () -> !stopped(cancelled), () -> { });
+                    () -> !stopped(cancelled), () -> { }, cellAllowed);
             expanded += found.expandedCells().size();
             if (stopped(cancelled)) return empty(Status.CANCELLED, attempts, expanded);
             if (found.found()) {
