@@ -73,6 +73,19 @@ class McpPublicV2ToolsTest {
     }
 
     @Test
+    void inventorySwapIsPublicAndUsesTheSharedActionReceipt() throws Exception {
+        var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();
+        var registry = registry(calls);
+        var input = JsonParser.parseString("{\"operation\":\"swap\",\"source_slot\":12,"
+                + "\"hotbar_slot\":2,\"item\":\"minecraft:torch\"}").getAsJsonObject();
+        var prepared = registry.prepareCall("agent_inventory", input);
+        assertThat(prepared.response().get("isError").getAsBoolean()).isFalse();
+        assertThat(calls.getFirst()).isInstanceOf(McpRuntimePort.StartInventory.class);
+        assertThat(prepared.deliveryReceipt())
+                .isInstanceOf(McpRuntimePort.ActionDeliveryReceipt.class);
+    }
+
+    @Test
     void incompleteOrUnsupportedRequestsAreRejectedBeforeRuntimeDispatch()
             throws Exception {
         var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();

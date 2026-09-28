@@ -3938,8 +3938,8 @@
     },
     {
       "name": "agent_inventory",
-      "title": "Inspect or Drop Inventory",
-      "description": "Inspects player inventory without opening a screen or drops a specified quantity with server slot confirmation. Container transfer is not yet supported in this draft.",
+      "title": "Inspect, Swap or Drop Inventory",
+      "description": "Inspects player inventory, exchanges one main-inventory stack with an explicit hotbar slot, or drops a specified quantity. Mutations wait for server slot confirmation. Container transfer is not yet supported in this draft.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
@@ -3992,6 +3992,41 @@
               "operation",
               "item",
               "count"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "const": "swap"
+              },
+              "source_slot": {
+                "type": "integer",
+                "minimum": 9,
+                "maximum": 35
+              },
+              "hotbar_slot": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 8
+              },
+              "item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1200
+              }
+            },
+            "required": [
+              "operation",
+              "source_slot",
+              "hotbar_slot",
+              "item"
             ]
           }
         ]

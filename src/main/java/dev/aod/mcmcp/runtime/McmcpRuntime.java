@@ -1710,9 +1710,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             actionId = v2Jobs.reserve(AgentJobStore.Kind.INVENTORY,
                     session.worldSessionId(), request.maxTicks(),
                     System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS);
-            V2InventoryJobExecution.Driver driver = request instanceof V2InventoryDropArguments drop
-                    ? new MinecraftV2InventoryDropDriver(minecraft, session.worldSessionId(), drop)
-                    : inventoryInspectDriver(minecraft, (V2InventoryInspectArguments) request);
+            V2InventoryJobExecution.Driver driver = switch (request) {
+                case V2InventoryDropArguments drop -> new MinecraftV2InventoryDropDriver(
+                        minecraft, session.worldSessionId(), drop);
+                case V2InventorySwapArguments swap -> new MinecraftV2InventorySwapDriver(
+                        minecraft, session.worldSessionId(), swap);
+                case V2InventoryInspectArguments inspect ->
+                        inventoryInspectDriver(minecraft, inspect);
+            };
             v2InventoryExecution = new V2InventoryJobExecution(v2Jobs, actionId,
                     session.worldSessionId(), driver, () -> {
                         boolean released = boundedActionInputRelease(
