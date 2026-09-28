@@ -181,6 +181,21 @@ class AgentInputStateTest {
     }
 
     @Test
+    void pickInputRetainsOwnershipUntilReleaseAndStopsOnSafetySuppression() {
+        var state = new AgentInputState();
+        state.publishPick(System.nanoTime() + 1_000_000_000L);
+        assertThat(state.pickActive()).isTrue();
+        assertThat(state.inputOwnershipSnapshot().pickOwned()).isTrue();
+
+        state.suppressAll();
+        assertThat(state.pickActive()).isFalse();
+        assertThat(state.inputOwnerNone()).isFalse();
+
+        state.releasePick();
+        assertThat(state.inputOwnerNone()).isTrue();
+    }
+
+    @Test
     void terminalOwnerNoneIsMeasuredAcrossMovementAttackProofAndTrackedVelocity() {
         var state = new AgentInputState();
         assertThat(state.inputOwnershipSnapshot().ownerNone()).isTrue();

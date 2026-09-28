@@ -127,7 +127,7 @@ snapshotの既知の安全な停止候補を目標への直線距離、同距離
 
 ゲーム内の論理キー／左右中クリックを指定する。`steps`に複数の同時入力、順番、`hold_ticks`、`gap_ticks`、`repeat`、`until`、最大総時間を記載できるようにする。入力頻度はgame tick単位で表す。world操作を起こしうるクリックには座標範囲・対象種類・手持ちなどの任意guardを付けられ、guardなしでも総時間と入力回数の上限を保つ。画面やワールドが変われば入力を解放して停止する。OSへキーを送る機能とは区別する。
 
-内部の`FiniteInputSequence`は、既存の8種類の論理入力について、同時押し・順次step・押下tick・gap・有限反復と外部停止条件／取消をtickごとに進める。最大64 step・合計1,200 tickで、停止後は空入力だけを返す。`InputSequenceLeaseDriver`は既存の短期leaseを使い、入力集合の切替前・停止時に旧入力を解放し、期限切れ・解放失敗なら次の入力を出さず停止する。`InputSequenceJobExecution`はこのdriverを共通jobへ接続し、配送確認・session・安全判定を満たしたtickだけ入力を発行する。取消・world変更・危険・lease失敗では停止意図を保持し、入力解放の再試行が成功するまでjobを非terminalに保つ。内部の`StartInputSequence`からclient tick・緊急停止・既存の配送確認／進行取得／取消へ接続した。入力はworld/session、画面、局所安全、体力、移動距離、control epochを毎tick確認し、移動には既存の衝突・revision証拠を要求する。**公開catalogにはまだ載せておらず、ゲームでの動作も未検証**。中クリック、任意キー、停止条件のgame評価、server結果照合、entity attackの適切な許可境界は未実装である。基本ツール一式と合わせて公開する前にこれらを解決する。
+内部の`FiniteInputSequence`は、9種類の論理入力について、同時押し・順次step・押下tick・gap・有限反復と外部停止条件／取消をtickごとに進める。最大64 step・合計1,200 tickで、停止後は空入力だけを返す。`InputSequenceLeaseDriver`は既存の短期leaseを使い、入力集合の切替前・停止時に旧入力を解放し、期限切れ・解放失敗なら次の入力を出さず停止する。中クリックに相当する`pick`は、独立した入力所有を持ち、押下の立ち上がり時にワールド内でVanillaのピック操作を一度呼ぶ。`InputSequenceJobExecution`はこのdriverを共通jobへ接続し、配送確認・session・安全判定を満たしたtickだけ入力を発行する。取消・world変更・危険・lease失敗では停止意図を保持し、入力解放の再試行が成功するまでjobを非terminalに保つ。内部の`StartInputSequence`からclient tick・緊急停止・既存の配送確認／進行取得／取消へ接続した。内部の`StartClick`は左右中のbutton、有限回数・押下tick・間隔を同じjobに変換する。入力はworld/session、画面、局所安全、体力、移動距離、control epochを毎tick確認し、移動には既存の衝突・revision証拠を要求する。**いずれも公開catalogにはまだ載せておらず、ゲームでの動作も未検証**。menu内クリック、対象guard、任意キー、停止条件のgame評価、server結果照合、entity attackの適切な許可境界は未実装である。基本ツール一式と合わせて公開する前にこれらを解決する。
 
 ## 実施順・確認
 

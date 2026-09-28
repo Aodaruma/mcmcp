@@ -42,6 +42,9 @@ public final class AgentInputState {
     private boolean useSuppressed;
     private boolean useExpiryRequired;
     private long useValidUntilNanos;
+    private boolean pickOwned;
+    private boolean pickSuppressed;
+    private long pickValidUntilNanos;
     private boolean paused;
     private long pauseStartedAtNanos;
     private long accumulatedPauseNanos;
@@ -395,6 +398,18 @@ public final class AgentInputState {
         useValidUntilNanos = 0L;
     }
 
+    public synchronized void publishPick(long validUntilNanos) {
+        pickOwned = true;
+        pickSuppressed = false;
+        pickValidUntilNanos = validUntilNanos;
+    }
+
+    public synchronized void releasePick() {
+        pickOwned = false;
+        pickSuppressed = false;
+        pickValidUntilNanos = 0L;
+    }
+
     /** Neutralizes all agent channels until their owning leases explicitly publish again. */
     public synchronized void suppressAll() {
         suppressMovement();
@@ -403,6 +418,9 @@ public final class AgentInputState {
         }
         if (useOwned) {
             useSuppressed = true;
+        }
+        if (pickOwned) {
+            pickSuppressed = true;
         }
     }
 
@@ -422,6 +440,9 @@ public final class AgentInputState {
         if (useOwned) {
             useSuppressed = true;
         }
+        if (pickOwned) {
+            pickSuppressed = true;
+        }
     }
 
     /** A measured snapshot used before publishing any terminal input-release receipt. */
@@ -438,7 +459,8 @@ public final class AgentInputState {
                 || agentMoveContribution.lengthSqr() > 0.0D
                 || agentVelocityReset;
         return new InputOwnershipSnapshot(
-                movement.owned(), attackOwned, useOwned, goalProofRetained, velocityTracked);
+                movement.owned(), attackOwned, useOwned, pickOwned,
+                goalProofRetained, velocityTracked);
     }
 
     public synchronized boolean inputOwnerNone() {
@@ -453,6 +475,11 @@ public final class AgentInputState {
     public synchronized boolean useActive() {
         expireButtonsIfNeeded(System.nanoTime());
         return useOwned && !useSuppressed && !paused;
+    }
+
+    public synchronized boolean pickActive() {
+        expireButtonsIfNeeded(System.nanoTime());
+        return pickOwned && !pickSuppressed && !paused;
     }
 
     public synchronized MovementSnapshot movementSnapshot() {
@@ -512,6 +539,9 @@ public final class AgentInputState {
         if (useOwned && useExpiryRequired && !paused
                 && watchdogNow - useValidUntilNanos >= 0L) {
             useSuppressed = true;
+        }
+        if (pickOwned && !paused && watchdogNow - pickValidUntilNanos >= 0L) {
+            pickSuppressed = true;
         }
     }
 
@@ -743,6 +773,7 @@ public final class AgentInputState {
             boolean movementOwned,
             boolean attackOwned,
             boolean useOwned,
+            boolean pickOwned,
             boolean goalProofRetained,
             boolean velocityTracked) {
         public InputOwnershipSnapshot(
@@ -750,11 +781,12 @@ public final class AgentInputState {
                 boolean attackOwned,
                 boolean goalProofRetained,
                 boolean velocityTracked) {
-            this(movementOwned, attackOwned, false, goalProofRetained, velocityTracked);
+            this(movementOwned, attackOwned, false, false,
+                    goalProofRetained, velocityTracked);
         }
 
         public boolean ownerNone() {
-            return !movementOwned && !attackOwned && !useOwned
+            return !movementOwned && !attackOwned && !useOwned && !pickOwned
                     && !goalProofRetained && !velocityTracked;
         }
     }

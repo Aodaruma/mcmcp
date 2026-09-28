@@ -861,6 +861,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || inbox.hasPendingCommand("start_routine")
                 || inbox.hasPendingCommand("agent_start_action")
                 || inbox.hasPendingCommand("agent_input_sequence")
+                || inbox.hasPendingCommand("agent_click")
                 || inbox.hasPendingCommand("agent_move")
                 || inbox.hasPendingCommand("agent_break_block")
                 || inbox.hasPendingCommand("agent_place_block")
@@ -1054,6 +1055,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 && !inbox.hasPendingCommand("start_routine")
                 && !inbox.hasPendingCommand("agent_start_action")
                 && !inbox.hasPendingCommand("agent_input_sequence")
+                && !inbox.hasPendingCommand("agent_click")
                 && !inbox.hasPendingCommand("agent_move")
                 && !inbox.hasPendingCommand("agent_break_block")
                 && !inbox.hasPendingCommand("agent_place_block");
@@ -1097,6 +1099,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         if (command instanceof StartInputSequence sequence) {
             return submitV2InputStart(sequence, context);
+        }
+        if (command instanceof StartClick click) {
+            return submitV2ClickStart(click, context);
         }
         if (command instanceof StartMove move) {
             return submitV2MoveStart(move, context);
@@ -1301,7 +1306,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 command.toolName(), fence.generation(), context.deadlineNanos(),
                 () -> withEvaluationLeaseFence(context, command.toolName(), () -> {
                     var result = commitV2InputSequence(
-                            Minecraft.getInstance(), sessions.snapshot(), sequence, context);
+                            Minecraft.getInstance(), sessions.snapshot(), sequence,
+                            AgentJobStore.Kind.INPUT_SEQUENCE, command.toolName(), context);
                     return RuntimeReply.success(result, new McpRuntimePort.ActionDeliveryReceipt(
                             UUID.fromString((String) result.get("action_id"))));
                 }),
@@ -1345,6 +1351,31 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 context::isCancelled,
                 reply -> {
                     if (reply.successful()) rollbackAbandonedV2Break(reply.data());
+                });
+    }
+
+    private CompletionStage<RuntimeReply> submitV2ClickStart(
+            StartClick command, RuntimeCallContext context) {
+        final FiniteInputSequence sequence;
+        try {
+            sequence = V2ClickArguments.parse(command.arguments());
+        } catch (RuntimeException | LinkageError failure) {
+            return CompletableFuture.completedFuture(RuntimeFailures.mapFailure(failure));
+        }
+        var fence = publishedSession;
+        return inbox.submitControlMapped(
+                command.toolName(), fence.generation(), context.deadlineNanos(),
+                () -> withEvaluationLeaseFence(context, command.toolName(), () -> {
+                    var result = commitV2InputSequence(
+                            Minecraft.getInstance(), sessions.snapshot(), sequence,
+                            AgentJobStore.Kind.CLICK, command.toolName(), context);
+                    return RuntimeReply.success(result, new McpRuntimePort.ActionDeliveryReceipt(
+                            UUID.fromString((String) result.get("action_id"))));
+                }),
+                RuntimeFailures::mapFailure,
+                context::isCancelled,
+                reply -> {
+                    if (reply.successful()) rollbackAbandonedV2Input(reply.data());
                 });
     }
 
@@ -1571,7 +1602,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private Map<String, Object> commitV2InputSequence(
             Minecraft minecraft, WorldSessionTracker.Snapshot session,
-            FiniteInputSequence sequence, RuntimeCallContext context) {
+            FiniteInputSequence sequence, AgentJobStore.Kind kind,
+            String toolName, RuntimeCallContext context) {
         assertClientThread(minecraft);
         RuntimeFailures.requireReady(session);
         if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
@@ -1588,7 +1620,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             throw new RuntimeInvocationException(
                     "task_busy", "Another action is already queued or running.", true, Map.of());
         }
-        requireLiveCall(context, "agent_input_sequence");
+        requireLiveCall(context, toolName);
         if (!arming.beginAction(session.worldSessionId())) {
             throw new RuntimeInvocationException(
                     "mcp_operation_disabled", "The READY authorization is no longer available.",
@@ -1596,13 +1628,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         UUID actionId = null;
         try {
-            requireLiveCall(context, "agent_input_sequence");
+            requireLiveCall(context, toolName);
             actionId = v2Jobs.reserve(
-                    AgentJobStore.Kind.INPUT_SEQUENCE, session.worldSessionId(),
+                    kind, session.worldSessionId(),
                     sequence.totalTicks(), System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS);
             var driver = new InputSequenceLeaseDriver(sequence, AgentInputState.global());
             v2InputExecution = new InputSequenceJobExecution(
-                    v2Jobs, actionId, session.worldSessionId(), driver,
+                    v2Jobs, actionId, session.worldSessionId(), kind, driver,
                     () -> {
                         boolean released = boundedActionInputRelease(
                                 () -> releaseAllAndConfirmNoInputOwner(minecraft));
@@ -1616,7 +1648,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     + minecraft.player.getAbsorptionAmount();
             v2InputLastPosition = minecraft.player.position();
             v2InputTravelled = 0.0D;
-            requireLiveCall(context, "agent_input_sequence");
+            requireLiveCall(context, toolName);
         } catch (RuntimeException | LinkageError failure) {
             if (actionId != null) v2Jobs.abandon(actionId);
             v2InputExecution = null;
@@ -1648,6 +1680,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
             case StartInputSequence ignored ->
                     throw new AssertionError("agent_input_sequence must use delivery-gated admission");
+            case StartClick ignored ->
+                    throw new AssertionError("agent_click must use delivery-gated admission");
             case StartMove ignored ->
                     throw new AssertionError("agent_move must use delivery-gated admission");
             case StartBreakBlock ignored ->
@@ -2164,7 +2198,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (isV2Job(requestedId)) {
             var before = v2Jobs.get(requestedId);
             boolean requested = !before.state().terminal();
-            if (requested && before.kind() == AgentJobStore.Kind.INPUT_SEQUENCE
+            if (requested && (before.kind() == AgentJobStore.Kind.INPUT_SEQUENCE
+                    || before.kind() == AgentJobStore.Kind.CLICK)
                     && v2InputExecution != null) {
                 finishV2InputIfTerminal(v2InputExecution.cancel());
             } else if (requested && before.kind() == AgentJobStore.Kind.MOVE
@@ -2699,7 +2734,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private void witnessV2Input(FiniteInputSequence.Frame frame) {
         if (frame.inputs().stream().noneMatch(input -> switch (input) {
             case FORWARD, BACK, LEFT, RIGHT, JUMP, SNEAK -> true;
-            case ATTACK, USE -> false;
+            case ATTACK, USE, PICK -> false;
         })) return;
         var minecraft = Minecraft.getInstance();
         var session = sessions.snapshot();
@@ -2724,7 +2759,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             finishV2BreakIfTerminal(result);
         } else if (result.kind() == AgentJobStore.Kind.PLACE_BLOCK) {
             finishV2PlaceIfTerminal(result);
-        } else if (result.kind() == AgentJobStore.Kind.INPUT_SEQUENCE) {
+        } else if (result.kind() == AgentJobStore.Kind.INPUT_SEQUENCE
+                || result.kind() == AgentJobStore.Kind.CLICK) {
             finishV2InputIfTerminal(result);
         }
     }

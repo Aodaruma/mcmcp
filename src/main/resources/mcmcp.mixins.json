@@ -18,6 +18,7 @@
     "client.LivingEntityAgentMovementMixin",
     "client.LocalPlayerMovementTickMixin",
     "client.MinecraftAttackInputMixin",
+    "client.MinecraftPickInvoker",
     "client.MinecraftUseItemInvoker",
     "client.MouseHandlerMixin"
   ],

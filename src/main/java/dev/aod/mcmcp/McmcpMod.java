@@ -5,6 +5,7 @@ import dev.aod.mcmcp.client.AutomationIndicatorController;
 import dev.aod.mcmcp.client.AgentBlockBreakChannel;
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.client.AgentMovementInput;
+import dev.aod.mcmcp.client.AgentPickInputChannel;
 import dev.aod.mcmcp.client.AgentUseInputChannel;
 import dev.aod.mcmcp.client.InputIsolationController;
 import dev.aod.mcmcp.client.McmcpClientConfig;
@@ -49,6 +50,7 @@ public final class McmcpMod {
     private final AgentInputState agentInput = AgentInputState.global();
     private final AgentBlockBreakChannel agentBlockBreak = new AgentBlockBreakChannel(agentInput);
     private final AgentUseInputChannel agentUse = new AgentUseInputChannel(agentInput);
+    private final AgentPickInputChannel agentPick = new AgentPickInputChannel(agentInput);
     private final ScreenOwnershipSignals screenOwnership = ScreenOwnershipSignals.global();
 
     public McmcpMod(IEventBus modEventBus, ModContainer modContainer) {
@@ -110,6 +112,7 @@ public final class McmcpMod {
         runtime.onPostTick(minecraft);
         // Use is emitted only after the runtime's current-tick target/item/safety reproof.
         agentUse.onClientPostTick(minecraft);
+        agentPick.onClientPostTick(minecraft);
     }
 
     private void onLoggingIn(ClientPlayerNetworkEvent.LoggingIn event) {

@@ -28,6 +28,15 @@ public final class InputSequenceJobExecution {
                                      InputSequenceLeaseDriver driver,
                                      BooleanSupplier releaseAndVerify,
                                      Consumer<FiniteInputSequence.Frame> afterInputPublished) {
+        this(jobs, actionId, worldSessionId, AgentJobStore.Kind.INPUT_SEQUENCE,
+                driver, releaseAndVerify, afterInputPublished);
+    }
+
+    public InputSequenceJobExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
+                                     AgentJobStore.Kind kind,
+                                     InputSequenceLeaseDriver driver,
+                                     BooleanSupplier releaseAndVerify,
+                                     Consumer<FiniteInputSequence.Frame> afterInputPublished) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.actionId = Objects.requireNonNull(actionId, "actionId");
         this.worldSessionId = Objects.requireNonNull(worldSessionId, "worldSessionId");
@@ -35,7 +44,8 @@ public final class InputSequenceJobExecution {
         this.releaseAndVerify = Objects.requireNonNull(releaseAndVerify, "releaseAndVerify");
         this.afterInputPublished = Objects.requireNonNull(afterInputPublished, "afterInputPublished");
         var job = jobs.get(actionId);
-        if (job.kind() != AgentJobStore.Kind.INPUT_SEQUENCE
+        if ((kind != AgentJobStore.Kind.INPUT_SEQUENCE && kind != AgentJobStore.Kind.CLICK)
+                || job.kind() != kind
                 || !job.worldSessionId().equals(worldSessionId)
                 || job.maxOperations() != driver.totalTicks()) {
             throw new IllegalArgumentException("input job does not match its session");

@@ -26,8 +26,8 @@ final class V2InputSequenceArguments {
                 throw new IllegalArgumentException("step requires inputs and hold_ticks");
             }
             Object rawInputs = step.get("inputs");
-            if (!(rawInputs instanceof List<?> inputs) || inputs.isEmpty() || inputs.size() > 8) {
-                throw new IllegalArgumentException("step.inputs must contain 1..8 logical inputs");
+            if (!(rawInputs instanceof List<?> inputs) || inputs.isEmpty() || inputs.size() > 9) {
+                throw new IllegalArgumentException("step.inputs must contain 1..9 logical inputs");
             }
             var parsedInputs = EnumSet.noneOf(BoundedInputLease.Input.class);
             for (Object rawInput : inputs) {

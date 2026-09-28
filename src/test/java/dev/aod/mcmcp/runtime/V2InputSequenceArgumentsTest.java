@@ -16,6 +16,9 @@ class V2InputSequenceArgumentsTest {
                         "hold_ticks", 2, "gap_ticks", 1, "repeat", 2),
                 Map.of("inputs", List.of("use"), "hold_ticks", 1))));
         assertThat(sequence.totalTicks()).isEqualTo(7);
+        assertThat(V2InputSequenceArguments.parse(Map.of("steps", List.of(
+                Map.of("inputs", List.of("pick"), "hold_ticks", 1))))
+                .totalTicks()).isEqualTo(1);
     }
 
     @Test

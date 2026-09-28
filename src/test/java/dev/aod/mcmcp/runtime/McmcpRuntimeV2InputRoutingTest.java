@@ -143,6 +143,30 @@ class McmcpRuntimeV2InputRoutingTest {
     }
 
     @Test
+    void clickUsesTheSameDeliveryStatusAndCancelOwner() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("v2Jobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.CLICK, session, 1, Long.MAX_VALUE);
+        var sequence = V2ClickArguments.parse(Map.of("button", "middle"));
+        field("v2InputExecution").set(runtime, new InputSequenceJobExecution(
+                store, id, session, AgentJobStore.Kind.CLICK,
+                new InputSequenceLeaseDriver(sequence, AgentInputState.global()),
+                () -> true, ignored -> { }));
+
+        assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                .isEqualTo(Map.of("action_id", id.toString(), "confirmed", true));
+        var queued = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString()));
+        assertThat(queued.get("kind")).isEqualTo("click");
+        var cancelled = (Map<?, ?>) invoke("cancelAgentAction",
+                new Class<?>[]{net.minecraft.client.Minecraft.class, Map.class},
+                null, Map.of("action_id", id.toString()));
+        assertThat(cancelled.get("cancel_requested")).isEqualTo(true);
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.CANCELLED);
+        assertThat(field("v2InputExecution").get(runtime)).isNull();
+    }
+
+    @Test
     void placeProgressUsesTheSharedActionStatusWithoutBreakLabels() throws Exception {
         var session = UUID.randomUUID();
         var store = (AgentJobStore) field("v2Jobs").get(runtime);
