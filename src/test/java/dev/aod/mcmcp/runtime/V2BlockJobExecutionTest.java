@@ -53,8 +53,16 @@ class V2BlockJobExecutionTest {
         assertThat(store.get(id).completedOperations()).isEqualTo(2);
         assertThat(store.get(id).scannedCells()).isEqualTo(3);
         assertThat(store.get(id).completedBlocks()).isEqualTo(2);
+        assertThat(store.get(id).result()).containsEntry("confirmed_count", 2)
+                .containsEntry("retained_from", 1)
+                .containsEntry("truncated", false)
+                .containsEntry("dimension", "minecraft:overworld");
+        assertThat(store.get(id).result().get("confirmed_cells")).isEqualTo(List.of(
+                Map.of("x", 11, "y", 64, "z", 20),
+                Map.of("x", 12, "y", 64, "z", 20)));
         store.reserve(AgentJobStore.Kind.MOVE, SESSION, 10, 100);
         assertThat(store.get(id).completedBlocks()).isEqualTo(2);
+        assertThat(store.get(id).result()).containsEntry("confirmed_count", 2);
     }
 
     @Test
@@ -109,6 +117,30 @@ class V2BlockJobExecutionTest {
     }
 
     @Test
+    void cancellationRetainsConfirmedCoordinatesForSafeResumption() {
+        var store = new AgentJobStore();
+        var id = store.reserve(AgentJobStore.Kind.BREAK_BLOCK, SESSION, 10, 100);
+        var request = V2BreakArguments.parse(Map.of(
+                "x", 10, "y", 64, "z", 20, "dx", 1), "minecraft:overworld");
+        var driver = new FakeDriver();
+        driver.begins.addAll(List.of(
+                V2BlockJobExecution.BeginResult.STARTED,
+                V2BlockJobExecution.BeginResult.STARTED));
+        driver.steps.addAll(List.of(
+                V2BlockJobExecution.StepResult.CONFIRMED,
+                V2BlockJobExecution.StepResult.RUNNING));
+        var job = new V2BlockJobExecution<>(store, id, SESSION,
+                AgentJobStore.Kind.BREAK_BLOCK, request, driver, () -> true);
+        store.confirm(id, 1);
+        job.tick(SESSION, 1, 1, true, () -> true);
+        job.tick(SESSION, 2, 2, true, () -> true);
+        assertThat(job.cancel().state()).isEqualTo(AgentJobStore.State.CANCELLED);
+        assertThat(store.get(id).result()).containsEntry("confirmed_count", 1);
+        assertThat(store.get(id).result().get("confirmed_cells")).isEqualTo(
+                List.of(Map.of("x", 10, "y", 64, "z", 20)));
+    }
+
+    @Test
     void advancingBreakClearsBothHeightsBeforeTheNextTunnelColumn() {
         var store = new AgentJobStore();
         var id = store.reserve(AgentJobStore.Kind.BREAK_BLOCK, SESSION, 12, 100);
@@ -135,6 +167,33 @@ class V2BlockJobExecutionTest {
                 new NavCell("minecraft:overworld", 12, 64, 20),
                 new NavCell("minecraft:overworld", 12, 65, 20));
         assertThat(store.get(id).completedBlocks()).isEqualTo(6);
+    }
+
+    @Test
+    void confirmedCellHistoryIsBoundedButKeepsTheTotal() {
+        var store = new AgentJobStore();
+        var id = store.reserve(AgentJobStore.Kind.BREAK_BLOCK, SESSION, 200, 100);
+        var request = V2BreakArguments.parse(Map.of(
+                "x", 0, "y", 64, "z", 20, "dx", 129), "minecraft:overworld");
+        var driver = new FakeDriver();
+        for (int index = 0; index < 130; index++) {
+            driver.begins.add(V2BlockJobExecution.BeginResult.STARTED);
+            driver.steps.add(V2BlockJobExecution.StepResult.CONFIRMED);
+        }
+        var job = new V2BlockJobExecution<>(store, id, SESSION,
+                AgentJobStore.Kind.BREAK_BLOCK, request, driver, () -> true);
+        store.confirm(id, 1);
+        for (int tick = 1; tick <= 130; tick++) {
+            job.tick(SESSION, tick, tick, true, () -> true);
+        }
+        var result = store.get(id).result();
+        assertThat(result).containsEntry("confirmed_count", 130)
+                .containsEntry("retained_from", 3)
+                .containsEntry("truncated", true);
+        var cells = (List<?>) result.get("confirmed_cells");
+        assertThat(cells).hasSize(128);
+        assertThat(cells.getFirst()).isEqualTo(Map.of("x", 2, "y", 64, "z", 20));
+        assertThat(cells.getLast()).isEqualTo(Map.of("x", 129, "y", 64, "z", 20));
     }
 
     @Test

@@ -4,7 +4,9 @@ import dev.aod.mcmcp.agent.action.AgentJobStore;
 import dev.aod.mcmcp.agent.navigation.NavCell;
 
 import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
@@ -13,6 +15,7 @@ import java.util.function.BooleanSupplier;
 final class V2BlockJobExecution<R extends V2BlockWorkRequest> {
     private static final int MAX_OBSERVATION_WAIT_TICKS = 80;
     private static final long MAX_WALL_NANOS = Duration.ofMinutes(2).toNanos();
+    private static final int MAX_RETAINED_CONFIRMED_CELLS = 128;
 
     private final AgentJobStore jobs;
     private final UUID actionId;
@@ -21,6 +24,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> {
     private final List<NavCell> cells;
     private final Driver<R> driver;
     private final BooleanSupplier releaseAndVerify;
+    private final ArrayDeque<Map<String, Integer>> confirmedCells = new ArrayDeque<>();
     private int index;
     private int completed;
     private int observationWaitTicks;
@@ -135,9 +139,11 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> {
                     yield jobs.get(actionId);
                 }
                 case CONFIRMED -> {
+                    NavCell confirmedCell = cells.get(index);
                     index++;
                     completed++;
                     jobs.recordBlockProgress(actionId, index, completed);
+                    recordConfirmedCell(confirmedCell);
                     driver.close();
                     targetActive = false;
                     if (index >= cells.size() || completed >= request.maxBlocks()) {
@@ -184,6 +190,19 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> {
 
     int completedBlocks() { return completed; }
     int scannedCells() { return index; }
+
+    private void recordConfirmedCell(NavCell cell) {
+        if (confirmedCells.size() == MAX_RETAINED_CONFIRMED_CELLS) {
+            confirmedCells.removeFirst();
+        }
+        confirmedCells.addLast(Map.of("x", cell.x(), "y", cell.y(), "z", cell.z()));
+        jobs.recordResult(actionId, Map.of(
+                "dimension", cell.dimension(),
+                "confirmed_count", completed,
+                "retained_from", completed - confirmedCells.size() + 1,
+                "confirmed_cells", List.copyOf(confirmedCells),
+                "truncated", completed > confirmedCells.size()));
+    }
 
     private void retainTerminal(AgentJobStore.State outcome, String failure) {
         if (terminalIntent != null) return;
