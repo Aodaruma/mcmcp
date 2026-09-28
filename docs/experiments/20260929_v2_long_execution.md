@@ -35,6 +35,12 @@ inputはstepsに加えて全論理入力の秒指定を受け付ける。材料�
 
 検査中に、別variantの不足項目が優先される入力診断の退行と、進捗output schemaに残った旧上限を修正した。oneOfの妥当性判定は変更せず、診断は必須項目が揃っているvariantを優先する。入力のlease heartbeatが通常再publishすることも試験の期待値へ反映した。
 
+## 隔離試験の準備
+
+[準備手順・API引数・datapack](../../tools/eval/fixtures/public-api-v2-long/README.md)を追加した。既存の専用profile/worldと単発CLIを再利用し、期限、CLI終了後の継続、取消、材料の枯渇と正常/遅延/別材料補充、非アクティブ化、旧1,200tick超えを別runで確認する。補助fixtureは有限のserver tick処理で、公開MCPや製品JARの権限を拡張しない。
+
+準備時にリクエスト8件の公開input schema適合、function 7ファイル間の参照解決、予約処理の1,200tick停止条件、自動load/tick tag不在、手順中11リンクを静的確認した。候補JARのhashは上記のまま。ゲームへの接続・画面操作・profile変更・functionのゲーム内実行は行っていないため、datapackの実機読込と配置rayの確認も残る。
+
 ## 残る実機確認・導入
 
 **新候補の実機確認・通常profile導入・24時間連続実測は未実施。** 短い隔離試験で粉設置、同slotへの補充、空待ち、別item、取消、期限、CLI終了後とゲーム非アクティブ時の継続・停止を確認する。OSスリープ中の稼働や任意MODによる背景tick抑制を保証しない。局所安全・短い確認待ち等で最大時間より早く停止することがある。
