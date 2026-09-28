@@ -22,6 +22,7 @@ import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.DoubleHighBlockItem;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.item.context.UseOnContext;
+import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
@@ -45,6 +46,7 @@ final class MinecraftV2PlaceDriver
     private static final int MAX_CROSSHAIR_WAIT_TICKS = 20;
     private static final int MAX_CONFIRM_WAIT_TICKS = 60;
     private static final int MAX_APPROACH_EVIDENCE_WAIT_TICKS = 80;
+    private static final int MAX_STAGED_OBSERVATION_WAIT_TICKS = 80;
     private static final double APPROACH_TOLERANCE = 0.35D;
     private static final Duration SNEAK_LEASE = Duration.ofSeconds(1);
 
@@ -58,9 +60,11 @@ final class MinecraftV2PlaceDriver
     private CoordinateGoalPlanner planner;
     private Map<TraversabilityEdge.Key, TraversabilityEdge> waitingEvidence;
     private int approachEvidenceWaitTicks;
+    private int stagedObservationWaitTicks;
     private MinecraftActionPrimitiveExecutor facing;
     private BoundedInputLease sneak;
     private ClientPredictionSignals.PredictionAttempt prediction;
+    private V2InventorySwap staging;
     private NavCell target;
     private V2PlaceArguments request;
     private Candidate candidate;
@@ -159,7 +163,18 @@ final class MinecraftV2PlaceDriver
             return V2BlockJobExecution.BeginResult.FAILED;
         }
         int slot = findHotbarItem(request.itemId());
-        if (slot < 0) return V2BlockJobExecution.BeginResult.FAILED;
+        if (slot < 0) {
+            int source = findMainInventoryItem(request.itemId());
+            if (source < 0 || !outputAllowed.getAsBoolean()) {
+                return V2BlockJobExecution.BeginResult.FAILED;
+            }
+            staging = V2InventorySwap.start(minecraft, session.worldSessionId(),
+                    session.clientTick(), source, player.getInventory().getSelectedSlot());
+            target = next;
+            this.request = request;
+            stage = Stage.STAGING;
+            return V2BlockJobExecution.BeginResult.STARTED;
+        }
         var stack = player.getInventory().getItem(slot);
         if (!(stack.getItem() instanceof BlockItem item)
                 || item instanceof BedItem || item instanceof DoubleHighBlockItem) {
@@ -212,6 +227,29 @@ final class MinecraftV2PlaceDriver
         }
         if (stage == Stage.APPROACH) {
             return tickApproach(session, clientTick, outputAllowed);
+        }
+        if (stage == Stage.STAGING) {
+            var result = staging.poll(session.worldSessionId(), clientTick);
+            if (result == V2InventorySwap.Result.WAITING) {
+                return V2BlockJobExecution.StepResult.RUNNING;
+            }
+            if (result != V2InventorySwap.Result.CONFIRMED) {
+                return V2BlockJobExecution.StepResult.FAILED;
+            }
+            staging.close();
+            staging = null;
+            stage = Stage.STAGED;
+        }
+        if (stage == Stage.STAGED) {
+            return switch (beginObservedTarget(target, request, outputAllowed)) {
+                case STARTED -> V2BlockJobExecution.StepResult.RUNNING;
+                case SKIPPED -> V2BlockJobExecution.StepResult.SKIPPED;
+                case WAITING -> ++stagedObservationWaitTicks
+                        <= MAX_STAGED_OBSERVATION_WAIT_TICKS
+                        ? V2BlockJobExecution.StepResult.RUNNING
+                        : V2BlockJobExecution.StepResult.FAILED;
+                case FAILED -> V2BlockJobExecution.StepResult.FAILED;
+            };
         }
         if (stage == Stage.FACING) {
             var result = facing.tick(minecraft, observations.requireAgentMap(session),
@@ -399,6 +437,19 @@ final class MinecraftV2PlaceDriver
         return -1;
     }
 
+    private int findMainInventoryItem(String itemId) {
+        var inventory = minecraft.player.getInventory();
+        for (int slot = Inventory.getSelectionSize(); slot < Inventory.INVENTORY_SIZE; slot++) {
+            var stack = inventory.getItem(slot);
+            if (!stack.isEmpty() && itemId.equals(
+                    BuiltInRegistries.ITEM.getKey(stack.getItem()).toString())
+                    && stack.getItem() instanceof BlockItem item
+                    && !(item instanceof BedItem)
+                    && !(item instanceof DoubleHighBlockItem)) return slot;
+        }
+        return -1;
+    }
+
     private boolean matchesTarget(BlockItem item, BlockHitResult hit, BlockPos position) {
         if (hit.getType() != HitResult.Type.BLOCK || hit.isWorldBorderHit()) return false;
         var context = item.updatePlacementContext(new BlockPlaceContext(
@@ -424,6 +475,15 @@ final class MinecraftV2PlaceDriver
                 prediction = null;
             } catch (RuntimeException | LinkageError closeFailure) {
                 failure = closeFailure;
+            }
+        }
+        if (staging != null) {
+            try {
+                staging.close();
+                staging = null;
+            } catch (RuntimeException | LinkageError closeFailure) {
+                if (failure == null) failure = closeFailure;
+                else failure.addSuppressed(closeFailure);
             }
         }
         if (sneak != null) {
@@ -467,6 +527,7 @@ final class MinecraftV2PlaceDriver
         planner = null;
         waitingEvidence = null;
         approachEvidenceWaitTicks = 0;
+        stagedObservationWaitTicks = 0;
         candidate = null;
         crosshairWaitTicks = 0;
         dispatchedTick = 0L;
@@ -491,6 +552,7 @@ final class MinecraftV2PlaceDriver
     private record Candidate(BlockPos support, Direction face,
                              MinecraftActionPrimitiveExecutor.KnownFaceTarget aim) { }
     private enum Stage {
-        IDLE, APPROACH, FACING, WAIT_SNEAK, FACING_CROUCHED, WAIT_CROSSHAIR, CONFIRMING
+        IDLE, APPROACH, STAGING, STAGED, FACING, WAIT_SNEAK, FACING_CROUCHED,
+        WAIT_CROSSHAIR, CONFIRMING
     }
 }
