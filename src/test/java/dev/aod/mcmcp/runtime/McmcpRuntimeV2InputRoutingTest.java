@@ -4,6 +4,11 @@ import dev.aod.mcmcp.agent.action.AgentJobStore;
 import dev.aod.mcmcp.agent.input.FiniteInputSequence;
 import dev.aod.mcmcp.agent.input.InputSequenceJobExecution;
 import dev.aod.mcmcp.agent.input.InputSequenceLeaseDriver;
+import dev.aod.mcmcp.agent.navigation.CoordinateMoveJobExecution;
+import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
+import dev.aod.mcmcp.agent.navigation.NavCell;
+import dev.aod.mcmcp.agent.navigation.RoutePlan;
+import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.routine.BoundedInputLease;
 import org.junit.jupiter.api.AfterEach;
@@ -64,6 +69,38 @@ class McmcpRuntimeV2InputRoutingTest {
         assertThat(field("v2InputExecution").get(runtime)).isNull();
         var lateConfirm = invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id);
         assertThat(lateConfirm).isEqualTo(Map.of("action_id", id.toString(), "confirmed", false));
+    }
+
+    @Test
+    void moveUsesSharedDeliveryStatusAndCancelRouting() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("v2Jobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.MOVE, session, 10, Long.MAX_VALUE);
+        field("v2MoveExecution").set(runtime, new CoordinateMoveJobExecution(
+                store, id, session, new NavCell("overworld", 1, 64, 0),
+                0.25D, 16.0D, new CoordinateMoveJobExecution.MovementDriver() {
+                    @Override public void begin(RoutePlan route, double tolerance) { }
+                    @Override public MinecraftActionPrimitiveExecutor.TickResult tick(
+                            KnownTraversabilitySnapshot map, double remainingDistance,
+                            long clientTick, java.util.function.BooleanSupplier outputAllowed) {
+                        throw new AssertionError("a cancelled move must not tick");
+                    }
+                    @Override public boolean active() { return false; }
+                    @Override public void close() { }
+                }, () -> true));
+
+        assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                .isEqualTo(Map.of("action_id", id.toString(), "confirmed", true));
+        var queued = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString()));
+        assertThat(queued.get("kind")).isEqualTo("move");
+        assertThat(queued.get("state")).isEqualTo("queued");
+        var cancelled = (Map<?, ?>) invoke("cancelAgentAction",
+                new Class<?>[]{net.minecraft.client.Minecraft.class, Map.class},
+                null, Map.of("action_id", id.toString()));
+        assertThat(cancelled.get("cancel_requested")).isEqualTo(true);
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.CANCELLED);
+        assertThat(field("v2MoveExecution").get(runtime)).isNull();
     }
 
     private void installExecution(AgentJobStore store, UUID id, UUID session) throws Exception {

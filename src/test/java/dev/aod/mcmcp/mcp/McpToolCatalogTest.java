@@ -1743,6 +1743,8 @@ class McpToolCatalogTest {
                     "accepted_at", "2026-08-26T00:00:00Z");
             case McpRuntimePort.StartInputSequence ignored -> throw new AssertionError(
                     "The v2 input sequence is not in the public catalog yet");
+            case McpRuntimePort.StartMove ignored -> throw new AssertionError(
+                    "The v2 move tool is not in the public catalog yet");
             case McpRuntimePort.GetAction ignored -> nullableMap(
                     "schema_version", 1,
                     "action_id", "550e8400-e29b-41d4-a716-446655440000",

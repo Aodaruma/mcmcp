@@ -17,7 +17,7 @@ import java.util.function.BooleanSupplier;
 /** Internal, single-owner planning state for one coordinate goal; never performs movement.
  * Retain this instance for the whole job, including failed execution and fresh observations.
  */
-final class CoordinateGoalPlanner {
+public final class CoordinateGoalPlanner {
     static final int MAX_EDGES = 4_096;
     static final int MAX_CANDIDATES = 64;
     static final int MAX_EXPANSIONS = DeterministicAStar.MAX_EXPANDED_NODES;
@@ -28,12 +28,12 @@ final class CoordinateGoalPlanner {
     private Map<TraversabilityEdge.Key, TraversabilityEdge> lastIssuedEvidence;
     private long newestRevision = -1;
 
-    CoordinateGoalPlanner(UUID session, NavCell goal) {
+    public CoordinateGoalPlanner(UUID session, NavCell goal) {
         this.session = Objects.requireNonNull(session, "session");
         this.goal = Objects.requireNonNull(goal, "goal");
     }
 
-    Result plan(KnownTraversabilitySnapshot map, NavCell start, UUID currentSession,
+    public Result plan(KnownTraversabilitySnapshot map, NavCell start, UUID currentSession,
             long currentRevision, Budget budget, BooleanSupplier cancelled) {
         Objects.requireNonNull(map, "map");
         Objects.requireNonNull(start, "start");
@@ -138,17 +138,17 @@ final class CoordinateGoalPlanner {
         return new Result(status, Optional.empty(), candidates, expansions);
     }
 
-    enum Status {
+    public enum Status {
         REACHED_KNOWN_GOAL, KNOWN_GOAL_ROUTE, PARTIAL_WAYPOINT,
         BLOCKED, LIMIT, CANCELLED, STALE_MAP, WORLD_MISMATCH
     }
 
-    record Result(Status status, Optional<RoutePlan> route, int candidates, int expansions) { }
+    public record Result(Status status, Optional<RoutePlan> route, int candidates, int expansions) { }
 
-    record Budget(int edges, int candidates, int expansions) {
-        static final Budget DEFAULT = new Budget(MAX_EDGES, MAX_CANDIDATES, MAX_EXPANSIONS);
+    public record Budget(int edges, int candidates, int expansions) {
+        public static final Budget DEFAULT = new Budget(MAX_EDGES, MAX_CANDIDATES, MAX_EXPANSIONS);
 
-        Budget {
+        public Budget {
             if (edges < 0 || edges > MAX_EDGES || candidates < 0 || candidates > MAX_CANDIDATES
                     || expansions < 0 || expansions > MAX_EXPANSIONS) {
                 throw new IllegalArgumentException("navigation budget exceeds fixed bounds");

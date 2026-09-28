@@ -20,7 +20,7 @@ public interface McpRuntimePort {
     CompletionStage<RuntimeReply> submit(RuntimeCommand command, RuntimeCallContext context);
 
     sealed interface RuntimeCommand permits GetState, GetMcpStatus, GetObservation, StartAction,
-            StartInputSequence, GetAction,
+            StartMove, StartInputSequence, GetAction,
             CancelAction, ConfirmActionDelivery, AbandonActionDelivery,
             ConfirmObservationDelivery, AbandonObservationDelivery, GetSnapshot, CompareBlockPlan,
             GetRecipes, ListRoutines, GetRoutine, StartRoutine, CancelRoutine, EmergencyStop {
@@ -80,6 +80,18 @@ public interface McpRuntimePort {
         @Override
         public String toolName() {
             return "agent_input_sequence";
+        }
+    }
+
+    /** Internal v2 dispatch path; not discoverable until the whole tool set is ready. */
+    record StartMove(Map<String, Object> arguments) implements RuntimeCommand {
+        public StartMove {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "agent_move";
         }
     }
 
