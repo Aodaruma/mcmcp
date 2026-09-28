@@ -77,8 +77,7 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
         if (dispatched) {
             captureStack();
             // Entity interactions have no prediction ACK. Never report a fabricated server ACK.
-            boolean complete = request.resultItem() == null
-                    ? clientConsumed || held.changed() : held.matches(request.resultItem());
+            boolean complete = confirmed(clientConsumed, request.resultItem(), held);
             return complete ? V2OperationJobExecution.Step.CONFIRMED : V2OperationJobExecution.Step.RUNNING;
         }
         if (!targetValid()) return fail("entity_unavailable");
@@ -127,6 +126,12 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
                 && session.equals(sessions.get().worldSessionId()) && minecraft.gameMode != null
                 && minecraft.getConnection() != null && player.containerMenu == player.inventoryMenu
                 && player.inventoryMenu.getCarried().isEmpty();
+    }
+
+    static boolean confirmed(boolean clientConsumed, String resultItem, V2HeldStackEvidence held) {
+        // A later pickup is not evidence that a PASS interaction was accepted. Server-only
+        // interactions must supply an explicit postcondition instead of any stack change.
+        return resultItem == null ? clientConsumed : held.matches(resultItem);
     }
 
     private boolean targetValid() {

@@ -65,7 +65,7 @@ item使用の既定完了は、クライアント側で使用を受け付けた�
 
 `agent_interact({target:"entity",entity_ref:"観測の参照",item:"minecraft:bucket",result_item:"minecraft:milk_bucket"})`は手の届く観測済みentityへ照準を合わせ、MAIN_HANDで通常のentity操作を一度だけ行う。`entity_type`は任意の種類条件。`item`省略時は現在の手持ち、`minecraft:air`なら空枠を選ぶ。itemと同じ持ち替え／server確認処理を共有し、main inventoryからの交換後は配置を元に戻さない。entityの種類やitemにVanilla専用allowlistを設けず、登録MODの通常操作へ渡す。別entityへの置換、遮蔽、reach外、画面・session変更では停止する。遠方entityへの自動接近とmenu操作は未対応。
 
-entity packetにはitem使用のprediction ACKがないため、`result_item`省略時の成功はclientの操作受付、または新しいserver所持品更新までの確認とする。結果の`confirmation`は`client_dispatch`／`server_held_item`を区別し、`effect_confirmed`は確認済み手持ちstackの変化だけを示す。繁殖・騎乗・entity状態変化など固有の効果を保証しない。`result_item`指定時は新しいserver payloadと現在の手持ちの一致を必須にする。clientがPASSを返すMODでも、このpostconditionが確認できれば完了できる。古いpayloadやclient予測だけでは完了せず、期限までに確認できなければ再送せず停止する。単体・公開schema検査と実ゲームのentity操作確認は分けて扱う。
+entity packetにはitem使用のprediction ACKがないため、`result_item`省略時の成功はclientの操作受付を条件とする。PASS後の無関係な拾得など、手持ちstackの変化だけでは成功にしない。結果の`confirmation`は`client_dispatch`／`server_held_item`を区別し、`effect_confirmed`は確認済み手持ちstackの変化だけを示す。繁殖・騎乗・entity状態変化など固有の効果を保証しない。`result_item`指定時は新しいserver payloadと現在の手持ちの一致を必須にする。clientがPASSを返すMODでも、このpostconditionが確認できれば完了できる。古いpayloadやclient予測だけでは完了せず、期限までに確認できなければ再送せず停止する。単体・公開schema検査と実ゲームのentity操作確認は分けて扱う。
 
 ## 制限付きスクリプト
 

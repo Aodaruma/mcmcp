@@ -32,7 +32,7 @@
 
 `agent_interact({target:"item",item:"minecraft:milk_bucket",result_item:"minecraft:bucket"})`はミルクを使い、手持ちが空のバケツになったserver更新を待ちます。`item`省略時は現在の手持ちを使います。`result_item`省略時の成功は使用受付・server処理・長押し終了までの確認です。固有のworld効果とは区別し、詳細結果の`effect_confirmed`を確認してください。
 
-`agent_interact({target:"entity",entity_ref:"観測で得た参照",item:"minecraft:bucket",result_item:"minecraft:milk_bucket"})`は、手の届く対象へ照準を合わせて操作し、手持ちのserver更新を待ちます。`item`省略時は現在の手持ち、`item:"minecraft:air"`なら空手です。entity操作で`result_item`を省略した成功は操作受付までの場合があります。`confirmation:"client_dispatch"`と`"server_held_item"`を区別してください。遠方への接近・menu操作は未対応で、確認できない操作は再送しません。
+`agent_interact({target:"entity",entity_ref:"観測で得た参照",item:"minecraft:bucket",result_item:"minecraft:milk_bucket"})`は、手の届く対象へ照準を合わせて操作し、手持ちのserver更新を待ちます。`item`省略時は現在の手持ち、`item:"minecraft:air"`なら空手です。entity操作で`result_item`を省略した成功はclientの操作受付を条件とします。PASSだけを返す操作は`result_item`を明示してserver更新を確認します。`confirmation:"client_dispatch"`と`"server_held_item"`を区別してください。遠方への接近・menu操作は未対応で、確認できない操作は再送しません。
 
 ## 範囲・収納・合成
 

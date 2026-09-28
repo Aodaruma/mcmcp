@@ -1702,7 +1702,7 @@
     {
       "name": "agent_interact",
       "title": "Interact",
-      "description": "Uses a block, held item, or visible entity. Block use confirms a server state change. Item use waits for server processing. Entity use aims within reach and dispatches once; success alone does not prove its world effect. Optional result_item requires a fresh server-confirmed held item. item selects from inventory; entity/item defaults to the current hand. Menu interactions remain pending.",
+      "description": "Uses a block, held item, or visible entity. Block use confirms a server state change. Item use waits for server processing. Entity use aims within reach and dispatches once. Without result_item, success requires client acceptance; unrelated held-item changes do not suffice. Success alone does not prove its world effect. Optional result_item requires a fresh server-confirmed held item. item selects from inventory; entity/item defaults to the current hand. Menu interactions remain pending.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
