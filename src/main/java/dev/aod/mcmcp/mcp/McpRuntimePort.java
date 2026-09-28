@@ -21,7 +21,7 @@ public interface McpRuntimePort {
 
     sealed interface RuntimeCommand permits GetState, GetMcpStatus, GetObservation, StartAction,
             StartMove, StartBreakBlock, StartPlaceBlock, StartInventory,
-            StartInputSequence, StartClick, GetAction,
+            StartInputSequence, StartClick, StartScript, GetAction,
             CancelAction, ConfirmActionDelivery, AbandonActionDelivery,
             ConfirmObservationDelivery, AbandonObservationDelivery, GetSnapshot, CompareBlockPlan,
             GetRecipes, ListRoutines, GetRoutine, StartRoutine, CancelRoutine, EmergencyStop {
@@ -93,6 +93,18 @@ public interface McpRuntimePort {
         @Override
         public String toolName() {
             return "agent_click";
+        }
+    }
+
+    /** Internal v2 script dispatch path; not discoverable until all basic commands are ready. */
+    record StartScript(Map<String, Object> arguments) implements RuntimeCommand {
+        public StartScript {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "agent_run_script";
         }
     }
 

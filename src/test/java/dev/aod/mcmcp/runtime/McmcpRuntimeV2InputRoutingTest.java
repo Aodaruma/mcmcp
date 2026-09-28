@@ -8,6 +8,7 @@ import dev.aod.mcmcp.agent.navigation.CoordinateMoveJobExecution;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
 import dev.aod.mcmcp.agent.navigation.NavCell;
 import dev.aod.mcmcp.agent.navigation.RoutePlan;
+import dev.aod.mcmcp.agent.script.ScriptJobExecution;
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.routine.BoundedInputLease;
@@ -167,6 +168,68 @@ class McmcpRuntimeV2InputRoutingTest {
         assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.CANCELLED);
         assertThat(field("v2InputExecution").get(runtime)).isNull();
         assertThat(field("v2ClickTarget").get(runtime)).isNull();
+    }
+
+    @Test
+    void anUnconfirmedScriptCanBeCancelledBeforeItsWorkerStarts() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("scriptJobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.SCRIPT, session, 2, Long.MAX_VALUE);
+        field("scriptExecution").set(runtime, new ScriptJobExecution(
+                store, id, session, "move(x=1);", Set.of("move"), 100, 10, 2,
+                new ScriptJobExecution.CommandRunner() {
+                    @Override public ScriptJobExecution.Outcome execute(String name,
+                            Map<String, Object> arguments,
+                            java.util.function.BooleanSupplier cancelled) {
+                        throw new AssertionError("unconfirmed script must not execute");
+                    }
+                    @Override public void cancelActive() { }
+                }, () -> true, Long.MAX_VALUE));
+
+        var queued = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString()));
+        assertThat(queued.get("kind")).isEqualTo("script");
+        assertThat(queued.get("state")).isEqualTo("unconfirmed");
+        var cancelled = (Map<?, ?>) invoke("cancelAgentAction",
+                new Class<?>[]{net.minecraft.client.Minecraft.class, Map.class},
+                null, Map.of("action_id", id.toString()));
+        assertThat(cancelled.get("cancel_requested")).isEqualTo(true);
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.CANCELLED);
+        assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                .isEqualTo(Map.of("action_id", id.toString(), "confirmed", false));
+    }
+
+    @Test
+    void deliveredScriptStartsAWorkerAndPublishesTheSharedResultAfterRelease() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("scriptJobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.SCRIPT, session, 1, Long.MAX_VALUE);
+        var executed = new java.util.concurrent.CountDownLatch(1);
+        field("scriptExecution").set(runtime, new ScriptJobExecution(
+                store, id, session, "move(x=1);", Set.of("move"), 100, 10, 1,
+                new ScriptJobExecution.CommandRunner() {
+                    @Override public ScriptJobExecution.Outcome execute(String name,
+                            Map<String, Object> arguments,
+                            java.util.function.BooleanSupplier cancelled) {
+                        executed.countDown();
+                        return ScriptJobExecution.Outcome.SUCCESS;
+                    }
+                    @Override public void cancelActive() { }
+                }, () -> true, Long.MAX_VALUE));
+
+        assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                .isEqualTo(Map.of("action_id", id.toString(), "confirmed", true));
+        assertThat(executed.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+        while (!store.get(id).state().terminal() && System.nanoTime() < deadline) {
+            invoke("tickV2Script", new Class<?>[0]);
+            Thread.sleep(5);
+        }
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.SUCCEEDED);
+        var result = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString()));
+        assertThat(result.get("kind")).isEqualTo("script");
+        assertThat(((Map<?, ?>) result.get("result")).get("completed_commands")).isEqualTo(1);
     }
 
     @Test

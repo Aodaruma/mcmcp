@@ -92,7 +92,9 @@ loop・関数呼出しを事前展開せず、ASTを直接評価する。関数�
 
 結果は`SUCCESS / INVALID / LIMIT / CANCELLED / FAILED`、消費work・反復数・呼出数・成功数を返す。sinkの失敗・例外・取消で直ちに停止し、再送しない。取消signalとthread interruptionをparseのtoken境界、AST・呼出しgraph検証、評価node、loop、sink前後で確認する。sinkにも取消signalを渡す。同期sink自体を強制中断したり、wall-clock deadlineを保証する仕組みはこの増分にはなく、sinkが待機中も取消と有限期限に協調することが前提。
 
-**未実装:** 行動handler、worker/job接続、ゲーム入力の所有・解放、server照合、経過時間・観測量予算、実機試験。今回のsinkは注入interfaceと試験用実装だけで、ゲームを操作しない。`agent_run_script`はcatalog/runtimeへ公開していない。基本行動handlerと停止契約を接続・検証し、基本tool一式と同時公開するまで内部prototypeに留める。現行の公開catalog/schemaをこの内部実装のために変更しない。
+内部の`StartScript`は配送確認後に専用workerでこの言語を実行する。`move`／`breakBlocks`／`place`／`inventory`／`click`／`input`を既存の内部v2 jobへ1命令ずつ渡し、各命令のterminalを待って次へ進む。親scriptは別の共通job IDを持ち、命令の確定数を保持する。取消・緊急停止時は実行中の子jobに取消を要求し、その入力解放が終わるまで親をterminalにしない。source・work・反復・呼出し数・実行時間は有限にする。workerはMinecraft stateを直接読まない。
+
+**未完了:** `interact` handler、命令ごとの失敗詳細、screenをまたぐ操作、観測量予算、実ゲームでの成功／取消／危険停止の確認。`agent_run_script`は内部runtimeへ接続したが公開catalogには未登録である。基本行動handlerと停止契約を実ゲームで検証し、基本tool一式と同時公開するまで内部prototypeに留める。
 
 ## このブランチで実装済みの内部座標ナビゲーション
 

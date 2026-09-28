@@ -34,6 +34,7 @@ import dev.aod.mcmcp.agent.safety.MinecraftRecoveryGovernor;
 import dev.aod.mcmcp.agent.input.FiniteInputSequence;
 import dev.aod.mcmcp.agent.input.InputSequenceJobExecution;
 import dev.aod.mcmcp.agent.input.InputSequenceLeaseDriver;
+import dev.aod.mcmcp.agent.script.ScriptJobExecution;
 import dev.aod.mcmcp.brewing.StandardPotionPolicy;
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.client.AgentScreenPolicy;
@@ -94,6 +95,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 import net.minecraft.client.Minecraft;
@@ -121,6 +123,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final DeterministicAStar agentPathfinder = new DeterministicAStar();
     private final AgentActionStore agentActions = new AgentActionStore();
     private final AgentJobStore v2Jobs = new AgentJobStore();
+    private final AgentJobStore scriptJobs = new AgentJobStore();
+    private final AtomicReference<UUID> scriptChildActionId = new AtomicReference<>();
+    private final AtomicReference<UUID> scriptChildCancelSent = new AtomicReference<>();
     private final WorldMemory memory = new WorldMemory();
     private final MinecraftObservationService observations = new MinecraftObservationService(memory);
     private final BlockPlanComparator blockPlans = new BlockPlanComparator(observations, memory);
@@ -160,6 +165,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private V2BlockJobExecution<V2BreakArguments> v2BreakExecution;
     private V2BlockJobExecution<V2PlaceArguments> v2PlaceExecution;
     private V2InventoryJobExecution v2InventoryExecution;
+    private ScriptJobExecution scriptExecution;
     private Object v2InventoryPlayerIdentity;
     private Object v2InventoryLevelIdentity;
     private long v2InventoryControlEpoch;
@@ -300,6 +306,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 recipeCatalog, agentPathfinder,
                 () -> pendingAgentInputRelease || agentExecution != null
                         || agentActions.active().isPresent() || v2Jobs.active().isPresent()
+                        || scriptJobs.active().isPresent()
                         || routines.activeRoutineId().isPresent(),
                 this::multiplayerPolicyAllows, this::publishRendererRecovery);
         voiceChat = new VoiceChatSafetyController(
@@ -542,6 +549,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         tickV2Place(minecraft);
         tickV2Inventory(minecraft);
         tickV2InputSequence(minecraft);
+        tickV2Script();
         tickAgentAction(minecraft);
         publishSession();
     }
@@ -663,6 +671,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || !Objects.equals(session.dimension(), scope.dimension())
                 || agentActions.active().isPresent()
                 || v2Jobs.active().isPresent()
+                || scriptJobs.active().isPresent()
                 || routines.activeRoutineId().isPresent()
                 || !AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 || openLocalPrompt && minecraft.gui.screen() != null
@@ -856,6 +865,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return routines.activeRoutineId().isPresent()
                 || agentActions.active().isPresent()
                 || v2Jobs.active().isPresent()
+                || scriptJobs.active().isPresent()
                 || v2InputExecution != null
                 || v2MoveExecution != null
                 || v2BreakExecution != null
@@ -869,6 +879,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || inbox.hasPendingCommand("agent_start_action")
                 || inbox.hasPendingCommand("agent_input_sequence")
                 || inbox.hasPendingCommand("agent_click")
+                || inbox.hasPendingCommand("agent_run_script")
                 || inbox.hasPendingCommand("agent_move")
                 || inbox.hasPendingCommand("agent_break_block")
                 || inbox.hasPendingCommand("agent_place_block")
@@ -929,6 +940,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private void clearAgentSessionState() {
+        if (scriptExecution != null) scriptExecution.cancel();
         if (v2InputExecution != null) {
             var stopped = v2InputExecution.stop("world_boundary");
             finishV2InputIfTerminal(stopped);
@@ -1053,6 +1065,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private boolean evaluationActionsTerminal() {
         return agentActions.active().isEmpty()
                 && v2Jobs.active().isEmpty()
+                && scriptJobs.active().isEmpty()
                 && v2InputExecution == null
                 && v2MoveExecution == null
                 && v2BreakExecution == null
@@ -1069,6 +1082,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 && !inbox.hasPendingCommand("agent_start_action")
                 && !inbox.hasPendingCommand("agent_input_sequence")
                 && !inbox.hasPendingCommand("agent_click")
+                && !inbox.hasPendingCommand("agent_run_script")
                 && !inbox.hasPendingCommand("agent_move")
                 && !inbox.hasPendingCommand("agent_break_block")
                 && !inbox.hasPendingCommand("agent_place_block")
@@ -1116,6 +1130,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         if (command instanceof StartClick click) {
             return submitV2ClickStart(click, context);
+        }
+        if (command instanceof StartScript script) {
+            return submitV2ScriptStart(script, context);
         }
         if (command instanceof StartMove move) {
             return submitV2MoveStart(move, context);
@@ -1195,6 +1212,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             long remainingMillis = TimeUnit.NANOSECONDS.toMillis(context.remainingNanos());
             int effectiveWaitMillis = (int) Math.min(
                     requestedWaitMillis, Math.min(Integer.MAX_VALUE, remainingMillis));
+            if (isScriptJob(requestedId)) {
+                var snapshot = scriptJobs.awaitTerminal(requestedId, effectiveWaitMillis);
+                RuntimeReply reply = withEvaluationLeaseFence(
+                        context, command.toolName(),
+                        () -> RuntimeReply.success(v2JobPayload(snapshot)));
+                return CompletableFuture.completedFuture(reply);
+            }
             if (isV2Job(requestedId)) {
                 var snapshot = v2Jobs.awaitTerminal(requestedId, effectiveWaitMillis);
                 RuntimeReply reply = withEvaluationLeaseFence(
@@ -1397,6 +1421,181 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 });
     }
 
+    private CompletionStage<RuntimeReply> submitV2ScriptStart(
+            StartScript command, RuntimeCallContext context) {
+        final V2ScriptArguments request;
+        try {
+            request = V2ScriptArguments.parse(command.arguments());
+        } catch (RuntimeException | LinkageError failure) {
+            return CompletableFuture.completedFuture(RuntimeFailures.mapFailure(failure));
+        }
+        var fence = publishedSession;
+        return inbox.submitControlMapped(
+                command.toolName(), fence.generation(), context.deadlineNanos(),
+                () -> withEvaluationLeaseFence(context, command.toolName(), () -> {
+                    var result = commitV2Script(
+                            Minecraft.getInstance(), sessions.snapshot(), request, context);
+                    return RuntimeReply.success(result, new McpRuntimePort.ActionDeliveryReceipt(
+                            UUID.fromString((String) result.get("action_id"))));
+                }), RuntimeFailures::mapFailure, context::isCancelled,
+                reply -> {
+                    if (reply.successful()) rollbackAbandonedV2Script(reply.data());
+                });
+    }
+
+    private Map<String, Object> commitV2Script(
+            Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            V2ScriptArguments request, RuntimeCallContext context) {
+        assertClientThread(minecraft);
+        RuntimeFailures.requireReady(session);
+        if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
+                || endpointFaultCode != null || !multiplayerPolicyAllows(minecraft)
+                || !v2InputWorldSafe(minecraft, session)) {
+            throw new RuntimeInvocationException(
+                    "unsafe_state", "Script requires a safe local world state.", true, Map.of());
+        }
+        if (pendingAgentInputRelease || agentExecution != null
+                || agentActions.active().isPresent() || v2Jobs.active().isPresent()
+                || scriptJobs.active().isPresent() || scriptExecution != null
+                || v2InputExecution != null || v2MoveExecution != null
+                || v2BreakExecution != null || v2PlaceExecution != null
+                || v2InventoryExecution != null || routines.activeRoutineId().isPresent()) {
+            throw new RuntimeInvocationException(
+                    "task_busy", "Another action is already queued or running.", true, Map.of());
+        }
+        requireLiveCall(context, "agent_run_script");
+        if (arming.snapshot(session.worldSessionId()).mode() != LocalArmingState.Mode.READY) {
+            throw new RuntimeInvocationException(
+                    "mcp_operation_disabled", "The READY authorization is unavailable.",
+                    true, Map.of());
+        }
+        UUID actionId = scriptJobs.reserve(AgentJobStore.Kind.SCRIPT,
+                session.worldSessionId(), request.calls(),
+                System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS);
+        try {
+            UUID worldId = session.worldSessionId();
+            scriptExecution = new ScriptJobExecution(scriptJobs, actionId, worldId,
+                    request.source(), Set.of("move", "breakBlocks", "place", "inventory",
+                            "click", "input"),
+                    request.work(), request.iterations(), request.calls(),
+                    new RuntimeScriptCommandRunner(context.evaluationLeaseExpectation()),
+                    () -> {
+                        var current = publishedSession;
+                        var control = arming.peek();
+                        return !shutdown && !paused && endpointFaultCode == null
+                                && current.worldReady()
+                                && worldId.equals(current.worldSessionId())
+                                && worldId.equals(control.worldSessionId())
+                                && (control.mode() == LocalArmingState.Mode.READY
+                                        || control.mode() == LocalArmingState.Mode.AGENT);
+                    }, System.nanoTime()
+                            + TimeUnit.MILLISECONDS.toNanos(request.maxDurationTicks() * 50L));
+            requireLiveCall(context, "agent_run_script");
+        } catch (RuntimeException | LinkageError failure) {
+            scriptJobs.abandon(actionId);
+            scriptExecution = null;
+            throw failure;
+        }
+        return Map.of("schema_version", 2, "action_id", actionId.toString(),
+                "state", "queued");
+    }
+
+    private final class RuntimeScriptCommandRunner implements ScriptJobExecution.CommandRunner {
+        private final RuntimeCallContext.EvaluationLeaseExpectation expectation;
+
+        private RuntimeScriptCommandRunner(
+                RuntimeCallContext.EvaluationLeaseExpectation expectation) {
+            this.expectation = expectation;
+        }
+
+        @Override
+        public ScriptJobExecution.Outcome execute(String name, Map<String, Object> arguments,
+                BooleanSupplier cancelled) {
+            if (cancelled.getAsBoolean()) return ScriptJobExecution.Outcome.CANCELLED;
+            McpRuntimePort.RuntimeCommand child = switch (name) {
+                case "move" -> new StartMove(arguments);
+                case "breakBlocks" -> new StartBreakBlock(arguments);
+                case "place" -> new StartPlaceBlock(arguments);
+                case "inventory" -> new StartInventory(arguments);
+                case "click" -> new StartClick(arguments);
+                case "input" -> new StartInputSequence(arguments);
+                default -> throw new IllegalArgumentException("unsupported script command");
+            };
+            RuntimeCallContext call = RuntimeCallContext.forScriptChild(
+                    Duration.ofSeconds(5), expectation);
+            UUID childId = null;
+            try {
+                var started = submit(child, call).toCompletableFuture().get(5, TimeUnit.SECONDS);
+                if (!started.successful()) return ScriptJobExecution.Outcome.FAILURE;
+                childId = UUID.fromString((String) started.data().get("action_id"));
+                if (!scriptChildActionId.compareAndSet(null, childId)) {
+                    abandonScriptChild(childId);
+                    return ScriptJobExecution.Outcome.FAILURE;
+                }
+                if (cancelled.getAsBoolean()) {
+                    abandonScriptChild(childId);
+                    return ScriptJobExecution.Outcome.CANCELLED;
+                }
+                var confirmed = submit(new ConfirmActionDelivery(childId),
+                        RuntimeCallContext.forScriptChild(Duration.ofSeconds(5), expectation))
+                        .toCompletableFuture().get(5, TimeUnit.SECONDS);
+                if (!confirmed.successful()
+                        || !Boolean.TRUE.equals(confirmed.data().get("confirmed"))) {
+                    abandonScriptChild(childId);
+                    return ScriptJobExecution.Outcome.FAILURE;
+                }
+                for (;;) {
+                    if (cancelled.getAsBoolean()) cancelActive();
+                    var state = v2Jobs.awaitTerminal(childId, 250);
+                    if (!state.state().terminal()) continue;
+                    return switch (state.state()) {
+                        case SUCCEEDED -> ScriptJobExecution.Outcome.SUCCESS;
+                        case CANCELLED -> ScriptJobExecution.Outcome.CANCELLED;
+                        default -> ScriptJobExecution.Outcome.FAILURE;
+                    };
+                }
+            } catch (InterruptedException failure) {
+                Thread.currentThread().interrupt();
+                call.cancel();
+                cancelActive();
+                return ScriptJobExecution.Outcome.CANCELLED;
+            } catch (ExecutionException | TimeoutException | RuntimeException failure) {
+                call.cancel();
+                if (childId != null) cancelActive();
+                return ScriptJobExecution.Outcome.FAILURE;
+            } finally {
+                if (childId != null) {
+                    scriptChildActionId.compareAndSet(childId, null);
+                    scriptChildCancelSent.compareAndSet(childId, null);
+                }
+            }
+        }
+
+        @Override
+        public void cancelActive() {
+            UUID childId = scriptChildActionId.get();
+            if (childId == null) return;
+            try {
+                v2Jobs.requestCancel(childId);
+            } catch (AgentJobStore.NotFoundException ignored) {
+                return;
+            }
+            if (!scriptChildCancelSent.compareAndSet(null, childId)) return;
+            try {
+                submit(new CancelAction(Map.of("action_id", childId.toString())),
+                        RuntimeCallContext.forScriptChild(Duration.ofSeconds(5), expectation));
+            } catch (RuntimeException | LinkageError failure) {
+                scriptChildCancelSent.compareAndSet(childId, null);
+                // The synchronized cancellation flag still prevents another game side effect.
+            }
+        }
+
+        private void abandonScriptChild(UUID childId) {
+            submit(new AbandonActionDelivery(childId),
+                    RuntimeCallContext.forScriptChild(Duration.ofSeconds(5), expectation));
+        }
+    }
+
     private CompletionStage<RuntimeReply> submitV2PlaceStart(
             StartPlaceBlock command, RuntimeCallContext context) {
         var fence = publishedSession;
@@ -1453,6 +1652,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
+                || scriptJobs.active().isPresent() && !context.scriptChild()
                 || v2InputExecution != null || v2MoveExecution != null
                 || v2BreakExecution != null || v2PlaceExecution != null
                 || v2InventoryExecution != null || routines.activeRoutineId().isPresent()) {
@@ -1542,6 +1742,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
+                || scriptJobs.active().isPresent() && !context.scriptChild()
                 || v2InputExecution != null || v2MoveExecution != null
                 || v2BreakExecution != null || v2PlaceExecution != null
                 || v2InventoryExecution != null || routines.activeRoutineId().isPresent()) {
@@ -1603,6 +1804,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
+                || scriptJobs.active().isPresent() && !context.scriptChild()
                 || v2InputExecution != null || v2MoveExecution != null
                 || v2BreakExecution != null || v2PlaceExecution != null
                 || v2InventoryExecution != null || routines.activeRoutineId().isPresent()) {
@@ -1669,6 +1871,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
+                || scriptJobs.active().isPresent() && !context.scriptChild()
                 || v2InputExecution != null || v2MoveExecution != null
                 || v2BreakExecution != null || v2PlaceExecution != null
                 || v2InventoryExecution != null || routines.activeRoutineId().isPresent()) {
@@ -1751,6 +1954,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
+                || scriptJobs.active().isPresent() && !context.scriptChild()
                 || v2InputExecution != null || v2MoveExecution != null
                 || v2BreakExecution != null || v2PlaceExecution != null
                 || v2InventoryExecution != null || routines.activeRoutineId().isPresent()) {
@@ -1825,6 +2029,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     throw new AssertionError("agent_input_sequence must use delivery-gated admission");
             case StartClick ignored ->
                     throw new AssertionError("agent_click must use delivery-gated admission");
+            case StartScript ignored ->
+                    throw new AssertionError("agent_run_script must use delivery-gated admission");
             case StartMove ignored ->
                     throw new AssertionError("agent_move must use delivery-gated admission");
             case StartBreakBlock ignored ->
@@ -1857,6 +2063,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             case GetRoutine get -> routineAdmission.getRoutine(get.arguments());
             case StartRoutine start -> {
                 RuntimeFailures.requireReady(session);
+                if (scriptJobs.active().isPresent()) {
+                    throw new RuntimeInvocationException(
+                            "task_busy", "A script is already running.", true, Map.of());
+                }
                 yield routineAdmission.startRoutine(minecraft, session, start.arguments(), context);
             }
             case CancelRoutine cancel -> routineAdmission.cancelRoutine(minecraft, cancel.arguments());
@@ -1916,6 +2126,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var captured = prepared.snapshot();
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
+                || scriptJobs.active().isPresent()
                 || routines.activeRoutineId().isPresent()) {
             throw new RuntimeInvocationException(
                     "task_busy", "Another action is already queued or running.", true, Map.of());
@@ -2202,6 +2413,22 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private Map<String, Object> confirmAgentActionDelivery(UUID actionId) {
+        if (isScriptJob(actionId)) {
+            AgentJobStore.Confirmation confirmation;
+            try {
+                confirmation = scriptJobs.confirm(actionId, System.nanoTime());
+            } catch (AgentJobStore.NotFoundException failure) {
+                confirmation = AgentJobStore.Confirmation.STALE;
+            }
+            if (confirmation == AgentJobStore.Confirmation.CONFIRMED
+                    && scriptExecution != null) {
+                Thread.ofVirtual().name("mcmcp-v2-script").start(scriptExecution);
+            }
+            if (confirmation == AgentJobStore.Confirmation.EXPIRED) scriptExecution = null;
+            return Map.of("action_id", actionId.toString(), "confirmed",
+                    confirmation == AgentJobStore.Confirmation.CONFIRMED
+                            || confirmation == AgentJobStore.Confirmation.ALREADY_CONFIRMED);
+        }
         if (isV2Job(actionId)) {
             AgentJobStore.Confirmation confirmation;
             try {
@@ -2249,6 +2476,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private Map<String, Object> abandonAgentActionDelivery(UUID actionId) {
+        if (isScriptJob(actionId)) {
+            boolean abandoned;
+            try {
+                abandoned = scriptJobs.abandon(actionId);
+            } catch (AgentJobStore.NotFoundException failure) {
+                abandoned = false;
+            }
+            if (abandoned) scriptExecution = null;
+            return Map.of("action_id", actionId.toString(), "abandoned", abandoned);
+        }
         if (isV2Job(actionId)) {
             boolean abandoned;
             try {
@@ -2275,6 +2512,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private Map<String, Object> getAgentAction(Map<String, Object> arguments) {
         agentActionWaitTimeoutMillis(arguments);
         UUID requestedId = RuntimeArguments.actionId(arguments);
+        if (isScriptJob(requestedId)) return v2JobPayload(scriptJobs.get(requestedId));
         if (isV2Job(requestedId)) return v2JobPayload(v2Jobs.get(requestedId));
         return ActionWireMapper.actionPayload(agentActions.get(requestedId), ContainerInspection.Query.parse(arguments));
     }
@@ -2341,6 +2579,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             Minecraft minecraft, Map<String, Object> arguments) {
         RuntimeArguments.requireExactKeys(arguments, "agent_cancel_action", Set.of("action_id"));
         UUID requestedId = RuntimeArguments.actionId(arguments);
+        if (isScriptJob(requestedId)) {
+            var before = scriptJobs.get(requestedId);
+            boolean requested = !before.state().terminal();
+            if (requested && scriptExecution != null) scriptExecution.cancel();
+            return Map.of("schema_version", 2, "action_id", requestedId.toString(),
+                    "cancel_requested", requested,
+                    "state_at_request", before.state().name().toLowerCase(Locale.ROOT));
+        }
         if (isV2Job(requestedId)) {
             var before = v2Jobs.get(requestedId);
             boolean requested = !before.state().terminal();
@@ -2538,7 +2784,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     .orElse(null));
         }
         if (sections.contains("action")) {
-            result.put("action", v2Jobs.active().isPresent()
+            result.put("action", scriptJobs.active().isPresent()
+                    ? v2ActionSummary(scriptJobs.active().orElseThrow())
+                    : v2Jobs.active().isPresent()
                     ? v2ActionSummary(v2Jobs.active().orElseThrow())
                     : agentActions.latestSummary()
                     .map(summary -> {
@@ -2564,8 +2812,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 .orElse(null);
         UUID runningActionId = agentActions.active()
                 .map(dev.aod.mcmcp.agent.action.AgentActionStore.Active::actionId)
-                .orElseGet(() -> v2Jobs.active()
-                        .map(AgentJobStore.Snapshot::actionId).orElse(null));
+                .orElseGet(() -> scriptJobs.active()
+                        .map(AgentJobStore.Snapshot::actionId)
+                        .orElseGet(() -> v2Jobs.active()
+                                .map(AgentJobStore.Snapshot::actionId).orElse(null)));
         return ActionWireMapper.mcpStatusPayload(
                 control, paused, session.worldSessionId(), latestFrameId, runningActionId);
     }
@@ -2828,6 +3078,27 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 arming.lock("v2_break_cleanup_failed");
             }
         }
+    }
+
+    private boolean isScriptJob(UUID actionId) {
+        try {
+            scriptJobs.get(actionId);
+            return true;
+        } catch (AgentJobStore.NotFoundException ignored) {
+            return false;
+        }
+    }
+
+    private void tickV2Script() {
+        if (scriptExecution == null) return;
+        scriptJobs.expireUnconfirmed(System.nanoTime());
+        boolean released = scriptChildActionId.get() == null
+                && v2Jobs.active().isEmpty()
+                && v2InputExecution == null && v2MoveExecution == null
+                && v2BreakExecution == null && v2PlaceExecution == null
+                && v2InventoryExecution == null && !pendingAgentInputRelease;
+        var result = scriptExecution.finishIfReleased(released);
+        if (result.state().terminal()) scriptExecution = null;
     }
 
     private void tickV2Place(Minecraft minecraft) {
@@ -3103,6 +3374,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
         } catch (AgentJobStore.NotFoundException | IllegalArgumentException ignored) {
             // A newer retained job cannot be stopped by an old receipt.
+        }
+    }
+
+    private void rollbackAbandonedV2Script(Map<String, Object> receipt) {
+        Object rawId = receipt.get("action_id");
+        if (!(rawId instanceof String id)) return;
+        try {
+            if (scriptJobs.abandon(UUID.fromString(id))) scriptExecution = null;
+        } catch (AgentJobStore.NotFoundException | IllegalArgumentException ignored) {
+            // A stale response cannot abandon a newer script.
         }
     }
 
@@ -5190,6 +5471,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             String reason,
             WorldSessionTracker.Snapshot session) {
         routineLifecycle.clearContinuation();
+        if (scriptExecution != null) scriptExecution.cancel();
         ClientCommandInbox.StopProgress v2Progress = ClientCommandInbox.StopProgress.COMPLETE;
         if (v2InputExecution != null) {
             try {
@@ -5263,6 +5545,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 v2Progress = ClientCommandInbox.StopProgress.FAILED;
                 McmcpMod.LOGGER.error("MCMCP emergency v2 inventory termination failed", failure);
             }
+        }
+        if (v2Progress == ClientCommandInbox.StopProgress.COMPLETE
+                && scriptJobs.active().isPresent()) {
+            v2Progress = ClientCommandInbox.StopProgress.PENDING;
         }
         AgentActionStore.FailureCode actionCode = "local_ui_disabled".equals(reason)
                 ? AgentActionStore.FailureCode.USER_DISABLED
