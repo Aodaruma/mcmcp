@@ -3378,6 +3378,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             finishV2BreakIfTerminal(result);
         } else if (result.kind() == AgentJobStore.Kind.PLACE_BLOCK) {
             finishV2PlaceIfTerminal(result);
+        } else if (result.kind() == AgentJobStore.Kind.INTERACT) {
+            finishV2InteractIfTerminal(result);
         } else if (result.kind() == AgentJobStore.Kind.INVENTORY) {
             finishV2InventoryIfTerminal(result);
         } else if (result.kind() == AgentJobStore.Kind.INPUT_SEQUENCE

@@ -282,6 +282,64 @@ class McmcpRuntimeV2InputRoutingTest {
         assertThat(field("v2PlaceExecution").get(runtime)).isNull();
     }
 
+    @Test
+    void interactDeliveryStatusAndCancelRouteToItsOwner() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("v2Jobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.INTERACT, session, 10, Long.MAX_VALUE);
+        installInteractExecution(store, id, session);
+
+        assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                .isEqualTo(Map.of("action_id", id.toString(), "confirmed", true));
+        store.start(id, session);
+        store.recordBlockProgress(id, 1, 1);
+        var result = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString()));
+        assertThat(result.get("kind")).isEqualTo("interact");
+        assertThat(((Map<?, ?>) result.get("progress")).get("interacted_blocks"))
+                .isEqualTo(1);
+        var cancelled = (Map<?, ?>) invoke("cancelAgentAction",
+                new Class<?>[]{net.minecraft.client.Minecraft.class, Map.class},
+                null, Map.of("action_id", id.toString()));
+        assertThat(cancelled.get("cancel_requested")).isEqualTo(true);
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.CANCELLED);
+        assertThat(field("v2InteractExecution").get(runtime)).isNull();
+    }
+
+    @Test
+    void abandonedInteractDeliveryReleasesTheJobOwner() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("v2Jobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.INTERACT, session, 10, Long.MAX_VALUE);
+        installInteractExecution(store, id, session);
+
+        assertThat(invoke("abandonAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                .isEqualTo(Map.of("action_id", id.toString(), "abandoned", true));
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.FAILED);
+        assertThat(field("v2InteractExecution").get(runtime)).isNull();
+    }
+
+    private void installInteractExecution(AgentJobStore store, UUID id, UUID session)
+            throws Exception {
+        var request = V2BlockInteractArguments.parse(Map.of(
+                "target", "block", "x", 1, "y", 64, "z", 0), "overworld");
+        field("v2InteractExecution").set(runtime, new V2BlockJobExecution<>(
+                store, id, session, AgentJobStore.Kind.INTERACT, request,
+                new V2BlockJobExecution.Driver<V2BlockInteractArguments>() {
+                    @Override public String dimension() { return "overworld"; }
+                    @Override public V2BlockJobExecution.BeginResult begin(NavCell target,
+                            V2BlockInteractArguments args,
+                            java.util.function.BooleanSupplier outputAllowed) {
+                        throw new AssertionError("an unconfirmed interact must not start");
+                    }
+                    @Override public V2BlockJobExecution.StepResult tick(long clientTick,
+                            java.util.function.BooleanSupplier outputAllowed) {
+                        throw new AssertionError("a stopped interact must not tick");
+                    }
+                    @Override public void close() { }
+                }, () -> true));
+    }
+
     private void installExecution(AgentJobStore store, UUID id, UUID session) throws Exception {
         var sequence = new FiniteInputSequence(List.of(new FiniteInputSequence.Step(
                 Set.of(BoundedInputLease.Input.USE), 1, 0, 1)));
