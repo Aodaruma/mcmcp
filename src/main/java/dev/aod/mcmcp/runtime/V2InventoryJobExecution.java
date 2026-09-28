@@ -2,28 +2,32 @@ package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.action.AgentJobStore;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
-import java.util.function.Supplier;
 
-/** A delivery-gated, one-tick inventory readback with the common action ID. */
-final class V2InventoryInspectExecution {
+/** One delivery-gated inventory job, retaining partial effects through cancellation. */
+final class V2InventoryJobExecution {
+    private static final long MAX_WALL_NANOS = Duration.ofMinutes(2).toNanos();
+
     private final AgentJobStore jobs;
     private final UUID actionId;
     private final UUID worldSessionId;
-    private final Supplier<Map<String, Object>> capture;
+    private final Driver driver;
     private final BooleanSupplier releaseAndVerify;
+    private boolean begun;
+    private long startedNanos = Long.MIN_VALUE;
     private AgentJobStore.State terminalIntent;
     private String terminalFailure;
 
-    V2InventoryInspectExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
-            Supplier<Map<String, Object>> capture, BooleanSupplier releaseAndVerify) {
+    V2InventoryJobExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
+            Driver driver, BooleanSupplier releaseAndVerify) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.actionId = Objects.requireNonNull(actionId, "actionId");
         this.worldSessionId = Objects.requireNonNull(worldSessionId, "worldSessionId");
-        this.capture = Objects.requireNonNull(capture, "capture");
+        this.driver = Objects.requireNonNull(driver, "driver");
         this.releaseAndVerify = Objects.requireNonNull(releaseAndVerify, "releaseAndVerify");
         var job = jobs.get(actionId);
         if (job.kind() != AgentJobStore.Kind.INVENTORY
@@ -32,7 +36,7 @@ final class V2InventoryInspectExecution {
         }
     }
 
-    AgentJobStore.Snapshot tick(UUID currentSession, long nowNanos,
+    AgentJobStore.Snapshot tick(UUID currentSession, long clientTick, long nowNanos,
             boolean safe, BooleanSupplier outputAllowed) {
         var job = jobs.get(actionId);
         if (job.state().terminal()) return job;
@@ -51,6 +55,13 @@ final class V2InventoryInspectExecution {
         }
         if (job.state() == AgentJobStore.State.QUEUED) {
             jobs.start(actionId, currentSession);
+            startedNanos = nowNanos;
+            job = jobs.get(actionId);
+        }
+        if (nowNanos - startedNanos >= MAX_WALL_NANOS
+                || job.completedOperations() >= job.maxOperations()) {
+            retainTerminal(AgentJobStore.State.FAILED, "duration_limit");
+            return publishAfterRelease();
         }
         if (!jobs.canDispatch(actionId, currentSession)
                 || !outputAllowed.getAsBoolean()) {
@@ -58,19 +69,30 @@ final class V2InventoryInspectExecution {
             return publishAfterRelease();
         }
         try {
-            jobs.recordResult(actionId, capture.get());
+            if (!begun) {
+                begun = true; // An uncertain begin is never retried.
+                driver.begin(clientTick, outputAllowed);
+            }
+            var step = driver.tick(clientTick, outputAllowed);
+            captureResult();
             jobs.recordOperation(actionId);
-            retainTerminal(AgentJobStore.State.SUCCEEDED, null);
+            if (step == Step.CONFIRMED) {
+                retainTerminal(AgentJobStore.State.SUCCEEDED, null);
+            } else if (step == Step.FAILED) {
+                retainTerminal(AgentJobStore.State.FAILED, "inventory_not_confirmed");
+            }
         } catch (RuntimeException | LinkageError failure) {
-            retainTerminal(AgentJobStore.State.FAILED, "inventory_read_failed");
+            try { captureResult(); } catch (RuntimeException | LinkageError ignored) { }
+            retainTerminal(AgentJobStore.State.FAILED, "inventory_runtime_failed");
         }
-        return publishAfterRelease();
+        return terminalIntent == null ? jobs.get(actionId) : publishAfterRelease();
     }
 
     AgentJobStore.Snapshot cancel() {
         var job = jobs.get(actionId);
         if (job.state().terminal()) return job;
         jobs.requestCancel(actionId);
+        if (job.state() == AgentJobStore.State.RUNNING) captureResultSafely();
         retainTerminal(AgentJobStore.State.CANCELLED, "client_request");
         return publishAfterRelease();
     }
@@ -85,18 +107,29 @@ final class V2InventoryInspectExecution {
             jobs.abandon(actionId);
             return jobs.get(actionId);
         }
+        if (job.state() == AgentJobStore.State.RUNNING) captureResultSafely();
         retainTerminal(AgentJobStore.State.FAILED, reason);
         return publishAfterRelease();
     }
 
+    private void captureResult() {
+        Map<String, Object> result = driver.result();
+        if (!result.isEmpty()) jobs.recordResult(actionId, result);
+    }
+
+    private void captureResultSafely() {
+        try { captureResult(); } catch (RuntimeException | LinkageError ignored) { }
+    }
+
     private void retainTerminal(AgentJobStore.State outcome, String failure) {
-        if (terminalIntent != null) return;
+        if (terminalIntent != null && outcome == AgentJobStore.State.SUCCEEDED) return;
         terminalIntent = outcome;
         terminalFailure = failure;
     }
 
     private AgentJobStore.Snapshot publishAfterRelease() {
         try {
+            driver.close();
             if (releaseAndVerify.getAsBoolean()) {
                 if (terminalIntent == AgentJobStore.State.SUCCEEDED
                         && jobs.get(actionId).cancelRequested()) {
@@ -106,8 +139,17 @@ final class V2InventoryInspectExecution {
                 jobs.finish(actionId, terminalIntent, terminalFailure, true);
             }
         } catch (RuntimeException | LinkageError ignored) {
-            // Keep the outcome pending until release succeeds on a later tick.
+            // Retry idempotent release before publishing a terminal result.
         }
         return jobs.get(actionId);
+    }
+
+    enum Step { RUNNING, CONFIRMED, FAILED }
+
+    interface Driver {
+        void begin(long clientTick, BooleanSupplier outputAllowed);
+        Step tick(long clientTick, BooleanSupplier outputAllowed);
+        Map<String, Object> result();
+        void close();
     }
 }

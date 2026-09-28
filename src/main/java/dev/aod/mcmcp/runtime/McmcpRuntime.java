@@ -159,7 +159,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private CoordinateMoveJobExecution v2MoveExecution;
     private V2BlockJobExecution<V2BreakArguments> v2BreakExecution;
     private V2BlockJobExecution<V2PlaceArguments> v2PlaceExecution;
-    private V2InventoryInspectExecution v2InventoryExecution;
+    private V2InventoryJobExecution v2InventoryExecution;
     private Object v2InventoryPlayerIdentity;
     private Object v2InventoryLevelIdentity;
     private long v2InventoryControlEpoch;
@@ -1415,9 +1415,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private CompletionStage<RuntimeReply> submitV2InventoryStart(
             StartInventory command, RuntimeCallContext context) {
-        final V2InventoryInspectArguments request;
+        final V2InventoryRequest request;
         try {
-            request = V2InventoryInspectArguments.parse(command.arguments());
+            request = V2InventoryRequest.parse(command.arguments());
         } catch (RuntimeException | LinkageError failure) {
             return CompletableFuture.completedFuture(RuntimeFailures.mapFailure(failure));
         }
@@ -1425,7 +1425,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return inbox.submitControlMapped(
                 command.toolName(), fence.generation(), context.deadlineNanos(),
                 () -> withEvaluationLeaseFence(context, command.toolName(), () -> {
-                    var result = commitV2InventoryInspect(
+                    var result = commitV2Inventory(
                             Minecraft.getInstance(), sessions.snapshot(), request, context);
                     return RuntimeReply.success(result, new McpRuntimePort.ActionDeliveryReceipt(
                             UUID.fromString((String) result.get("action_id"))));
@@ -1437,16 +1437,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 });
     }
 
-    private Map<String, Object> commitV2InventoryInspect(
+    private Map<String, Object> commitV2Inventory(
             Minecraft minecraft, WorldSessionTracker.Snapshot session,
-            V2InventoryInspectArguments request, RuntimeCallContext context) {
+            V2InventoryRequest request, RuntimeCallContext context) {
         assertClientThread(minecraft);
         RuntimeFailures.requireReady(session);
         if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
                 || endpointFaultCode != null || !multiplayerPolicyAllows(minecraft)
                 || !v2InputWorldSafe(minecraft, session)) {
             throw new RuntimeInvocationException(
-                    "unsafe_state", "Inventory inspect requires a safe local world state.",
+                    "unsafe_state", "Inventory requires a safe local world state.",
                     true, Map.of());
         }
         if (pendingAgentInputRelease || agentExecution != null
@@ -1468,20 +1468,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         try {
             requireLiveCall(context, "agent_inventory");
             actionId = v2Jobs.reserve(AgentJobStore.Kind.INVENTORY,
-                    session.worldSessionId(), 1,
+                    session.worldSessionId(), request.maxTicks(),
                     System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS);
-            v2InventoryExecution = new V2InventoryInspectExecution(v2Jobs, actionId,
-                    session.worldSessionId(), () -> {
-                        var inventory = minecraft.player.getInventory();
-                        var stacks = new ArrayList<ContainerSyncSignals.StackFingerprint>(
-                                inventory.getContainerSize());
-                        for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
-                            stacks.add(ContainerSyncSignals.StackFingerprint.fromServerPacket(
-                                    inventory.getItem(slot)));
-                        }
-                        return V2InventoryReadback.capture(
-                                stacks, inventory.getSelectedSlot(), request);
-                    }, () -> {
+            V2InventoryJobExecution.Driver driver = request instanceof V2InventoryDropArguments drop
+                    ? new MinecraftV2InventoryDropDriver(minecraft, session.worldSessionId(), drop)
+                    : inventoryInspectDriver(minecraft, (V2InventoryInspectArguments) request);
+            v2InventoryExecution = new V2InventoryJobExecution(v2Jobs, actionId,
+                    session.worldSessionId(), driver, () -> {
                         boolean released = boundedActionInputRelease(
                                 () -> releaseAllAndConfirmNoInputOwner(minecraft));
                         if (!released) arming.lock("v2_inventory_release_failed");
@@ -1500,6 +1493,37 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         return Map.of("schema_version", 2, "action_id", actionId.toString(),
                 "state", "queued");
+    }
+
+    private static V2InventoryJobExecution.Driver inventoryInspectDriver(
+            Minecraft minecraft, V2InventoryInspectArguments request) {
+        return new V2InventoryJobExecution.Driver() {
+                private Map<String, Object> result = Map.of();
+
+                @Override
+                public void begin(long clientTick, BooleanSupplier outputAllowed) { }
+
+                @Override
+                public V2InventoryJobExecution.Step tick(
+                        long clientTick, BooleanSupplier outputAllowed) {
+                    var inventory = minecraft.player.getInventory();
+                    var stacks = new ArrayList<ContainerSyncSignals.StackFingerprint>(
+                            inventory.getContainerSize());
+                    for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+                        stacks.add(ContainerSyncSignals.StackFingerprint.fromServerPacket(
+                                inventory.getItem(slot)));
+                    }
+                    result = V2InventoryReadback.capture(
+                            stacks, inventory.getSelectedSlot(), request);
+                    return V2InventoryJobExecution.Step.CONFIRMED;
+                }
+
+                @Override
+                public Map<String, Object> result() { return result; }
+
+                @Override
+                public void close() { }
+        };
     }
 
     private Map<String, Object> commitV2Break(
@@ -2842,7 +2866,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     && control.mode() == LocalArmingState.Mode.AGENT
                     && control.controlEpoch() == v2InventoryControlEpoch;
             var result = v2InventoryExecution.tick(session.worldSessionId(),
-                    System.nanoTime(), safe,
+                    session.clientTick(), System.nanoTime(), safe,
                     () -> v2Jobs.active().isPresent()
                             && arming.snapshot(session.worldSessionId()).mode()
                                     == LocalArmingState.Mode.AGENT
@@ -2851,7 +2875,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                             && !paused && endpointFaultCode == null);
             finishV2InventoryIfTerminal(result);
         } catch (RuntimeException | LinkageError failure) {
-            McmcpMod.LOGGER.error("MCMCP v2 inventory inspect failed", failure);
+            McmcpMod.LOGGER.error("MCMCP v2 inventory failed", failure);
             try {
                 finishV2InventoryIfTerminal(
                         v2InventoryExecution.stop("runtime_exception"));

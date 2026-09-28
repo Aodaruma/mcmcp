@@ -4,7 +4,7 @@ import java.util.Map;
 import java.util.Set;
 
 /** A player-inventory readback without opening a menu. */
-record V2InventoryInspectArguments(String itemFilter) {
+record V2InventoryInspectArguments(String itemFilter) implements V2InventoryRequest {
     static V2InventoryInspectArguments parse(Map<String, Object> arguments) {
         RuntimeArguments.requireAllowedKeys(arguments, "agent_inventory",
                 Set.of("operation", "item"));
@@ -13,10 +13,10 @@ record V2InventoryInspectArguments(String itemFilter) {
         }
         String item = arguments.containsKey("item")
                 ? RuntimeArguments.stringArgument(arguments, "item") : null;
-        if (item != null && (item.length() > 128
-                || !item.matches("[a-z0-9_.-]+:[a-z0-9_./-]+"))) {
-            throw new IllegalArgumentException("item must be a resource ID");
-        }
+        if (item != null) V2InventoryRequest.requireItemId(item);
         return new V2InventoryInspectArguments(item);
     }
+
+    @Override
+    public int maxTicks() { return 1; }
 }
