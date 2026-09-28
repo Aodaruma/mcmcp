@@ -25,6 +25,7 @@ public final class CoordinateMoveJobExecution {
     private final MovementDriver driver;
     private final BooleanSupplier releaseAndVerify;
     private boolean routeWasGoal;
+    private boolean awaitingFinalPosition;
     private Map<TraversabilityEdge.Key, TraversabilityEdge> waitingEvidence;
     private int evidenceWaitTicks;
     private long startedNanos = Long.MIN_VALUE;
@@ -101,6 +102,19 @@ public final class CoordinateMoveJobExecution {
             retainTerminal(AgentJobStore.State.FAILED, "duration_limit");
             return publishAfterRelease();
         }
+        // The route driver can finish after currentCell was sampled for this tick. Confirm
+        // arrival from the next tick's position without dispatching another movement input.
+        if (awaitingFinalPosition) {
+            boolean arrived = reached(currentCell);
+            retainTerminal(arrived ? AgentJobStore.State.SUCCEEDED
+                    : AgentJobStore.State.FAILED,
+                    arrived ? null : "goal_not_reached");
+            return publishAfterRelease();
+        }
+        if (!driver.active() && reached(currentCell)) {
+            retainTerminal(AgentJobStore.State.SUCCEEDED, null);
+            return publishAfterRelease();
+        }
         if (job.completedOperations() == job.maxOperations()) {
             retainTerminal(AgentJobStore.State.FAILED, "tick_limit");
             return publishAfterRelease();
@@ -158,10 +172,10 @@ public final class CoordinateMoveJobExecution {
                 case SUCCEEDED -> {
                     driver.close();
                     if (routeWasGoal) {
-                        retainTerminal(reached(currentCell)
-                                ? AgentJobStore.State.SUCCEEDED : AgentJobStore.State.FAILED,
-                                reached(currentCell) ? null : "goal_not_reached");
-                        yield publishAfterRelease();
+                        // currentCell predates this driver.tick; the next client tick rechecks
+                        // the live player cell without reissuing the same route.
+                        awaitingFinalPosition = true;
+                        yield jobs.get(actionId);
                     }
                     waitingEvidence = map.edges();
                     evidenceWaitTicks = 0;

@@ -67,7 +67,9 @@ class CoordinateMoveJobExecutionTest {
         assertThat(driver.routes).hasSize(2);
         assertThat(driver.routes.get(1).cells()).containsExactly(cell(1), cell(2));
         assertThat(execution.tick(map.snapshot().orElseThrow(), cell(2), SESSION,
-                0, 5, 5, true, 2, () -> true).state()).isEqualTo(SUCCEEDED);
+                0, 5, 5, true, 2, () -> true).state()).isEqualTo(RUNNING);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(2), SESSION,
+                0, 6, 6, true, 2, () -> true).state()).isEqualTo(SUCCEEDED);
     }
 
     @Test
@@ -105,7 +107,9 @@ class CoordinateMoveJobExecutionTest {
                 0, 2, 2, true, 0, () -> true).state()).isEqualTo(RUNNING);
         assertThat(driver.routes).hasSize(1);
         assertThat(execution.tick(map.snapshot().orElseThrow(), cell(1), SESSION,
-                0, 3, 3, true, 1, () -> true).state()).isEqualTo(SUCCEEDED);
+                0, 3, 3, true, 1, () -> true).state()).isEqualTo(RUNNING);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(1), SESSION,
+                0, 4, 4, true, 1, () -> true).state()).isEqualTo(SUCCEEDED);
     }
 
     @Test
@@ -122,7 +126,41 @@ class CoordinateMoveJobExecutionTest {
         assertThat(driver.routes).singleElement().satisfies(route ->
                 assertThat(route.cells()).containsExactly(cell(0), cell(1)));
         assertThat(execution.tick(map.snapshot().orElseThrow(), cell(1), SESSION,
+                0, 2, 2, true, 1, () -> true).state()).isEqualTo(RUNNING);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(1), SESSION,
+                0, 3, 3, true, 1, () -> true).state()).isEqualTo(SUCCEEDED);
+    }
+
+    @Test
+    void finalRouteChecksNextTickPositionEvenWhenInputBudgetIsSpent() {
+        var map = map(edge(cell(0), cell(1)));
+        var store = new AgentJobStore();
+        var id = store.reserve(MOVE, SESSION, 1, 100);
+        var driver = new FakeDriver(SUCCESS_STEP);
+        var execution = execution(store, id, cell(1), driver, () -> true);
+        store.confirm(id, 1);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION,
+                0, 1, 1, true, 0, () -> true).state()).isEqualTo(RUNNING);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(1), SESSION,
                 0, 2, 2, true, 1, () -> true).state()).isEqualTo(SUCCEEDED);
+        assertThat(driver.ticks).isEqualTo(1);
+    }
+
+    @Test
+    void finalRouteDoesNotReissueInputWhenNextTickStillMissesGoal() {
+        var map = map(edge(cell(0), cell(1)));
+        var store = new AgentJobStore();
+        var id = store.reserve(MOVE, SESSION, 4, 100);
+        var driver = new FakeDriver(SUCCESS_STEP);
+        var execution = execution(store, id, cell(1), driver, () -> true);
+        store.confirm(id, 1);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION,
+                0, 1, 1, true, 0, () -> true).state()).isEqualTo(RUNNING);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION,
+                0, 2, 2, true, 0, () -> true).state()).isEqualTo(AgentJobStore.State.FAILED);
+        assertThat(store.get(id).failure()).isEqualTo("goal_not_reached");
+        assertThat(driver.routes).hasSize(1);
+        assertThat(driver.ticks).isEqualTo(1);
     }
 
     @Test
