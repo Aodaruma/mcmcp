@@ -11,6 +11,7 @@ import dev.aod.mcmcp.agent.navigation.RoutePlan;
 import dev.aod.mcmcp.agent.script.ScriptJobExecution;
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.client.AgentInputState;
+import dev.aod.mcmcp.mcp.RuntimeCallContext;
 import dev.aod.mcmcp.routine.BoundedInputLease;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -361,6 +362,26 @@ class McmcpRuntimeV2InputRoutingTest {
                     }
                     @Override public void close() { }
                 }, () -> true));
+    }
+
+    @Test
+    void successiveScriptChildrenShareOneParentDeadline() throws Exception {
+        var session=UUID.randomUUID();
+        var scripts=(AgentJobStore)field("scriptJobs").get(runtime);
+        var jobs=(AgentJobStore)field("v2Jobs").get(runtime);
+        long deadline=System.nanoTime()+java.time.Duration.ofSeconds(30).toNanos();
+        var parent=scripts.reserve(AgentJobStore.Kind.SCRIPT,session,10,deadline);
+        scripts.setDeadline(parent,deadline);
+        var context=RuntimeCallContext.forScriptChild(java.time.Duration.ofSeconds(5),
+                RuntimeCallContext.EvaluationLeaseExpectation.unmanaged());
+        try {
+            for(int i=0;i<2;i++){
+                var child=(UUID)invoke("reserveV2Job",new Class<?>[]{AgentJobStore.Kind.class,UUID.class,int.class,long.class,RuntimeCallContext.class},
+                        AgentJobStore.Kind.INPUT_SEQUENCE,session,1728000,deadline,context);
+                assertThat(jobs.deadlineNanos(child)).isEqualTo(deadline);
+                jobs.abandon(child);
+            }
+        } finally { AgentInputState.global().clearActionDeadline(); }
     }
 
     private void installExecution(AgentJobStore store, UUID id, UUID session) throws Exception {

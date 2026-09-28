@@ -1374,7 +1374,7 @@
     {
       "name": "agent_move",
       "title": "Move to Coordinates",
-      "description": "Moves over locally known safe routes. clear_path defaults to false; when true, a blocked route may break ordinary visible blocks and, only with bridge_block, fill adjacent floor gaps. Each change needs server confirmation and fresh route evidence. stop_when ends early on a visible block, own item count, position, or screen condition. Unknown cells are never assumed safe.",
+      "description": "Moves over locally known safe routes. clear_path defaults to false; when true, a blocked route may break ordinary visible blocks and, only with bridge_block, fill adjacent floor gaps. Each change needs server confirmation and fresh route evidence. stop_when ends early on a visible block, own item count, position, or screen condition. Unknown cells are never assumed safe. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
@@ -1404,12 +1404,12 @@
               "max_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 1200
+                "maximum": 1728000
               },
               "max_distance": {
                 "type": "number",
                 "minimum": 1,
-                "maximum": 256
+                "maximum": 4096
               },
               "stop_when": {
                 "oneOf": [
@@ -1577,12 +1577,12 @@
               "max_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 1200
+                "maximum": 1728000
               },
               "max_distance": {
                 "type": "number",
                 "minimum": 1,
-                "maximum": 256
+                "maximum": 4096
               },
               "stop_when": {
                 "oneOf": [
@@ -1750,7 +1750,7 @@
               "distance": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 256
+                "maximum": 4096
               },
               "arrival_radius": {
                 "type": "number",
@@ -1765,12 +1765,12 @@
               "max_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 1200
+                "maximum": 1728000
               },
               "max_distance": {
                 "type": "number",
                 "minimum": 1,
-                "maximum": 256
+                "maximum": 4096
               },
               "stop_when": {
                 "oneOf": [
@@ -1932,7 +1932,7 @@
               "distance": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 256
+                "maximum": 4096
               },
               "arrival_radius": {
                 "type": "number",
@@ -1947,12 +1947,12 @@
               "max_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 1200
+                "maximum": 1728000
               },
               "max_distance": {
                 "type": "number",
                 "minimum": 1,
-                "maximum": 256
+                "maximum": 4096
               },
               "stop_when": {
                 "oneOf": [
@@ -2126,7 +2126,7 @@
     {
       "name": "agent_break_block",
       "title": "Break Blocks",
-      "description": "Breaks one cell or a signed inclusive box of Vanilla blocks. Filters are optional; advance approaches through known safe cells and confirms each break. Never replays an uncertain mutation.",
+      "description": "Breaks one cell or a signed inclusive box of Vanilla blocks. Filters are optional; advance approaches through known safe cells and confirms each break. Never replays an uncertain mutation. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -2180,12 +2180,12 @@
           "max_ticks": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 1200
+            "maximum": 1728000
           },
           "max_distance": {
             "type": "number",
             "minimum": 0,
-            "maximum": 256
+            "maximum": 4096
           },
           "advance": {
             "type": "boolean"
@@ -2223,7 +2223,7 @@
     {
       "name": "agent_place_block",
       "title": "Place Blocks",
-      "description": "Places a Vanilla block at one cell or over a signed inclusive box. Desired properties and replace filter are optional. Uses local support evidence and server confirmation. Beds, doors and double plants validate and confirm both cells; confirmed_count counts placements, and confirmed_cells includes companions. Existing matching placements are reported separately in observed_cells. Companion cells may lie just outside the anchor region.",
+      "description": "Places a Vanilla block at one cell or over a signed inclusive box. Desired properties and replace filter are optional. Uses local support evidence and server confirmation. Beds, doors and double plants validate and confirm both cells; confirmed_count counts placements, and confirmed_cells includes companions. Existing matching placements are reported separately in observed_cells. Companion cells may lie just outside the anchor region. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -2289,12 +2289,12 @@
           "max_ticks": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 1200
+            "maximum": 1728000
           },
           "max_distance": {
             "type": "number",
             "minimum": 0,
-            "maximum": 256
+            "maximum": 4096
           },
           "advance": {
             "type": "boolean"
@@ -2333,7 +2333,7 @@
     {
       "name": "agent_interact",
       "title": "Interact",
-      "description": "Uses a block, held item, observed entity, or coordinate menu through ordinary game input. Blocks and entities can be approached with advance (default true); entities must remain visible and valid. Menu operations atomically open, inspect, optionally shift-click whole stacks in Vanilla generic chest/dispenser, hopper or shulker storage menus under exact slot/item/count conditions, then close. Menu crafting output, partial transfers, cursor pickup and custom buttons are not supported. Job results distinguish accepted use from server-confirmed effects.",
+      "description": "Uses a block, held item, observed entity, or coordinate menu through ordinary game input. Blocks and entities can be approached with advance (default true); entities must remain visible and valid. Menu operations atomically open, inspect, optionally shift-click whole stacks in Vanilla generic chest/dispenser, hopper or shulker storage menus under exact slot/item/count conditions, then close. Menu crafting output, partial transfers, cursor pickup and custom buttons are not supported. Job results distinguish accepted use from server-confirmed effects. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
@@ -2398,12 +2398,12 @@
               "max_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 1200
+                "maximum": 1728000
               },
               "max_distance": {
                 "type": "number",
                 "minimum": 0,
-                "maximum": 256
+                "maximum": 4096
               },
               "advance": {
                 "type": "boolean"
@@ -2437,13 +2437,13 @@
               "hold_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 1000,
+                "maximum": 1727999,
                 "default": 40
               },
               "max_ticks": {
                 "type": "integer",
                 "minimum": 2,
-                "maximum": 1200,
+                "maximum": 1728000,
                 "description": "Must exceed hold_ticks. Default is max(200, hold_ticks+80)."
               }
             },
@@ -2482,7 +2482,7 @@
               "max_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 1200,
+                "maximum": 1728000,
                 "default": 1200
               },
               "advance": {
@@ -2492,7 +2492,7 @@
               "max_distance": {
                 "type": "number",
                 "minimum": 0,
-                "maximum": 256,
+                "maximum": 4096,
                 "default": 64
               }
             },
@@ -2568,13 +2568,13 @@
               "max_distance": {
                 "type": "number",
                 "minimum": 0,
-                "maximum": 256,
+                "maximum": 4096,
                 "default": 64
               },
               "max_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 1200,
+                "maximum": 1728000,
                 "default": 1200
               }
             },
@@ -2615,7 +2615,7 @@
     {
       "name": "agent_inventory",
       "title": "Inspect and Move Inventory",
-      "description": "Inspects, swaps or drops player inventory. With target=container and x/y/z, approaches a chest, barrel or copper chest. With target=storage and storage_slot, opens a carried storage item through its supported provider. Inspect reads contents; transfer takes or stores an exact count. Mutations require server confirmation and retain partial results on cancellation. Current transfers require a plan within 14 pickup clicks.",
+      "description": "Inspects, swaps or drops player inventory. With target=container and x/y/z, approaches a chest, barrel or copper chest. With target=storage and storage_slot, opens a carried storage item through its supported provider. Inspect reads contents; transfer takes or stores an exact count. Mutations require server confirmation and retain partial results on cancellation. Current transfers require a plan within 14 pickup clicks. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
@@ -2661,7 +2661,7 @@
               "max_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 1200
+                "maximum": 1728000
               }
             },
             "required": [
@@ -2695,7 +2695,7 @@
               "max_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 1200
+                "maximum": 1728000
               }
             },
             "required": [
@@ -2741,13 +2741,13 @@
               "max_distance": {
                 "type": "number",
                 "minimum": 0,
-                "maximum": 256,
+                "maximum": 4096,
                 "default": 64
               },
               "max_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 1200,
+                "maximum": 1728000,
                 "default": 1200
               }
             },
@@ -2795,13 +2795,13 @@
               "max_distance": {
                 "type": "number",
                 "minimum": 0,
-                "maximum": 256,
+                "maximum": 4096,
                 "default": 64
               },
               "max_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 1200,
+                "maximum": 1728000,
                 "default": 1200
               },
               "direction": {
@@ -2855,7 +2855,7 @@
               "max_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 1200,
+                "maximum": 1728000,
                 "default": 1200
               }
             },
@@ -2893,7 +2893,7 @@
               "max_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 1200,
+                "maximum": 1728000,
                 "default": 1200
               },
               "direction": {
@@ -2945,7 +2945,7 @@
     {
       "name": "agent_click",
       "title": "Click in World",
-      "description": "Issues finite left, right, or middle mouse input. An optional exact block or observed entity_ref guards the current crosshair and reach; this low-level tool does not prove a semantic world effect.",
+      "description": "Issues finite left, right, or middle mouse input. An optional exact block or observed entity_ref guards the current crosshair and reach; this low-level tool does not prove a semantic world effect. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
@@ -2963,17 +2963,17 @@
               "count": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 32
+                "maximum": 1728000
               },
               "hold_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 20
+                "maximum": 1728000
               },
               "gap_ticks": {
                 "type": "integer",
                 "minimum": 0,
-                "maximum": 40
+                "maximum": 1728000
               }
             },
             "required": [
@@ -2994,17 +2994,17 @@
               "count": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 32
+                "maximum": 1728000
               },
               "hold_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 20
+                "maximum": 1728000
               },
               "gap_ticks": {
                 "type": "integer",
                 "minimum": 0,
-                "maximum": 40
+                "maximum": 1728000
               },
               "x": {
                 "type": "integer"
@@ -3042,17 +3042,17 @@
               "count": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 32
+                "maximum": 1728000
               },
               "hold_ticks": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 20
+                "maximum": 1728000
               },
               "gap_ticks": {
                 "type": "integer",
                 "minimum": 0,
-                "maximum": 40
+                "maximum": 1728000
               },
               "entity_ref": {
                 "type": "string",
@@ -3097,193 +3097,542 @@
     {
       "name": "agent_input_sequence",
       "title": "Run Finite Input Sequence",
-      "description": "Runs bounded logical keys and mouse actions in simultaneous or sequential steps. Releases all owned input on completion, cancellation, and safety stop. stop_when supports position, currently visible block state, own inventory count, and screen type; unknown blocks never satisfy a condition.",
+      "description": "Runs bounded logical keys and mouse actions in simultaneous or sequential steps. Releases all owned input on completion, cancellation, and safety stop. stop_when supports position, currently visible block state, own inventory count, and screen type; unknown blocks never satisfy a condition. Explicit steps total at most 1728000 ticks; inputs with duration_seconds holds any logical inputs for at most 86400 real seconds. Optional item guards stationary use only: same selected slot/item, empty offhand, position within 0.25 blocks and view within 2 degrees. Empty material releases use and waits 30 seconds by default (1..300), within the original deadline. No automatic reconnect or restart.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "steps": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 64,
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "inputs": {
-                  "type": "array",
-                  "minItems": 1,
-                  "maxItems": 9,
-                  "uniqueItems": true,
-                  "items": {
-                    "enum": [
-                      "forward",
-                      "back",
-                      "left",
-                      "right",
-                      "jump",
-                      "sneak",
-                      "attack",
-                      "use",
-                      "pick"
-                    ]
-                  }
-                },
-                "hold_ticks": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 1200
-                },
-                "gap_ticks": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 1200
-                },
-                "repeat": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 1200
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "steps": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "inputs": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 9,
+                      "uniqueItems": true,
+                      "items": {
+                        "enum": [
+                          "forward",
+                          "back",
+                          "left",
+                          "right",
+                          "jump",
+                          "sneak",
+                          "attack",
+                          "use",
+                          "pick"
+                        ]
+                      }
+                    },
+                    "hold_ticks": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1728000
+                    },
+                    "gap_ticks": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1728000
+                    },
+                    "repeat": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1728000
+                    }
+                  },
+                  "required": [
+                    "inputs",
+                    "hold_ticks"
+                  ]
                 }
               },
-              "required": [
-                "inputs",
-                "hold_ticks"
-              ]
-            }
-          },
-          "stop_when": {
-            "oneOf": [
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "type": {
-                    "const": "position"
-                  },
-                  "x": {
-                    "type": "integer"
-                  },
-                  "y": {
-                    "type": "integer"
-                  },
-                  "z": {
-                    "type": "integer"
-                  },
-                  "radius": {
-                    "type": "number",
-                    "minimum": 0.1,
-                    "maximum": 16,
-                    "default": 0.75
-                  }
-                },
-                "required": [
-                  "x",
-                  "y",
-                  "z"
-                ]
-              },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "type": {
-                    "const": "block"
-                  },
-                  "x": {
-                    "type": "integer"
-                  },
-                  "y": {
-                    "type": "integer"
-                  },
-                  "z": {
-                    "type": "integer"
-                  },
-                  "block": {
-                    "type": "string",
-                    "maxLength": 128,
-                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
-                  },
-                  "properties": {
+              "stop_when": {
+                "oneOf": [
+                  {
                     "type": "object",
-                    "maxProperties": 32,
-                    "propertyNames": {
-                      "pattern": "^[a-z0-9_]{1,64}$"
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "position"
+                      },
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      },
+                      "z": {
+                        "type": "integer"
+                      },
+                      "radius": {
+                        "type": "number",
+                        "minimum": 0.1,
+                        "maximum": 16,
+                        "default": 0.75
+                      }
                     },
-                    "additionalProperties": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 64,
-                      "pattern": "^[a-z0-9_./-]+$"
-                    }
-                  }
-                },
-                "required": [
-                  "type",
-                  "x",
-                  "y",
-                  "z",
-                  "block"
-                ]
-              },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "type": {
-                    "const": "item"
+                    "required": [
+                      "x",
+                      "y",
+                      "z"
+                    ]
                   },
-                  "item": {
-                    "type": "string",
-                    "maxLength": 128,
-                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "block"
+                      },
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      },
+                      "z": {
+                        "type": "integer"
+                      },
+                      "block": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                      },
+                      "properties": {
+                        "type": "object",
+                        "maxProperties": 32,
+                        "propertyNames": {
+                          "pattern": "^[a-z0-9_]{1,64}$"
+                        },
+                        "additionalProperties": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_./-]+$"
+                        }
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "x",
+                      "y",
+                      "z",
+                      "block"
+                    ]
                   },
-                  "count": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 1000000,
-                    "default": 1
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "item"
+                      },
+                      "item": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                      },
+                      "count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1728000,
+                        "default": 1
+                      },
+                      "comparison": {
+                        "enum": [
+                          "at_least",
+                          "at_most",
+                          "equals"
+                        ],
+                        "default": "at_least"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "item"
+                    ]
                   },
-                  "comparison": {
-                    "enum": [
-                      "at_least",
-                      "at_most",
-                      "equals"
-                    ],
-                    "default": "at_least"
-                  }
-                },
-                "required": [
-                  "type",
-                  "item"
-                ]
-              },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "type": {
-                    "const": "screen"
-                  },
-                  "screen": {
-                    "enum": [
-                      "none",
-                      "container",
-                      "inventory",
-                      "chat"
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "screen"
+                      },
+                      "screen": {
+                        "enum": [
+                          "none",
+                          "container",
+                          "inventory",
+                          "chat"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "screen"
                     ]
                   }
-                },
-                "required": [
-                  "type",
-                  "screen"
+                ]
+              },
+              "max_distance": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 4096,
+                "default": 48
+              }
+            },
+            "required": [
+              "steps"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "inputs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 9,
+                "uniqueItems": true,
+                "items": {
+                  "enum": [
+                    "forward",
+                    "back",
+                    "left",
+                    "right",
+                    "jump",
+                    "sneak",
+                    "attack",
+                    "use",
+                    "pick"
+                  ]
+                }
+              },
+              "duration_seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 86400
+              },
+              "max_distance": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 4096,
+                "default": 48
+              },
+              "stop_when": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "position"
+                      },
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      },
+                      "z": {
+                        "type": "integer"
+                      },
+                      "radius": {
+                        "type": "number",
+                        "minimum": 0.1,
+                        "maximum": 16,
+                        "default": 0.75
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "z"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "block"
+                      },
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      },
+                      "z": {
+                        "type": "integer"
+                      },
+                      "block": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                      },
+                      "properties": {
+                        "type": "object",
+                        "maxProperties": 32,
+                        "propertyNames": {
+                          "pattern": "^[a-z0-9_]{1,64}$"
+                        },
+                        "additionalProperties": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_./-]+$"
+                        }
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "x",
+                      "y",
+                      "z",
+                      "block"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "item"
+                      },
+                      "item": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                      },
+                      "count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1728000,
+                        "default": 1
+                      },
+                      "comparison": {
+                        "enum": [
+                          "at_least",
+                          "at_most",
+                          "equals"
+                        ],
+                        "default": "at_least"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "item"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "screen"
+                      },
+                      "screen": {
+                        "enum": [
+                          "none",
+                          "container",
+                          "inventory",
+                          "chat"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "screen"
+                    ]
+                  }
                 ]
               }
+            },
+            "required": [
+              "inputs",
+              "duration_seconds"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "inputs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 1,
+                "items": {
+                  "const": "use"
+                }
+              },
+              "duration_seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 86400
+              },
+              "max_distance": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 4096,
+                "default": 48
+              },
+              "stop_when": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "position"
+                      },
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      },
+                      "z": {
+                        "type": "integer"
+                      },
+                      "radius": {
+                        "type": "number",
+                        "minimum": 0.1,
+                        "maximum": 16,
+                        "default": 0.75
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "z"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "block"
+                      },
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      },
+                      "z": {
+                        "type": "integer"
+                      },
+                      "block": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                      },
+                      "properties": {
+                        "type": "object",
+                        "maxProperties": 32,
+                        "propertyNames": {
+                          "pattern": "^[a-z0-9_]{1,64}$"
+                        },
+                        "additionalProperties": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_./-]+$"
+                        }
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "x",
+                      "y",
+                      "z",
+                      "block"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "item"
+                      },
+                      "item": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                      },
+                      "count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1728000,
+                        "default": 1
+                      },
+                      "comparison": {
+                        "enum": [
+                          "at_least",
+                          "at_most",
+                          "equals"
+                        ],
+                        "default": "at_least"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "item"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "screen"
+                      },
+                      "screen": {
+                        "enum": [
+                          "none",
+                          "container",
+                          "inventory",
+                          "chat"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "screen"
+                    ]
+                  }
+                ]
+              },
+              "item": {
+                "type": "string",
+                "maxLength": 128,
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+              },
+              "refill_wait_seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 300,
+                "default": 30
+              }
+            },
+            "required": [
+              "inputs",
+              "duration_seconds",
+              "item"
             ]
           }
-        },
-        "required": [
-          "steps"
         ]
       },
       "outputSchema": {
@@ -3312,7 +3661,7 @@
     {
       "name": "agent_run_script",
       "title": "Run Restricted Action Script",
-      "description": "Runs a bounded synchronous JavaScript-like action script with keyword arguments, variables, functions, branches, and finite loops. No host, file, network, module, async, or arbitrary Java access.",
+      "description": "Runs a bounded synchronous JavaScript-like action script with keyword arguments, variables, functions, branches, and finite loops. No host, file, network, module, async, or arbitrary Java access. Explicit limits: 1728000 duration ticks (24 real hours), 1728000 calls, 10000000 iterations, 100000000 work. Defaults remain 24000/1000/10000/100000. Each child shares the original parent wall deadline; no automatic retries or restart.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -3326,22 +3675,22 @@
           "max_work": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 100000
+            "maximum": 100000000
           },
           "max_iterations": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 10000
+            "maximum": 10000000
           },
           "max_calls": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 1000
+            "maximum": 1728000
           },
           "max_duration_ticks": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 72000
+            "maximum": 1728000
           }
         },
         "required": [
@@ -4316,12 +4665,12 @@
                   "completed_operations": {
                     "type": "integer",
                     "minimum": 0,
-                    "maximum": 1200
+                    "maximum": 1728000
                   },
                   "max_operations": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": 1200
+                    "maximum": 1728000
                   },
                   "scanned_cells": {
                     "type": "integer",
@@ -4342,6 +4691,18 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 4096
+                  },
+                  "elapsed_seconds": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "remaining_seconds": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "max_duration_seconds": {
+                    "type": "number",
+                    "minimum": 0
                   }
                 },
                 "required": [
@@ -4366,6 +4727,12 @@
               "result": {
                 "type": "object",
                 "maxProperties": 32
+              },
+              "stop_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [

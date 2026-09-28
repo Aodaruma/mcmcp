@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import dev.aod.mcmcp.agent.action.BlockWorkRegion;
 
 import java.util.LinkedHashMap;
@@ -21,9 +23,9 @@ record V2PlaceArguments(BlockWorkRegion region, String blockId, String itemId,
         properties = Map.copyOf(properties);
         replaceBlocks = Set.copyOf(replaceBlocks);
         if (maxBlocks < 1 || maxBlocks > region.size()
-                || maxTicks < 1 || maxTicks > 1_200
+                || maxTicks < 1 || maxTicks > AgentJobLimits.MAX_TICKS
                 || !Double.isFinite(maxDistance) || maxDistance < 0.0D
-                || maxDistance > 256.0D) {
+                || maxDistance > AgentJobLimits.MAX_DISTANCE) {
             throw new IllegalArgumentException("invalid place bounds");
         }
     }

@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import java.util.Map;
 import java.util.Set;
 
@@ -9,7 +11,7 @@ record V2InventorySwapArguments(int sourceSlot, int hotbarSlot,
     V2InventorySwapArguments {
         V2InventoryRequest.requireItemId(itemId);
         if (sourceSlot < 9 || sourceSlot >= 36 || hotbarSlot < 0 || hotbarSlot >= 9
-                || maxTicks < 1 || maxTicks > 1_200) {
+                || maxTicks < 1 || maxTicks > AgentJobLimits.MAX_TICKS) {
             throw new IllegalArgumentException("invalid inventory swap bounds");
         }
     }

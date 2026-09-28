@@ -46,6 +46,22 @@ public final class AgentInputState {
     private boolean pickOwned;
     private boolean pickSuppressed;
     private long pickValidUntilNanos;
+    private boolean actionDeadlineSet;
+    private long actionDeadlineNanos;
+
+    public synchronized void setActionDeadline(long deadlineNanos) {
+        actionDeadlineSet = true;
+        actionDeadlineNanos = deadlineNanos;
+    }
+
+    public synchronized void clearActionDeadline() {
+        actionDeadlineSet = false;
+    }
+
+    private boolean actionExpired(long nowNanos) {
+        return actionDeadlineSet && nowNanos - actionDeadlineNanos >= 0L;
+    }
+
     private boolean paused;
     private long pauseStartedAtNanos;
     private long accumulatedPauseNanos;
@@ -191,8 +207,9 @@ public final class AgentInputState {
     /** Captures expired Agent motion before Entity.move recomputes the external-only delta. */
     public synchronized MovementBoundary movementBoundary(LocalPlayer player) {
         Objects.requireNonNull(player, "player");
-        boolean expired = movement.owned() && movementExpiryRequired && !paused
-                && watchdogTime(System.nanoTime()) - movementValidUntilNanos >= 0L;
+        boolean expired = movement.owned() && (actionExpired(System.nanoTime())
+                || movementExpiryRequired && !paused
+                && watchdogTime(System.nanoTime()) - movementValidUntilNanos >= 0L);
         if (!expired) {
             return new MovementBoundary(goalMovementOutputActive(), false, Vec3.ZERO, false);
         }
@@ -502,8 +519,9 @@ public final class AgentInputState {
     /** Enforces the watchdog at the real input boundary and removes any stale Agent inertia. */
     public synchronized MovementSnapshot movementSnapshot(LocalPlayer player) {
         Objects.requireNonNull(player, "player");
-        boolean expired = movement.owned() && movementExpiryRequired && !paused
-                && watchdogTime(System.nanoTime()) - movementValidUntilNanos >= 0L;
+        boolean expired = movement.owned() && (actionExpired(System.nanoTime())
+                || movementExpiryRequired && !paused
+                && watchdogTime(System.nanoTime()) - movementValidUntilNanos >= 0L);
         if (expired) {
             boolean rejectGoal = goalMovementCycleActive;
             neutralizeTrackedAgentVelocity(player);
@@ -532,8 +550,9 @@ public final class AgentInputState {
     }
 
     private void expireMovementIfNeeded(long nowNanos) {
-        if (!movement.owned() || !movementExpiryRequired || paused
-                || watchdogTime(nowNanos) - movementValidUntilNanos < 0L) {
+        if (!movement.owned() || !actionExpired(nowNanos)
+                && (!movementExpiryRequired || paused
+                || watchdogTime(nowNanos) - movementValidUntilNanos < 0L)) {
             return;
         }
         boolean rejectGoal = goalMovementCycleActive;
@@ -544,6 +563,10 @@ public final class AgentInputState {
     }
 
     private void expireButtonsIfNeeded(long nowNanos) {
+        if (actionExpired(nowNanos)) {
+            suppressAllRetainingTrackedVelocity();
+            return;
+        }
         long watchdogNow = watchdogTime(nowNanos);
         if (attackOwned && attackExpiryRequired && !paused
                 && watchdogNow - attackValidUntilNanos >= 0L) {

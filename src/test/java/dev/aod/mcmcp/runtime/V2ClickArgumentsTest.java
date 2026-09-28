@@ -36,7 +36,7 @@ class V2ClickArgumentsTest {
                 "button", "middle", "count", 2, "gap_ticks", 0)))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> V2ClickArguments.parse(Map.of(
-                "button", "left", "count", 33)))
+                "button", "left", "count", 1_728_001)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 

@@ -97,6 +97,43 @@ class ScriptJobExecutionTest {
         assertThat(called).hasValue(0);
     }
 
+    @Test
+    void explicitScriptBudgetCompletesMoreThanOldCallLimit() {
+        var jobs=new AgentJobStore();var world=UUID.randomUUID();var id=confirmed(jobs,world,1500);
+        var calls=new AtomicInteger();
+        var execution=new ScriptJobExecution(jobs,id,world,"repeat(1500){move();}",Set.of("move"),
+                10000,1500,1500,new ScriptJobExecution.CommandRunner(){
+                    public ScriptJobExecution.Outcome execute(String name,Map<String,Object> args,BooleanSupplier cancelled){calls.incrementAndGet();return ScriptJobExecution.Outcome.SUCCESS;}
+                    public void cancelActive(){}
+                },()->true,Long.MAX_VALUE);
+        execution.run();
+        assertThat(execution.finishIfReleased(true).state()).isEqualTo(AgentJobStore.State.SUCCEEDED);
+        assertThat(calls).hasValue(1500);
+    }
+
+    @Test
+    void fake24HourDeadlinePreventsSecondCommandAndWaitsForChildRelease() {
+        var now=new java.util.concurrent.atomic.AtomicLong(1);
+        var jobs=new AgentJobStore(now::get);var world=UUID.randomUUID();
+        long deadline=Duration.ofHours(24).toNanos()+1;
+        var id=jobs.reserve(AgentJobStore.Kind.SCRIPT,world,3,100);
+        jobs.setDeadline(id,deadline);jobs.confirm(id,1);
+        var calls=new AtomicInteger();
+        var execution=new ScriptJobExecution(jobs,id,world,"repeat(3){move();}",Set.of("move"),
+                1000,3,3,new ScriptJobExecution.CommandRunner(){
+                    public ScriptJobExecution.Outcome execute(String name,Map<String,Object> args,BooleanSupplier cancelled){
+                        calls.incrementAndGet();now.set(deadline);return ScriptJobExecution.Outcome.SUCCESS;
+                    }
+                    public void cancelActive(){}
+                },()->true,deadline,now::get);
+        execution.run();
+        assertThat(execution.finishIfReleased(false).state()).isEqualTo(AgentJobStore.State.RUNNING);
+        var stopped=execution.finishIfReleased(true);
+        assertThat(stopped.state()).isEqualTo(AgentJobStore.State.FAILED);
+        assertThat(stopped.failure()).isEqualTo("script_timeout");
+        assertThat(calls).hasValue(1);
+    }
+
     private static UUID confirmed(AgentJobStore jobs, UUID world, int maxCalls) {
         UUID id = jobs.reserve(AgentJobStore.Kind.SCRIPT, world, maxCalls,
                 System.nanoTime() + Duration.ofSeconds(5).toNanos());

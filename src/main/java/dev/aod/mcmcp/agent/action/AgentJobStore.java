@@ -5,21 +5,53 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
 
 /** One active v2 job with delivery-gated admission and release-gated terminal state. */
 public final class AgentJobStore {
-    public static final int MAX_OPERATIONS = 1_200;
+    public static final int MAX_OPERATIONS = AgentJobLimits.MAX_TICKS;
     public static final int MAX_TERMINAL_WAIT_MILLIS = 25_000;
 
     private Job latest;
     private Snapshot previousTerminal;
+    private final LongSupplier clock;
+
+    public AgentJobStore() { this(System::nanoTime); }
+    public AgentJobStore(LongSupplier clock) { this.clock = Objects.requireNonNull(clock); }
+
+    /** Admission-time total deadline; a child receives the earlier parent deadline. */
+    public synchronized void setDeadline(UUID actionId, long deadlineNanos) {
+        Job job = current(actionId);
+        if (job.state != State.UNCONFIRMED || job.deadlineSet) {
+            throw new IllegalStateException("deadline must be set once before delivery");
+        }
+        long now = clock.getAsLong();
+        long remaining = deadlineNanos - now;
+        if (remaining <= 0 || remaining > TimeUnit.SECONDS.toNanos(AgentJobLimits.MAX_SECONDS)) {
+            throw new IllegalArgumentException("deadline must be within 24 hours");
+        }
+        job.deadlineSet = true;
+        job.admittedNanos = now;
+        job.deadlineNanos = deadlineNanos;
+    }
+
+    public synchronized boolean expired(UUID actionId) {
+        Job job = current(actionId);
+        return job.deadlineSet && clock.getAsLong() - job.deadlineNanos >= 0;
+    }
+
+    public synchronized long deadlineNanos(UUID actionId) {
+        Job job = current(actionId);
+        if (!job.deadlineSet) throw new IllegalStateException("job has no deadline");
+        return job.deadlineNanos;
+    }
 
     public synchronized UUID reserve(Kind kind, UUID worldSessionId, int maxOperations,
                                      long confirmationDeadlineNanos) {
         Objects.requireNonNull(kind, "kind");
         Objects.requireNonNull(worldSessionId, "worldSessionId");
         if (maxOperations < 1 || maxOperations > MAX_OPERATIONS) {
-            throw new IllegalArgumentException("job operation bound must be in 1..1200");
+            throw new IllegalArgumentException("job operation bound must be in 1.." + MAX_OPERATIONS);
         }
         if (latest != null && !latest.state.terminal()) {
             throw new IllegalStateException("another job is active");
@@ -80,6 +112,7 @@ public final class AgentJobStore {
         Job job = current(actionId);
         return job.state == State.RUNNING && !job.cancelRequested
                 && job.worldSessionId.equals(currentWorldSessionId)
+                && (!job.deadlineSet || clock.getAsLong() - job.deadlineNanos < 0)
                 && job.completedOperations < job.maxOperations;
     }
 
@@ -152,6 +185,7 @@ public final class AgentJobStore {
             throw new IllegalArgumentException("invalid job failure");
         }
         job.failure = failure;
+        job.finishedNanos = clock.getAsLong();
         job.state = outcome;
         notifyAll();
     }
@@ -214,11 +248,11 @@ public final class AgentJobStore {
                            int completedOperations, int maxOperations,
                            int scannedCells, int completedBlocks,
                            boolean cancelRequested, String failure,
-                           Map<String, Object> result) { }
+                           Map<String, Object> result, Map<String, Object> timing) { }
 
     public static final class NotFoundException extends RuntimeException { }
 
-    private static final class Job {
+    private final class Job {
         final UUID id;
         final Kind kind;
         final UUID worldSessionId;
@@ -231,6 +265,10 @@ public final class AgentJobStore {
         boolean cancelRequested;
         String failure;
         Map<String, Object> result = Map.of();
+        boolean deadlineSet;
+        long admittedNanos;
+        long deadlineNanos;
+        long finishedNanos;
 
         Job(UUID id, Kind kind, UUID worldSessionId, int maxOperations,
             long confirmationDeadlineNanos) {
@@ -243,7 +281,17 @@ public final class AgentJobStore {
 
         Snapshot snapshot() {
             return new Snapshot(id, kind, worldSessionId, state, completedOperations,
-                    maxOperations, scannedCells, completedBlocks, cancelRequested, failure, result);
+                    maxOperations, scannedCells, completedBlocks, cancelRequested, failure, result,
+                    timing());
+        }
+
+        Map<String, Object> timing() {
+            if (!deadlineSet) return Map.of();
+            if (state.terminal() && finishedNanos == 0) finishedNanos = clock.getAsLong();
+            long now = state.terminal() ? finishedNanos : clock.getAsLong();
+            return Map.of("elapsed_seconds", Math.max(0L, now - admittedNanos) / 1_000_000_000.0,
+                    "remaining_seconds", Math.max(0L, deadlineNanos - now) / 1_000_000_000.0,
+                    "max_duration_seconds", (deadlineNanos - admittedNanos) / 1_000_000_000.0);
         }
     }
 }

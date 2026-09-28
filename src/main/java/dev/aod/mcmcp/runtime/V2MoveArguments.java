@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import dev.aod.mcmcp.agent.navigation.NavCell;
 
 import java.util.Map;
@@ -18,9 +20,9 @@ record V2MoveArguments(NavCell goal, double arrivalRadius,
         if (!Double.isFinite(arrivalRadius) || arrivalRadius < 0.0D
                 || arrivalRadius > 16.0D
                 || !Double.isFinite(tolerance) || tolerance < 0.1D || tolerance > 0.49D
-                || maxTicks < 1 || maxTicks > 1_200
+                || maxTicks < 1 || maxTicks > AgentJobLimits.MAX_TICKS
                 || !Double.isFinite(maxDistance) || maxDistance < 1.0D
-                || maxDistance > 256.0D) {
+                || maxDistance > AgentJobLimits.MAX_DISTANCE) {
             throw new IllegalArgumentException("invalid move limits");
         }
     }
@@ -63,8 +65,8 @@ record V2MoveArguments(NavCell goal, double arrivalRadius,
     private static NavCell relativeGoal(NavCell origin, Map<String, Object> arguments) {
         String direction = RuntimeArguments.stringArgument(arguments, "direction");
         int distance = RuntimeArguments.intArgument(arguments, "distance");
-        if (distance < 1 || distance > 256) {
-            throw new IllegalArgumentException("distance must be in 1..256 blocks");
+        if (distance < 1 || distance > AgentJobLimits.MAX_DISTANCE) {
+            throw new IllegalArgumentException("distance must be in 1..4096 blocks");
         }
         int dx;
         int dy = 0;

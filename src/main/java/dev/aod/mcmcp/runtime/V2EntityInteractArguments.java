@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import java.util.Map;
 import java.util.Set;
 
@@ -21,8 +23,8 @@ record V2EntityInteractArguments(String ref, String type, String item, String re
     }
 
     V2EntityInteractArguments {
-        if (ref == null || !ref.matches("[A-Za-z0-9_-]{24}") || maxTicks < 1 || maxTicks > 1_200
-                || !Double.isFinite(maxDistance) || maxDistance < 0 || maxDistance > 256) {
+        if (ref == null || !ref.matches("[A-Za-z0-9_-]{24}") || maxTicks < 1 || maxTicks > AgentJobLimits.MAX_TICKS
+                || !Double.isFinite(maxDistance) || maxDistance < 0 || maxDistance > AgentJobLimits.MAX_DISTANCE) {
             throw new IllegalArgumentException("entity interaction requires a valid reference and bounded deadline");
         }
         for (String id : new String[] {type, item, resultItem}) {

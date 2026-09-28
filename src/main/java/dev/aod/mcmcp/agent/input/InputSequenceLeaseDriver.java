@@ -80,6 +80,9 @@ public final class InputSequenceLeaseDriver implements AutoCloseable {
         release();
     }
 
+    /** A bounded refill wait preserves the sequence cursor but owns no buttons. */
+    public void suspend() { release(); }
+
     private void release() {
         if (lease != null) {
             lease.close();

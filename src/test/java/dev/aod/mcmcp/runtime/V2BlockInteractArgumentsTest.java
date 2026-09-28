@@ -60,7 +60,7 @@ class V2BlockInteractArgumentsTest {
                 "minecraft:overworld")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> V2BlockInteractArguments.parse(Map.of(
                 "target", "block", "x", 0, "y", 64, "z", 0,
-                "max_ticks", 1201),
+                "max_ticks", 1_728_001),
                 "minecraft:overworld")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> V2BlockInteractArguments.parse(Map.of(
                 "target", "block", "x", 0, "y", 64, "z", 0,

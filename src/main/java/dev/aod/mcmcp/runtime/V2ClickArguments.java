@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import dev.aod.mcmcp.agent.input.FiniteInputSequence;
 import dev.aod.mcmcp.routine.BoundedInputLease;
 import net.minecraft.client.Minecraft;
@@ -32,8 +34,8 @@ record V2ClickArguments(FiniteInputSequence sequence, Target target) {
                 ? RuntimeArguments.intArgument(arguments, "hold_ticks") : 1;
         int gapTicks = arguments.containsKey("gap_ticks")
                 ? RuntimeArguments.intArgument(arguments, "gap_ticks") : 4;
-        if (count < 1 || count > 32 || holdTicks < 1 || holdTicks > 20
-                || gapTicks < 0 || gapTicks > 40 || count > 1 && gapTicks == 0) {
+        if (count < 1 || count > AgentJobLimits.MAX_TICKS || holdTicks < 1 || holdTicks > AgentJobLimits.MAX_TICKS
+                || gapTicks < 0 || gapTicks > AgentJobLimits.MAX_TICKS || count > 1 && gapTicks == 0) {
             throw new IllegalArgumentException("invalid click count or tick bounds");
         }
         var sequence = new FiniteInputSequence(List.of(new FiniteInputSequence.Step(

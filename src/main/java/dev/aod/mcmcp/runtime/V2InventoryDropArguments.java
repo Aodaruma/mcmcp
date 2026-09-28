@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import java.util.Map;
 import java.util.Set;
 
@@ -9,7 +11,7 @@ record V2InventoryDropArguments(String itemId, int count, Integer slot, int maxT
     V2InventoryDropArguments {
         V2InventoryRequest.requireItemId(itemId);
         if (count < 1 || count > 64 || slot != null && (slot < 0 || slot >= 36)
-                || maxTicks < 1 || maxTicks > 1_200) {
+                || maxTicks < 1 || maxTicks > AgentJobLimits.MAX_TICKS) {
             throw new IllegalArgumentException("invalid drop bounds");
         }
     }

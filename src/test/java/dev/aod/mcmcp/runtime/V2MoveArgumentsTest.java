@@ -53,7 +53,7 @@ class V2MoveArgumentsTest {
                 Map.of("x", 1, "y", 64), ORIGIN))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> V2MoveArguments.parse(
-                Map.of("x", 1, "y", 64, "z", 0, "max_distance", 257),
+                Map.of("x", 1, "y", 64, "z", 0, "max_distance", 4097),
                 ORIGIN))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> V2MoveArguments.parse(
@@ -75,7 +75,7 @@ class V2MoveArgumentsTest {
                 Map.of("direction", "forward", "distance", 2), ORIGIN))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> V2MoveArguments.parse(
-                Map.of("direction", "east", "distance", 257), ORIGIN))
+                Map.of("direction", "east", "distance", 4097), ORIGIN))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> V2MoveArguments.parse(
                 Map.of("direction", "east", "distance", 1),

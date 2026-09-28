@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import dev.aod.mcmcp.agent.navigation.NavCell;
 import dev.aod.mcmcp.routine.BlockStateFingerprint;
 import dev.aod.mcmcp.routine.BlockTarget;
@@ -21,8 +23,8 @@ record V2InventoryContainerArguments(boolean inspect, int x, int y, int z,
         if (inspect ? count != 0 || store : itemId == null || count < 1 || count > 896) {
             throw new IllegalArgumentException("invalid container operation or quantity");
         }
-        if (!Double.isFinite(maxDistance) || maxDistance < 0 || maxDistance > 256
-                || maxTicks < 1 || maxTicks > 1_200) {
+        if (!Double.isFinite(maxDistance) || maxDistance < 0 || maxDistance > AgentJobLimits.MAX_DISTANCE
+                || maxTicks < 1 || maxTicks > AgentJobLimits.MAX_TICKS) {
             throw new IllegalArgumentException("invalid container operation bounds");
         }
     }

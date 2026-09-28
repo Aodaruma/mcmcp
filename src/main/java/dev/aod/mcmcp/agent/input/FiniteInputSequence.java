@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.agent.input;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import dev.aod.mcmcp.routine.BoundedInputLease;
 
 import java.util.List;
@@ -9,7 +11,7 @@ import java.util.Set;
 /** Internal tick plan for v2 logical inputs; does not acquire or publish an input lease. */
 public final class FiniteInputSequence {
     public static final int MAX_STEPS = 64;
-    public static final int MAX_TICKS = 1_200;
+    public static final int MAX_TICKS = AgentJobLimits.MAX_TICKS;
 
     private final List<Step> steps;
     private final int totalTicks;

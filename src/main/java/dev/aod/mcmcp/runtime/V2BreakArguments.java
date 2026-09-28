@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import dev.aod.mcmcp.agent.action.BlockWorkRegion;
 import dev.aod.mcmcp.agent.navigation.NavCell;
 
@@ -19,9 +21,9 @@ record V2BreakArguments(BlockWorkRegion region, Set<String> includeBlocks,
         includeBlocks = Set.copyOf(includeBlocks);
         excludeBlocks = Set.copyOf(excludeBlocks);
         if (maxBlocks < 1 || maxBlocks > region.size()
-                || maxTicks < 1 || maxTicks > 1_200
+                || maxTicks < 1 || maxTicks > AgentJobLimits.MAX_TICKS
                 || !Double.isFinite(maxDistance) || maxDistance < 0.0D
-                || maxDistance > 256.0D) {
+                || maxDistance > AgentJobLimits.MAX_DISTANCE) {
             throw new IllegalArgumentException("invalid break bounds");
         }
     }

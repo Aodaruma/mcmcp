@@ -1,8 +1,9 @@
 package dev.aod.mcmcp.runtime;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import dev.aod.mcmcp.agent.action.AgentJobStore;
 
-import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -10,7 +11,6 @@ import java.util.function.BooleanSupplier;
 
 /** One delivery-gated inventory or interaction job, retaining partial effects through cancellation. */
 final class V2OperationJobExecution implements V2JobExecution {
-    private static final long MAX_WALL_NANOS = Duration.ofMinutes(2).toNanos();
 
     private final AgentJobStore jobs;
     private final UUID actionId;
@@ -61,7 +61,7 @@ final class V2OperationJobExecution implements V2JobExecution {
             startedNanos = nowNanos;
             job = jobs.get(actionId);
         }
-        if (nowNanos - startedNanos >= MAX_WALL_NANOS
+        if (nowNanos - startedNanos >= AgentJobLimits.wallNanos(job.maxOperations())
                 || job.completedOperations() >= job.maxOperations()) {
             retainTerminal(AgentJobStore.State.FAILED, "duration_limit");
             return publishAfterRelease();

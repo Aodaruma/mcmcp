@@ -1,9 +1,10 @@
 package dev.aod.mcmcp.agent.navigation;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import dev.aod.mcmcp.agent.action.AgentJobStore;
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 
-import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -12,7 +13,6 @@ import java.util.function.BooleanSupplier;
 /** One coordinate move job: plan a known segment, execute it, then observe and plan again. */
 public final class CoordinateMoveJobExecution {
     private static final int MAX_EVIDENCE_WAIT_TICKS = 80;
-    private static final long MAX_WALL_NANOS = Duration.ofMinutes(2).toNanos();
 
     private final AgentJobStore jobs;
     private final UUID actionId;
@@ -61,7 +61,7 @@ public final class CoordinateMoveJobExecution {
                 || arrivalRadius > 16.0D
                 || !Double.isFinite(tolerance) || tolerance < 0.1D
                 || tolerance > 0.49D || !Double.isFinite(maxDistance)
-                || maxDistance < 1.0D || maxDistance > 256.0D) {
+                || maxDistance < 1.0D || maxDistance > AgentJobLimits.MAX_DISTANCE) {
             throw new IllegalArgumentException("invalid move bounds");
         }
         this.tolerance = tolerance;
@@ -107,7 +107,7 @@ public final class CoordinateMoveJobExecution {
             startedClientTick = clientTick;
             job = jobs.get(actionId);
         }
-        if (nowNanos - startedNanos >= MAX_WALL_NANOS) {
+        if (nowNanos - startedNanos >= AgentJobLimits.wallNanos(job.maxOperations())) {
             retainTerminal(AgentJobStore.State.FAILED, "duration_limit");
             return publishAfterRelease();
         }

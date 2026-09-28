@@ -279,6 +279,22 @@ class V2BlockJobExecutionTest {
                 new NavCell("minecraft:overworld", 11, 64, 20));
     }
 
+    @Test
+    void explicitLongBlockWorkCanConfirmPastLegacyWallLimit() {
+        var store=new AgentJobStore();var id=store.reserve(AgentJobStore.Kind.BREAK_BLOCK,SESSION,6000,100);
+        var request=V2BreakArguments.parse(Map.of("x",10,"y",64,"z",20,"max_ticks",6000),"minecraft:overworld");
+        var driver=new FakeDriver();
+        driver.begins.add(V2BlockJobExecution.BeginResult.STARTED);
+        driver.steps.add(V2BlockJobExecution.StepResult.RUNNING);
+        driver.steps.add(V2BlockJobExecution.StepResult.CONFIRMED);
+        var job=new V2BlockJobExecution<>(store,id,SESSION,AgentJobStore.Kind.BREAK_BLOCK,request,driver,()->true);
+        store.confirm(id,1);job.tick(SESSION,1,1,true,()->true);
+        long later=java.time.Duration.ofSeconds(121).toNanos();
+        job.tick(SESSION,2,later,true,()->true);
+        assertThat(job.tick(SESSION,3,later+1,true,()->true).state()).isEqualTo(AgentJobStore.State.SUCCEEDED);
+        assertThat(store.get(id).completedBlocks()).isEqualTo(1);
+    }
+
     private static final class FakeDriver
             implements V2BlockJobExecution.Driver<V2BreakArguments> {
         final ArrayDeque<V2BlockJobExecution.BeginResult> begins = new ArrayDeque<>();

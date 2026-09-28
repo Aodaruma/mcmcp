@@ -36,7 +36,7 @@ class V2InventoryStorageArgumentsTest {
         var input = new LinkedHashMap<String, Object>(Map.of("operation", "transfer", "target", "storage",
                 "storage_slot", 0, "direction", "take", "count", 3, "item", "example:ore"));
         for (var invalid : Map.<String, Object>of("storage_slot", 41, "direction", "both", "count", 0,
-                "max_ticks", 1201, "storage_item", "bad", "operation_ref", REFERENCE, "x", 0).entrySet()) {
+                "max_ticks", 1_728_001, "storage_item", "bad", "operation_ref", REFERENCE, "x", 0).entrySet()) {
             var modified = new LinkedHashMap<>(input);
             modified.put(invalid.getKey(), invalid.getValue());
             assertThatThrownBy(() -> V2InventoryRequest.parse(modified)).isInstanceOf(IllegalArgumentException.class);

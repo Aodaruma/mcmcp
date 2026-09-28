@@ -222,6 +222,54 @@ class InputSequenceJobExecutionTest {
         assertThat(store.get(id).result()).containsEntry("stop_condition_met", true);
     }
 
+    @Test
+    void longInputCrossesOldTickCeilingAndReleasesOnCompletion() {
+        var jobs=new AgentJobStore(); var session=UUID.randomUUID();
+        var id=jobs.reserve(INPUT_SEQUENCE,session,1500,100);
+        var control=new RecordingControl();
+        var execution=execution(jobs,id,session,control,()->true,1500);
+        jobs.confirm(id,1);
+        for(int tick=1;tick<=1500;tick++)
+            assertThat(execution.tick(session,tick,tick*50_000_000L,true,false).state()).isEqualTo(RUNNING);
+        assertThat(execution.tick(session,1501,75_050_000_000L,true,false).state()).isEqualTo(SUCCEEDED);
+        assertThat(jobs.get(id).completedOperations()).isEqualTo(1500);
+        assertThat(control.events).hasSize(1501);
+        assertThat(control.events.subList(0,1500)).containsOnly("publish");
+        assertThat(control.events.getLast()).isEqualTo("release");
+    }
+
+    @Test
+    void stoppedTicksCannotRenewExpired24HourInputAndCleanupRemainsRequired() {
+        var jobs=new AgentJobStore();var session=UUID.randomUUID();
+        var id=jobs.reserve(INPUT_SEQUENCE,session,1728000,100);
+        var control=new RecordingControl(); var released=new AtomicBoolean(false);
+        var execution=execution(jobs,id,session,control,released::get,1728000);
+        jobs.confirm(id,1); execution.tick(session,1,1,true,false);
+        long end=Duration.ofHours(24).toNanos()+1;
+        assertThat(execution.tick(session,2,end,true,false).state()).isEqualTo(RUNNING);
+        assertThat(control.events).containsExactly("publish","release");
+        released.set(true);
+        assertThat(execution.tick(session,3,end+1,true,false).failure()).isEqualTo("duration_limit");
+        assertThat(jobs.get(id).completedOperations()).isEqualTo(1);
+    }
+
+    @Test
+    void refillReleasesBeforeWaitingAndCancelWinsPendingDurationSuccess() {
+        var jobs=new AgentJobStore();var session=UUID.randomUUID();
+        var id=jobs.reserve(INPUT_SEQUENCE,session,20,100);
+        var control=new RecordingControl();var released=new AtomicBoolean(false);
+        var execution=execution(jobs,id,session,control,released::get,20);
+        jobs.confirm(id,1);execution.tick(session,1,1,true,false);
+        assertThat(execution.waitForMaterial().result()).containsEntry("phase","waiting_for_item");
+        assertThat(control.events).containsExactly("publish","release");
+        execution.tick(session,2,2,true,false);
+        assertThat(control.events).containsExactly("publish","release","publish");
+        assertThat(execution.durationCompleted().state()).isEqualTo(RUNNING);
+        released.set(true);
+        assertThat(execution.cancel().state()).isEqualTo(CANCELLED);
+        assertThat(control.events).containsExactly("publish","release","publish","release");
+    }
+
     private static InputSequenceJobExecution execution(AgentJobStore store, UUID id,
                                                         UUID session, RecordingControl control,
                                                         java.util.function.BooleanSupplier release,

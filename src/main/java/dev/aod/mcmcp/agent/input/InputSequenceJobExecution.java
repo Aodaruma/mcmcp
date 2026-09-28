@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.agent.input;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import dev.aod.mcmcp.agent.action.AgentJobStore;
 
 import java.util.Objects;
@@ -17,6 +19,7 @@ public final class InputSequenceJobExecution {
     private final Consumer<FiniteInputSequence.Frame> afterInputPublished;
     private AgentJobStore.State terminalIntent;
     private String terminalFailure;
+    private long startedNanos = Long.MIN_VALUE;
 
     public InputSequenceJobExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
                                      InputSequenceLeaseDriver driver,
@@ -78,6 +81,12 @@ public final class InputSequenceJobExecution {
             retainTerminal(AgentJobStore.State.FAILED, "world_session_changed");
             return publishAfterRelease();
         }
+        if (startedNanos == Long.MIN_VALUE) startedNanos = nowNanos;
+        if (nowNanos - startedNanos >= AgentJobLimits.wallNanos(job.maxOperations())
+                || jobs.expired(actionId)) {
+            retainTerminal(AgentJobStore.State.FAILED, "duration_limit");
+            return publishAfterRelease();
+        }
         if (stopConditionMet && safeToFinalize) {
             if (job.state() == AgentJobStore.State.QUEUED) jobs.start(actionId, currentWorldSessionId);
             jobs.recordResult(actionId, java.util.Map.of("stop_condition_met", true));
@@ -108,6 +117,7 @@ public final class InputSequenceJobExecution {
             var frame = driver.tick(clientTick, nowNanos, stopConditionMet, false);
             afterInputPublished.accept(frame);
             if (frame.state() == FiniteInputSequence.State.RUNNING) {
+                jobs.recordResult(actionId, java.util.Map.of("phase", "holding"));
                 jobs.recordOperation(actionId);
             } else if (frame.state() == FiniteInputSequence.State.COMPLETED) {
                 retainTerminal(AgentJobStore.State.SUCCEEDED, null);
@@ -148,6 +158,30 @@ public final class InputSequenceJobExecution {
             terminalIntent = AgentJobStore.State.CANCELLED;
             terminalFailure = "client_request";
         }
+        return publishAfterRelease();
+    }
+
+    public AgentJobStore.Snapshot waitForMaterial() {
+        var job = jobs.get(actionId);
+        if (job.state().terminal()) return job;
+        if (job.cancelRequested()) return cancel();
+        if (terminalIntent != null) return publishAfterRelease();
+        if (job.state() == AgentJobStore.State.UNCONFIRMED) return job;
+        if (job.state() == AgentJobStore.State.QUEUED) jobs.start(actionId, worldSessionId);
+        driver.suspend();
+        jobs.recordResult(actionId, java.util.Map.of("phase", "waiting_for_item"));
+        return jobs.get(actionId);
+    }
+
+    public AgentJobStore.Snapshot durationCompleted() {
+        var job = jobs.get(actionId);
+        if (job.state().terminal()) return job;
+        if (job.cancelRequested()) return cancel();
+        if (job.state() == AgentJobStore.State.QUEUED) return stop("duration_limit");
+        if (job.state() == AgentJobStore.State.UNCONFIRMED) return job;
+        if (terminalIntent == null) jobs.recordResult(actionId,
+                java.util.Map.of("stop_reason", "duration_elapsed"));
+        retainTerminal(AgentJobStore.State.SUCCEEDED, null);
         return publishAfterRelease();
     }
 

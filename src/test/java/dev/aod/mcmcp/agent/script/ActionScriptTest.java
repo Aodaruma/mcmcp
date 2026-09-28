@@ -288,7 +288,7 @@ class ActionScriptTest {
         assertThat(calls.status()).isEqualTo(Status.LIMIT);
         assertThat(calls.calls()).isEqualTo(3);
         assertThat(sent).hasSize(3);
-        assertThatThrownBy(() -> new Budget(100_001, 0, 0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new Budget(100_000_001, 0, 0)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

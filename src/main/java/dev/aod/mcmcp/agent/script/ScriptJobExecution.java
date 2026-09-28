@@ -30,6 +30,7 @@ public final class ScriptJobExecution implements Runnable {
     private final CommandRunner runner;
     private final BooleanSupplier stillSafe;
     private final long deadlineNanos;
+    private final java.util.function.LongSupplier clock;
     private volatile ActionScript.Result result;
     private volatile String unexpectedFailure;
 
@@ -38,6 +39,15 @@ public final class ScriptJobExecution implements Runnable {
                               int workBudget, int iterationBudget, int callBudget,
                               CommandRunner runner, BooleanSupplier stillSafe,
                               long deadlineNanos) {
+        this(jobs, actionId, worldSessionId, source, commands, workBudget, iterationBudget,
+                callBudget, runner, stillSafe, deadlineNanos, System::nanoTime);
+    }
+
+    ScriptJobExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
+                              String source, Set<String> commands,
+                              int workBudget, int iterationBudget, int callBudget,
+                              CommandRunner runner, BooleanSupplier stillSafe,
+                              long deadlineNanos, java.util.function.LongSupplier clock) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.actionId = Objects.requireNonNull(actionId, "actionId");
         this.worldSessionId = Objects.requireNonNull(worldSessionId, "worldSessionId");
@@ -48,6 +58,7 @@ public final class ScriptJobExecution implements Runnable {
         this.runner = Objects.requireNonNull(runner, "runner");
         this.stillSafe = Objects.requireNonNull(stillSafe, "stillSafe");
         this.deadlineNanos = deadlineNanos;
+        this.clock = Objects.requireNonNull(clock);
         var job = jobs.get(actionId);
         if (job.kind() != AgentJobStore.Kind.SCRIPT
                 || !job.worldSessionId().equals(worldSessionId)
@@ -107,7 +118,7 @@ public final class ScriptJobExecution implements Runnable {
             terminal = AgentJobStore.State.CANCELLED;
             failure = "client_request";
         } else if (failure == null) {
-            if (!stillSafe.getAsBoolean()) {
+            if (expired() || !stillSafe.getAsBoolean()) {
                 failure = expired() ? "script_timeout" : "safety_interrupted";
             } else {
                 terminal = switch (result.status()) {
@@ -149,6 +160,6 @@ public final class ScriptJobExecution implements Runnable {
     }
 
     private boolean expired() {
-        return System.nanoTime() - deadlineNanos >= 0L;
+        return clock.getAsLong() - deadlineNanos >= 0L;
     }
 }

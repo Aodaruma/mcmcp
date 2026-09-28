@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import dev.aod.mcmcp.agent.navigation.NavCell;
 import dev.aod.mcmcp.routine.BlockTarget;
 import dev.aod.mcmcp.routine.PhaseFiveBounds;
@@ -13,7 +15,7 @@ import java.util.Set;
 record V2InventoryStorageArguments(boolean inspect, int storageSlot, String storageItem,
         String item, boolean store, int count, int maxTicks) implements V2InventoryRequest {
     V2InventoryStorageArguments {
-        if (storageSlot < 0 || storageSlot > 40 || maxTicks < 1 || maxTicks > 1200
+        if (storageSlot < 0 || storageSlot > 40 || maxTicks < 1 || maxTicks > AgentJobLimits.MAX_TICKS
                 || (inspect ? count != 0 || store : item == null || count < 1 || count > 896)) {
             throw new IllegalArgumentException("invalid storage operation or bounds");
         }

@@ -1,10 +1,11 @@
 package dev.aod.mcmcp.runtime;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import dev.aod.mcmcp.agent.action.AgentJobStore;
 import dev.aod.mcmcp.agent.navigation.NavCell;
 import dev.aod.mcmcp.routine.BlockStateFingerprint;
 
-import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
@@ -15,7 +16,6 @@ import java.util.function.BooleanSupplier;
 /** One delivery-gated block job over a bounded box, with one input owner. */
 final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobExecution {
     private static final int MAX_OBSERVATION_WAIT_TICKS = 80;
-    private static final long MAX_WALL_NANOS = Duration.ofMinutes(2).toNanos();
     private static final int MAX_RETAINED_CONFIRMED_CELLS = 128;
 
     private final AgentJobStore jobs;
@@ -85,7 +85,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
             startedNanos = nowNanos;
             job = jobs.get(actionId);
         }
-        if (nowNanos - startedNanos >= MAX_WALL_NANOS
+        if (nowNanos - startedNanos >= AgentJobLimits.wallNanos(job.maxOperations())
                 || job.completedOperations() >= request.maxTicks()) {
             retainTerminal(AgentJobStore.State.FAILED, "duration_limit");
             return publishAfterRelease();

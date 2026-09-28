@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.agent.script;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import java.util.Collections;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -18,8 +20,8 @@ final class ActionScript {
 
     record Budget(int work, int iterations, int calls) {
         Budget {
-            if (work < 0 || work > 100_000 || iterations < 0 || iterations > 10_000
-                    || calls < 0 || calls > 1_000) throw new IllegalArgumentException("Invalid budget");
+            if (work < 0 || work > AgentJobLimits.MAX_SCRIPT_WORK || iterations < 0 || iterations > AgentJobLimits.MAX_SCRIPT_ITERATIONS
+                    || calls < 0 || calls > AgentJobLimits.MAX_SCRIPT_CALLS) throw new IllegalArgumentException("Invalid budget");
         }
     }
 

@@ -72,7 +72,7 @@ class FiniteInputSequenceTest {
         assertThatThrownBy(() -> new FiniteInputSequence.Step(MOVE, 0, 0, 1))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new FiniteInputSequence(List.of(
-                new FiniteInputSequence.Step(MOVE, 600, 1, 2))))
+                new FiniteInputSequence.Step(MOVE, 864_000, 1, 2))))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

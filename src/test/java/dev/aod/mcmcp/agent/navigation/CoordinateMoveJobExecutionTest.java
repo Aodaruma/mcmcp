@@ -302,6 +302,20 @@ class CoordinateMoveJobExecutionTest {
                 store, id, SESSION, goal, 0.25D, 256.0D, driver, release);
     }
 
+    @Test
+    void explicitLongMoveSurvivesLegacyWallLimitAndStillRequiresArrivalProof() {
+        var store=new AgentJobStore();var id=store.reserve(MOVE,SESSION,6000,100);
+        var driver=new FakeDriver(RUNNING_STEP,SUCCESS_STEP);
+        var execution=execution(store,id,cell(1),driver,()->true);
+        var map=map(edge(cell(0),cell(1))).snapshot().orElseThrow();
+        store.confirm(id,1);
+        assertThat(execution.tick(map,cell(0),SESSION,0,1,1,true,0,()->true).state()).isEqualTo(RUNNING);
+        long later=java.time.Duration.ofSeconds(121).toNanos();
+        assertThat(execution.tick(map,cell(1),SESSION,0,2,later,true,1,()->true).state()).isEqualTo(RUNNING);
+        assertThat(execution.tick(map,cell(1),SESSION,0,3,later+1,true,1,()->true).state()).isEqualTo(SUCCEEDED);
+        assertThat(driver.routes).hasSize(1);
+    }
+
     private static KnownTraversabilityMap map(TraversabilityEdge... edges) {
         var map = new KnownTraversabilityMap();
         map.startSession(SESSION, "overworld", 0);

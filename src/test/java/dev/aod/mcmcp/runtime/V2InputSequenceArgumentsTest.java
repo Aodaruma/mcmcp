@@ -58,7 +58,7 @@ class V2InputSequenceArgumentsTest {
     @Test
     void rejectsUnboundedDurationAndExtraKeys() {
         assertThatThrownBy(() -> V2InputSequenceArguments.parse(Map.of("steps", List.of(
-                Map.of("inputs", List.of("use"), "hold_ticks", 1200, "repeat", 2)))))
+                Map.of("inputs", List.of("use"), "hold_ticks", 1_728_000, "repeat", 2)))))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> V2InputSequenceArguments.parse(Map.of("steps", List.of(
                 Map.of("inputs", List.of("use"), "hold_ticks", 1,

@@ -1,8 +1,9 @@
 package dev.aod.mcmcp.runtime;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import dev.aod.mcmcp.agent.input.FiniteInputSequence;
 import dev.aod.mcmcp.routine.BoundedInputLease;
-import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -17,9 +18,19 @@ final class V2InputSequenceArguments {
 
     static Request parse(Map<String, Object> arguments) {
         RuntimeArguments.requireAllowedKeys(arguments, "agent_input_sequence",
-                Set.of("steps", "stop_when"));
-        var rawSteps = RuntimeArguments.objectListArgument(
-                arguments, "steps", 1, FiniteInputSequence.MAX_STEPS);
+                Set.of("steps", "stop_when", "inputs", "duration_seconds", "max_distance",
+                        "item", "refill_wait_seconds"));
+        Integer seconds = arguments.containsKey("duration_seconds")
+                ? RuntimeArguments.intArgument(arguments, "duration_seconds") : null;
+        boolean timed = seconds != null;
+        if (timed && (seconds < 1 || seconds > AgentJobLimits.MAX_SECONDS)
+                || timed == arguments.containsKey("steps")
+                || timed != arguments.containsKey("inputs")) {
+            throw new IllegalArgumentException("specify steps or inputs with duration_seconds in 1..86400");
+        }
+        List<Map<String, Object>> rawSteps = timed
+                ? List.of(Map.of("inputs", arguments.get("inputs"), "hold_ticks", seconds * 20))
+                : RuntimeArguments.objectListArgument(arguments, "steps", 1, FiniteInputSequence.MAX_STEPS);
         var steps = new ArrayList<FiniteInputSequence.Step>(rawSteps.size());
         for (var step : rawSteps) {
             RuntimeArguments.requireAllowedKeys(step, "step",
@@ -64,8 +75,27 @@ final class V2InputSequenceArguments {
         if (arguments.containsKey("stop_when")) {
             stopWhen = V2StopCondition.parse(RuntimeArguments.objectArgument(arguments, "stop_when"));
         }
-        return new Request(new FiniteInputSequence(steps), stopWhen);
+        double maxDistance = arguments.containsKey("max_distance")
+                ? RuntimeArguments.doubleArgument(arguments, "max_distance") : 48.0;
+        if (!Double.isFinite(maxDistance) || maxDistance < 0
+                || maxDistance > AgentJobLimits.MAX_DISTANCE) {
+            throw new IllegalArgumentException("max_distance must be in 0..4096");
+        }
+        String item = arguments.containsKey("item") ? RuntimeArguments.stringArgument(arguments, "item") : null;
+        int refill = arguments.containsKey("refill_wait_seconds")
+                ? RuntimeArguments.intArgument(arguments, "refill_wait_seconds") : 30;
+        if (refill < 1 || refill > 300 || item == null && arguments.containsKey("refill_wait_seconds")) {
+            throw new IllegalArgumentException("refill wait requires item and 1..300 seconds");
+        }
+        if (item != null) {
+            V2InventoryRequest.requireItemId(item);
+            if (!timed || steps.size() != 1 || !steps.getFirst().inputs().equals(Set.of(BoundedInputLease.Input.USE))) {
+                throw new IllegalArgumentException("material guard requires timed use only");
+            }
+        }
+        return new Request(new FiniteInputSequence(steps), stopWhen, seconds, maxDistance, item, refill);
     }
 
-    record Request(FiniteInputSequence sequence, V2StopCondition stopWhen) { }
+    record Request(FiniteInputSequence sequence, V2StopCondition stopWhen,
+                   Integer durationSeconds, double maxDistance, String item, int refillWaitSeconds) { }
 }

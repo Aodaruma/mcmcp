@@ -32,8 +32,8 @@ class V2ItemUseArgumentsTest {
     void rejectsUnknownFieldsAndUnboundedUse() {
         for (var args : java.util.List.of(
                 Map.<String, Object>of("target", "item", "hold_ticks", 0),
-                Map.<String, Object>of("target", "item", "hold_ticks", 1001),
-                Map.<String, Object>of("target", "item", "max_ticks", 1201),
+                Map.<String, Object>of("target", "item", "hold_ticks", 1_728_000),
+                Map.<String, Object>of("target", "item", "max_ticks", 1_728_001),
                 Map.<String, Object>of("target", "item", "item", "unqualified"),
                 Map.<String, Object>of("target", "item", "raw_packet", "use"))) {
             assertThatThrownBy(() -> V2ItemUseArguments.parse(args))

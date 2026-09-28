@@ -35,8 +35,8 @@ class V2EntityInteractArgumentsTest {
                 Map.<String, Object>of("target", "entity", "entity_ref", "bad"),
                 Map.<String, Object>of("target", "entity", "entity_ref", REF, "entity_type", "unqualified"),
                 Map.<String, Object>of("target", "entity", "entity_ref", REF, "max_ticks", 0),
-                Map.<String, Object>of("target", "entity", "entity_ref", REF, "max_ticks", 1201),
-                Map.<String, Object>of("target", "entity", "entity_ref", REF, "max_distance", 257),
+                Map.<String, Object>of("target", "entity", "entity_ref", REF, "max_ticks", 1_728_001),
+                Map.<String, Object>of("target", "entity", "entity_ref", REF, "max_distance", 4097),
                 Map.<String, Object>of("target", "entity", "entity_ref", REF, "advance", "true"),
                 Map.<String, Object>of("target", "entity", "entity_ref", REF, "x", 3),
                 Map.<String, Object>of("target", "item", "entity_ref", REF))) {

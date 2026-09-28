@@ -18,6 +18,6 @@ class V2ScriptArgumentsTest {
         assertThatThrownBy(() -> V2ScriptArguments.parse(Map.of("source", "move();",
                 "max_calls", 0))).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> V2ScriptArguments.parse(Map.of("source", "move();",
-                "max_duration_ticks", 72_001))).isInstanceOf(IllegalArgumentException.class);
+                "max_duration_ticks", 1_728_001))).isInstanceOf(IllegalArgumentException.class);
     }
 }
