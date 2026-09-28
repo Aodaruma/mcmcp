@@ -5,8 +5,11 @@
   "utc": "2026-09-28T17:47:41.2632348Z",
   "other_mods_unchanged": true,
   "installed_sha256": "03c7943f7fcd78f06021db2224a5df5b47fd77a2bc98bd99c32c5a930fadece1",
-  "installed_verified": true,
+  "installed_verified": false,
   "normal_world_launched": false,
   "previous_sha256": "ca47984f9bdca53bcf32ccda161c98afd12962d208ba4bf3fbad2aa0dab89d0e",
-  "profile": "くらふとぶ！-v01.2"
+  "profile": "くらふとぶ！-v01.2",
+  "visible_copy_verified": true,
+  "verification_scope": "codex_virtualized_view_only",
+  "correction": "The original installed_verified:true assertion is withdrawn. These hashes and backup path describe the redirected Codex view, not the native Prism profile. See installation-correction.json."
 }

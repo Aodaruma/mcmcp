@@ -6,6 +6,10 @@
 
 実ゲームの主要成功・取消・危険停止は[隔離smoke test](../tools/eval/fixtures/public-api-v2/README.md)で検証する。runner／fixtureの単体検査と実ゲーム合格を区別し、対象JAR・action ID・readback・復旧を実験記録へ残す。
 
+## 長時間・多回数実行の追加（2026-09-29）
+
+明示した時間・反復・script予算の上限を全行動で見直した。[上限一覧・使用例](PUBLIC_API_V2_LONG_EXECUTION_20260929.md)を参照。共通jobと入力消費側で単調な実時間期限を検査し、子jobは親scriptの総期限を共有する。既定値、短いlease、局所安全・確認待ちと解放後のterminal公開は維持する。秒指定inputは全論理入力で使用でき、材料を明示したuseだけに静止・補充待ちguardを追加した。新しい上限の実機確認と通常profile導入は未実施。
+
 ## 目的と責任
 
 LLMは行き先、作業範囲、条件、反復の意図を伝える。MODは必要な局所観測、経路、道具選択、照準、ゲーム入力、server応答の確認を引き受ける。利用者が未観測の座標や範囲を指定してよいが、MODはその場所の隠れたworld状態を先読みしない。現在地から進み、読み込まれて見えるようになった部分を判断して続行する。
@@ -47,7 +51,7 @@ Draft PRで公開した範囲は、moveの座標／方向、Vanillaのbreak/plac
 
 `AgentJobStore`はjob固有の小さな`result`もterminal後と直前jobまで保持する。`agent_inventory({operation:"inspect"})`は配送確認後のclient tickでプレイヤーの全所持枠を読み、非空slotの番号・item ID・個数、空枠数、選択中のhotbar枠を返す。任意のitem IDで絞り込め、MOD itemも同じ形式で扱う。`operation:"swap"`はitem ID、main inventoryのsource slot（9～35）、hotbar slot（0～8）を指定し、両slotのserver payloadで交換を確認する。hotbar枠が空でなくても交換するため、数量指定の移送とは区別する。`operation:"drop"`はitem IDと1～64個の数量を取り、同じIDのstackが複数あればslot番号で特定させる。main inventoryのstackは一度だけ選択中のhotbar枠へSWAPし、両slotのサーバー更新を確認してから投棄する。所持品menuの通常THROWをclient予測なしで送り、各入力の後は選択枠のサーバーpayloadとローカル所持品が要求どおり変化するまで次を送らない。不確実な送信・応答切れでは再送せず、確定数と未確定数を結果に残す。SWAP後の配置は元に戻さず、結果でその可能性を示す。これらのプレイヤー所持品操作はmenuを開かない。
 
-収納の確認は`agent_inventory({operation:"inspect",target:"container",x:4,y:65,z:8})`、取り出し／収納は`{operation:"transfer",target:"container",x:4,y:65,z:8,direction:"take",item:"minecraft:stone",count:13}`（収納は`direction:"store"`）で行う。`block`条件とinspectの`item`絞込みは任意。未観測座標も受け付け、既定の`advance:true`で局所観測した経路を通り、操作距離内の見える面から開ける。総移動距離は既定64 block・最大256、総時間は既定／最大1200 tick。`advance:false`で移動を禁止できる。現段階ではチェスト、樽、8種の銅チェストに対応する。内部の所有menu・slot確認処理を共有し、transferは1～896個の指定数を移し、再開封して照合する。取消・失敗時も`confirmed_count`、`unconfirmed`、確認済み／不確実な数量変化を残し、menuと入力を解放するまでterminalにしない。inspectは確認済みの内容をitem ID別に集約し、絞込み指定時だけ該当IDを返す。公開catalogとscriptの`inventory(...)`へ接続済み。チェストのinspect／take3／store2は実機smokeで確認したが、MOD収納の汎用接続、他の収納種類・数量・取消の実機確認は残る。
+収納の確認は`agent_inventory({operation:"inspect",target:"container",x:4,y:65,z:8})`、取り出し／収納は`{operation:"transfer",target:"container",x:4,y:65,z:8,direction:"take",item:"minecraft:stone",count:13}`（収納は`direction:"store"`）で行う。`block`条件とinspectの`item`絞込みは任意。未観測座標も受け付け、既定の`advance:true`で局所観測した経路を通り、操作距離内の見える面から開ける。総移動距離は既定64 block・最大4,096、総時間は既定1,200・最大1,728,000 tick。実時間の共通期限も適用する。`advance:false`で移動を禁止できる。現段階ではチェスト、樽、8種の銅チェストに対応する。内部の所有menu・slot確認処理を共有し、transferは1～896個の指定数を移し、再開封して照合する。取消・失敗時も`confirmed_count`、`unconfirmed`、確認済み／不確実な数量変化を残し、menuと入力を解放するまでterminalにしない。inspectは確認済みの内容をitem ID別に集約し、絞込み指定時だけ該当IDを返す。公開catalogとscriptの`inventory(...)`へ接続済み。チェストのinspect／take3／store2は実機smokeで確認したが、MOD収納の汎用接続、他の収納種類・数量・取消の実機確認は残る。
 
 収納transferは現在、既存処理が検証できる通常item・slotに限り、最大14個のsource stackと14回のPICKUP入力で事前計画できる数量を扱う。`count`の上限内でもこの条件や容量に収まらない場合は入力前に拒否する。この制限を任意MOD収納への汎用対応が完了したものとは扱わない。
 
@@ -59,11 +63,11 @@ move＋breakを利用側で毎ブロック交互に呼ぶ必要はない。現�
 
 破壊の`expected_drop`や完全な`expected_state`は必須にしない。道具は採掘可能性、速度、耐久、Silk Touch/Fortune等の条件を見て選び、適切なものがなければ他の道具または素手へfallbackできる。ただし指定した成果物が得られない可能性は結果に表す。位置、上限、block条件、除外条件を優先して、誤って別blockまで壊さない。設置ではitemと座標を基本にし、向き等のstate指定は任意にする。
 
-`agent_interact({target:"item"})`は選択中の手持ちitemを一度使用する。`item`でVanilla／MODのitem IDを指定すると所持品から選び、main inventoryにしかない場合は選択hotbar枠へ一度SWAPしてserver確認後に使う。`hold_ticks`は既定40・最大1000、`max_ticks`は既定max(200, hold_ticks+80)・最大1200。通常のuseItemと有限のUSE入力を使用し、終了・取消で長押しを解放し、元の選択枠へ戻す。SWAPした所持品配置そのものは戻さず、結果に記録する。単発使用では、使い終わったitemを自動で再使用しない。取消も通常の使用キー解放を行うため、弓など解放時に発動するitemの効果を巻き戻すものではない。
+`agent_interact({target:"item"})`は選択中の手持ちitemを一度使用する。`item`でVanilla／MODのitem IDを指定すると所持品から選び、main inventoryにしかない場合は選択hotbar枠へ一度SWAPしてserver確認後に使う。`hold_ticks`は既定40・最大1,727,999、`max_ticks`は既定min(1,728,000, max(200, hold_ticks+80))・最大1,728,000。max_ticksはhold_ticksより大きく指定する。通常のuseItemと有限のUSE入力を使用し、終了・取消で長押しを解放し、元の選択枠へ戻す。SWAPした所持品配置そのものは戻さず、結果に記録する。単発使用では、使い終わったitemを自動で再使用しない。取消も通常の使用キー解放を行うため、弓など解放時に発動するitemの効果を巻き戻すものではない。
 
 item使用の既定完了は、クライアント側で使用を受け付けたこと（または確認済み所持品変化）、長押し終了、該当prediction sequenceのserver ACKを条件とする。これはitem固有のworld効果の保証ではない。結果の`server_processed`と、selected slotの新しいserver payloadから確認できた`effect_confirmed`を分ける。`result_item`を任意指定した場合は、そのitem IDになった新しいserver payloadとローカル手持ちの一致も待つ。確認できないまま期限に達した操作を再送しない。item使用でmenuが開く場合は画面境界で停止する。座標menuを操作する場合は専用の`target:"menu"`を使う。長押し保持hookはmilkの飲用完了（server ACKとbucketへの更新）で実機確認した。shield使用中のAPI取消・Esc・UI OFF・次元移動と、手動再許可後の新規使用も実機確認した。他item固有の効果や全停止経路の網羅は残る。
 
-`agent_interact({target:"entity",entity_ref:"観測の参照",item:"minecraft:bucket",result_item:"minecraft:milk_bucket"})`は観測済みentityへ既知の安全経路で接近し、reach内で照準を合わせ、MAIN_HANDで通常のentity操作を一度だけ行う。`advance`は既定true、falseで接近禁止。`max_distance`は既定64・最大256、`max_ticks`は既定／最大1200。`entity_type`は任意の種類条件。`item`省略時は現在の手持ち、`minecraft:air`なら空枠を選ぶ。itemと同じ持ち替え／server確認処理を共有し、main inventoryからの交換後は配置を元に戻さない。entityの種類やitemにVanilla専用allowlistを設けず、登録MODの通常操作へ渡す。別entityへの置換、遮蔽、接近不能、使用直前のreach外、画面・session変更では停止する。
+`agent_interact({target:"entity",entity_ref:"観測の参照",item:"minecraft:bucket",result_item:"minecraft:milk_bucket"})`は観測済みentityへ既知の安全経路で接近し、reach内で照準を合わせ、MAIN_HANDで通常のentity操作を一度だけ行う。`advance`は既定true、falseで接近禁止。`max_distance`は既定64・最大4,096、`max_ticks`は既定1,200・最大1,728,000。`entity_type`は任意の種類条件。`item`省略時は現在の手持ち、`minecraft:air`なら空枠を選ぶ。itemと同じ持ち替え／server確認処理を共有し、main inventoryからの交換後は配置を元に戻さない。entityの種類やitemにVanilla専用allowlistを設けず、登録MODの通常操作へ渡す。別entityへの置換、遮蔽、接近不能、使用直前のreach外、画面・session変更では停止する。
 
 entity packetにはitem使用のprediction ACKがないため、`result_item`省略時の成功はclientの操作受付を条件とする。PASS後の無関係な拾得など、手持ちstackの変化だけでは成功にしない。結果の`confirmation`は`client_dispatch`／`server_held_item`を区別し、`effect_confirmed`は確認済み手持ちstackの変化だけを示す。繁殖・騎乗・entity状態変化など固有の効果を保証しない。`result_item`指定時は新しいserver payloadと現在の手持ちの一致を必須にする。clientがPASSを返すMODでも、このpostconditionが確認できれば完了できる。古いpayloadやclient予測だけでは完了せず、期限までに確認できなければ再送せず停止する。単体・公開schema検査と実ゲームのentity操作確認は分けて扱う。
 
@@ -133,7 +137,7 @@ snapshotの既知の安全な停止候補を目標への直線距離、同距離
 - 1回のplanの固定上限はsnapshot edge 4,096件、候補A*呼出し64回、A*全呼出し合計2,048展開。各予算は0まで縮小可能。edge上限超過は切り捨てずLIMIT。取消・thread interruptionは列挙・探索・結果確定前で確認する。
 - 既知の安全な経路では、目標から一時的に遠ざかる中間点も選べる。発行した経路上のcellは同じjobで再び中間点にしない。次の中間点には前回発行後の新しいmap証拠を要求し、同じ証拠での巡回・実行失敗後の即時再発行を防ぐ。既知cell履歴は8,192件で上限停止する。未知cellへの移動、網羅的frontier探索、失敗した経路の自動再試行は未対応。
 
-内部の`StartMove`は絶対`x/y/z`、または開始時のプレイヤーcellからの`direction/distance`を受ける。後者はワールド方位の南北東西・斜め4方向・上下を1～256 blockで指定し、座標との混用は拒否する。任意の`arrival_radius`は0～16 blockの三次元距離で、既定の0は指定cellへの到着を要求する。正の値なら指定座標に近い安全な到達可能cellで止まれ、目標cell自体が通れない場合にも使える。到達許容幅（0.1～0.49）、最大実行tick（1,200）、総移動距離（256 block）も受ける。`CoordinateMoveJobExecution`が既知区間を既存の移動executorへ渡し、中間点到着後に新しい観測を待って次を計画する。部分経路の再計画要求も新証拠を待つ。最終経路完了時は入力を解放し、次のclient tickで現在cellを読み直して到達を確定する。目標への最終経路が途中で無効になれば、既定は失敗で停止する。`clear_path:true`では新しい経路証拠を待って再計画する。観測が進まない場合も有界に停止する。runtimeは配送確認、world・player・control epoch、体力、screenと局所安全、移動距離、各tickの経路証拠を確認し、取消・危険・緊急停止・world境界で入力を解放してから終端を返す。目標が未観測でも受理するが、未知地形へ踏み出すわけではない。
+内部の`StartMove`は絶対`x/y/z`、または開始時のプレイヤーcellからの`direction/distance`を受ける。後者はワールド方位の南北東西・斜め4方向・上下を1～4,096 blockで指定し、座標との混用は拒否する。任意の`arrival_radius`は0～16 blockの三次元距離で、既定の0は指定cellへの到着を要求する。正の値なら指定座標に近い安全な到達可能cellで止まれ、目標cell自体が通れない場合にも使える。到達許容幅（0.1～0.49）、最大実行tick（1,728,000、既定1,200）、総移動距離（4,096 block、既定256）も受ける。`CoordinateMoveJobExecution`が既知区間を既存の移動executorへ渡し、中間点到着後に新しい観測を待って次を計画する。部分経路の再計画要求も新証拠を待つ。最終経路完了時は入力を解放し、次のclient tickで現在cellを読み直して到達を確定する。目標への最終経路が途中で無効になれば、既定は失敗で停止する。`clear_path:true`では新しい経路証拠を待って再計画する。観測が進まない場合も有界に停止する。runtimeは配送確認、world・player・control epoch、体力、screenと局所安全、移動距離、各tickの経路証拠を確認し、取消・危険・緊急停止・world境界で入力を解放してから終端を返す。目標が未観測でも受理するが、未知地形へ踏み出すわけではない。
 
 座標・見えるblock state・所持item数・画面種類の`stop_when`と任意の局所障害物処理を実装済み。任意entity状態条件・複合条件、縦方向の自動施工は未対応。公開catalog/schemaとscriptへ接続済みで、基本移動・script移動の到着を実機確認した。すべての地形・停止経路の検証は残る。
 
@@ -157,7 +161,7 @@ snapshotの既知の安全な停止候補を目標への直線距離、同距離
 
 ゲーム内の論理キー／左右中クリックを指定する。`steps`に複数の同時入力、順番、`hold_ticks`、`gap_ticks`、`repeat`、`until`、最大総時間を記載できるようにする。入力頻度はgame tick単位で表す。world操作を起こしうるクリックには座標範囲・対象種類・手持ちなどの任意guardを付けられ、guardなしでも総時間と入力回数の上限を保つ。画面やワールドが変われば入力を解放して停止する。OSへキーを送る機能とは区別する。
 
-内部の`FiniteInputSequence`は、9種類の論理入力について、同時押し・順次step・押下tick・gap・有限反復と外部停止条件／取消をtickごとに進める。最大64 step・合計1,200 tickで、停止後は空入力だけを返す。`InputSequenceLeaseDriver`は既存の短期leaseを使い、入力集合の切替前・停止時に旧入力を解放し、期限切れ・解放失敗なら次の入力を出さず停止する。中クリックに相当する`pick`は、独立した入力所有を持ち、押下の立ち上がり時にワールド内でVanillaのピック操作を一度呼ぶ。`InputSequenceJobExecution`はこのdriverを共通jobへ接続し、配送確認・session・安全判定を満たしたtickだけ入力を発行する。取消・world変更・危険・lease失敗では停止意図を保持し、入力解放の再試行が成功するまでjobを非terminalに保つ。内部の`StartInputSequence`からclient tick・緊急停止・既存の配送確認／進行取得／取消へ接続した。内部の`StartClick`は左右中のbutton、有限回数・押下tick・間隔を同じjobに変換する。任意のblock座標・block IDまたは観測済みのentity_ref・種類を指定した場合、開始時と各入力tickに実crosshair・reach・生存／視線を照合する。最後の入力でmenuが開いても、同じworld／所有者／安全条件を確認して入力解放を完了できる。入力はworld/session、画面、局所安全、体力、移動距離、control epochを毎tick確認し、移動には既存の衝突・revision証拠を要求する。**公開catalogへ接続済みで、gateへのraw右click、有限入力反復、移動入力の取消とかがみ入力中の危険停止を実機確認した**。raw入力によるmenu内クリック、範囲・手持ちなどの追加guard、任意キー、server結果照合、entity attackの適切な許可境界は未実装である。完成版へ進める前にこれらを解決する。
+内部の`FiniteInputSequence`は、9種類の論理入力について、同時押し・順次step・押下tick・gap・有限反復と外部停止条件／取消をtickごとに進める。最大64 step・合計1,728,000 tickで、停止後は空入力だけを返す。`InputSequenceLeaseDriver`は既存の短期leaseを使い、入力集合の切替前・停止時に旧入力を解放し、期限切れ・解放失敗なら次の入力を出さず停止する。中クリックに相当する`pick`は、独立した入力所有を持ち、押下の立ち上がり時にワールド内でVanillaのピック操作を一度呼ぶ。`InputSequenceJobExecution`はこのdriverを共通jobへ接続し、配送確認・session・安全判定を満たしたtickだけ入力を発行する。取消・world変更・危険・lease失敗では停止意図を保持し、入力解放の再試行が成功するまでjobを非terminalに保つ。内部の`StartInputSequence`からclient tick・緊急停止・既存の配送確認／進行取得／取消へ接続した。内部の`StartClick`は左右中のbutton、有限回数・押下tick・間隔を同じjobに変換する。任意のblock座標・block IDまたは観測済みのentity_ref・種類を指定した場合、開始時と各入力tickに実crosshair・reach・生存／視線を照合する。最後の入力でmenuが開いても、同じworld／所有者／安全条件を確認して入力解放を完了できる。入力はworld/session、画面、局所安全、体力、移動距離、control epochを毎tick確認し、移動には既存の衝突・revision証拠を要求する。**公開catalogへ接続済みで、gateへのraw右click、有限入力反復、移動入力の取消とかがみ入力中の危険停止を実機確認した**。raw入力によるmenu内クリック、任意範囲guard、任意キー、server結果照合、entity attackの適切な許可境界は未実装である。完成版へ進める前にこれらを解決する。
 
 内部の`agent_input_sequence`は、任意の`stop_when:{x,y,z,radius}`を受ける。プレイヤー足元のworld座標が指定cellのX/Z中心・Y値から半径内に入ったtickでは次の入力を発行せず、保持中のleaseを解放して終了する。半径は0.1～16、未指定時は0.75。`type:"position"`を明示する形に加え、`type:"block"`と座標・block ID・任意properties、`type:"item"`とitem ID・count・比較（at_least/at_most/equals）、`type:"screen"`とnone/container/inventory/chatを指定できる。block条件は現在見えるloaded cellだけで判定し、隠れた空気を真としない。item条件は自分の所持数。成立時は次の入力前に解放する。任意キー入力と複合条件は未対応。
 

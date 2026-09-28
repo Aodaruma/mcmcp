@@ -1,6 +1,6 @@
 # 公開API v2：優先機能・試用導入の実機記録（2026-09-29）
 
-利用者指定の6項目を実装し、このWindows PCの隔離profileで検証した。`clear_path`は任意・既定falseを維持する。検証後に「くらふとぶ！-v01.2」へ製品JARを置き換えた。利用方法と残る範囲は[試用メモ](../PUBLIC_API_V2_TRIAL_20260929.md)を参照。
+利用者指定の6項目を実装し、このWindows PCの隔離profileで検証した。`clear_path`は任意・既定falseを維持する。通常profileへの初回導入完了判定はAppData仮想化による誤認だったため、末尾で訂正する。利用方法と残る範囲は[試用メモ](../PUBLIC_API_V2_TRIAL_20260929.md)を参照。
 
 ## 対象と手順
 
@@ -45,6 +45,8 @@
 
 ゲームとlauncherを終了後、試験後profileをprivate artifactsへ退避し、試験前の**12ファイルの個数・全SHA-256一致**で復旧した。[復旧receipt](artifacts/20260929-v2-trial/restoration.json)
 
-利用者の明示依頼に基づき、通常の「くらふとぶ！-v01.2」のMCMCP JARだけを置き換えた。旧JARは同profileの`mcmcp-backups/20260929-public-api-v2/`へ退避し、旧版のhash、新版のhash、他MOD不変を検証。検証用admin JARやfixtureは通常profileへ導入していない。通常worldは起動しておらず、全MOD併用での起動確認とは区別する。[導入receipt](artifacts/20260929-v2-trial/installation.json)
+初回はCodexから見える「くらふとぶ！-v01.2」のMCMCP JARを置き換え、同じ表示パスからbackup・hash・他MOD不変を確認した。しかし、このAppDataパスはCodexの`LocalCache/Roaming`へ転送されていた。`ca47984f…`の旧JAR・`mcmcp-backups/20260929-public-api-v2/`も仮想化領域の記録であり、ネイティブPrismの実体への導入証拠ではない。初回の導入完了判定を撤回し、[receipt](artifacts/20260929-v2-trial/installation.json)の確認範囲を訂正した。隔離profileでの9フェーズの結果とは区別する。
+
+差し替え担当の2026-09-29 04:05 JSTの記録では、実体側の旧JARは`f4b6b782d99cfb94e6aef8143211c08de02045be51e26f81b2fc09ea4a4ee1bc`だった。担当が別名backupを作成し、ハンドルからの物理パス・新版hash一致・製品JARが1個であることを確認した。Prism GUIから起動・同じ接続先へ再接続・MCP ON後、04:07 JSTのAPI確認で公開13ツールと状態schema 2を確認している。現場担当も別途13ツール、有限script、短いuseと取消を確認した。粉の実設置と24時間実運転は未試験。[訂正・実体側の確認要約](artifacts/20260929-v2-trial/installation-correction.json)
 
 公開JSONは[manifest](artifacts/20260929-v2-trial/manifest.json)でhashを照合できる。認証情報、private profile、ゲームlogは含めていない。任意MOD menu、加工・独自ボタン、縦施工、複合条件、詳細effect、高度な道具選択、遅延・再接続・全MOD組合せと独立レビューは残る。PR #85はDraftのまま、main統合・タグ・Release公開はしない。

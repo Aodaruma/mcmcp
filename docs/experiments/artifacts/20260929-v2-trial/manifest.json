@@ -20,8 +20,12 @@
     "sha256": "959dc24d4c0e0a840d1ef9545f0f431d0d78c957f31146a4d1311b2a2e9a7f2e"
   },
   {
+    "path": "installation-correction.json",
+    "sha256": "8b6499faf1e7c8c1be6671b2bf163e8d6a64c1a756ac33a94dbf5d7900ef4836"
+  },
+  {
     "path": "installation.json",
-    "sha256": "0736253c7f9283ad5123657558c5b17551620ced3704ace8d3a3ef07db046aaf"
+    "sha256": "eca1e1db24073159cb881c1cec3110acaba437b7d659160dd9e86f0006edd1bd"
   },
   {
     "path": "menu-07.json",

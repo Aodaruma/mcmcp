@@ -2,7 +2,7 @@
 
 ## 最新更新：優先6項目と試用JAR（2026-09-29）
 
-指定された優先機能を実装し、このPCの隔離Minecraftで9フェーズを確認した。「くらふとぶ！-v01.2」のMCMCP JARは旧版を退避して置き換え済み。[試用メモ](PUBLIC_API_V2_TRIAL_20260929.md)と[実験記録](experiments/20260929_v2_trial_local.md)を参照。
+指定された優先機能を実装し、このPCの隔離Minecraftで9フェーズを確認した。「くらふとぶ！-v01.2」への初回導入はAppData仮想化領域への配置であり、実体への導入完了という判定を撤回する。その後、差し替え担当が物理パスを確認して実体へ導入し、Prism GUI再起動後の公開13ツール・schema 2を確認した。[試用メモ](PUBLIC_API_V2_TRIAL_20260929.md)と[実験記録](experiments/20260929_v2_trial_local.md)を参照。
 
 | 機能 | 現在使える範囲 |
 |---|---|
@@ -16,6 +16,8 @@
 Java 1,595件、harness 13件、admin bridge 28件とbuild、PowerShell/Pythonのsource checksが成功。実機JARと通常profileへ導入したJARのSHA-256は`03c7943f7fcd78f06021db2224a5df5b47fd77a2bc98bd99c32c5a930fadece1`。隔離profileは元の12ファイル・全hash一致で復旧した。
 
 残る主な機能は、任意MODのmenu／収納provider、クラフト・取引・独自ボタン、複合条件・任意entity状態条件、縦方向の障害物施工、高度な道具選択、詳細effect台帳、menuを開いたままのscript合成。新品backpackの自動初期化は未対応。収納の遅延同期・応答待ち取消、全MOD組合せ、PR全体の独立レビューは追加検証として残る。PR #85はDraftを維持し、main統合・タグ・Release公開はしていない。
+
+追加指定により右クリックだけに限定せず、全行動の長時間・多回数指定を開発branchへ追加した。[引数・上限・停止契約](PUBLIC_API_V2_LONG_EXECUTION_20260929.md)と[追加検証記録](experiments/20260929_v2_long_execution.md)を参照。新JARの実機検証・通常profileへの導入・24時間連続実測は未実施で、前述の導入済みJARとは区別する。
 
 以下は履歴。未実装一覧は当時の状態であり、現在の範囲は上の表を優先する。
 

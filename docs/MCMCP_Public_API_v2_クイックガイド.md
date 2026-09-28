@@ -82,3 +82,11 @@ menuは次の操作全体で開封から閉鎖までを行います。`clicks`�
 施工の永続保存・再開は[試用ガイド](PUBLIC_API_V2_TRIAL_20260929.md)のPC側runnerで行います。制限付きscript自体にはファイル操作を追加していません。
 
 正確な引数・上限は公開Tool Catalog、設計は`docs/PUBLIC_API_V2.md`を参照してください。v1用の施工runner、capability gate、`container-inspect-recovery`評価は対応するv1 checkoutとJARでのみ使用します。
+
+## 長時間・多回数の明示指定（追加JAR用）
+
+移動・施工・操作の`max_ticks`は最大1,728,000、総移動距離は最大4,096 block。既定値は維持します。論理入力全種で`agent_input_sequence({inputs:["attack"],duration_seconds:600})`のような秒指定も使えます。粉の補充を待つuseは`{inputs:["use"],duration_seconds:86400,item:"minecraft:black_concrete_powder",refill_wait_seconds:30}`です。空の間はuseを解放し、指定材料・同じslotへの補充だけを期限内で待ちます。
+
+scriptも明示して最大24時間・1,728,000 callsへ拡張できます。親と子の期限の早い方で停止し、操作ごとに総期限は延長しません。`agent_get_action`の`progress.remaining_seconds`と`stop_reason`で残り時間と終了理由を確認できます。開始後のLLM監視は実行条件ではありません。
+
+[詳しい上限・既定値・停止条件](PUBLIC_API_V2_LONG_EXECUTION_20260929.md)を参照してください。この追加は開発branchの実装であり、以前の`03c7943f…`版へは未導入です。新JARでの実機試験と24時間連続実測はこれからです。

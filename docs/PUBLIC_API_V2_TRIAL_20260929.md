@@ -4,13 +4,15 @@ Minecraft 26.2 / NeoForge 26.2.0.59 / Java 25向けの試用版です。mainへ�
 
 ## 導入済みJAR
 
-このPCのPrismLauncher **「くらふとぶ！-v01.2」**へ、2026-09-29に置き換えました。通常どおりこのprofileを起動して試せます。
+このPCのPrismLauncher **「くらふとぶ！-v01.2」**には、2026-09-29に差し替え担当が実体側へv2を導入し、Prism GUIからの再起動・再接続後に公開13ツールとschema 2を確認しています。[訂正・確認記録](experiments/artifacts/20260929-v2-trial/installation-correction.json)
 
 - 導入先: profile内の`minecraft/mods/mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar`
-- 旧版の退避先: profile内の`mcmcp-backups/20260929-public-api-v2/`（同じJAR名）
+- 実体側の旧版: SHA-256 `f4b6b782d99cfb94e6aef8143211c08de02045be51e26f81b2fc09ea4a4ee1bc`。差し替え担当が別名でバックアップ済みです。
 - 新JARのSHA-256: `03c7943f7fcd78f06021db2224a5df5b47fd77a2bc98bd99c32c5a930fadece1`
 
-旧版バックアップ・導入後hash・他MOD不変を確認済みです。通常profileのworldや設定は変更していません。実機試験は同じPCの隔離profileで行い、「くらふとぶ！」の全MODを併用した起動はまだ確認していません。[導入記録](experiments/artifacts/20260929-v2-trial/installation.json)
+**初回の導入完了報告を訂正します。** Codexからの通常AppDataパスは仮想化領域の`LocalCache/Roaming`へ転送されており、初回のhash確認はネイティブPrismが読む実体への導入を証明していませんでした。初回の`mcmcp-backups/20260929-public-api-v2/`と旧版hash `ca47984f…`も、その仮想化領域での記録です。[初回receipt（確認範囲を訂正）](experiments/artifacts/20260929-v2-trial/installation.json)
+
+以後は、ファイルハンドルからの物理パス確認・実体側hash・重複製品JAR確認に加え、再起動後の公開API確認までを導入完了条件とします。差し替え・再起動・再接続・MCP ONは指定の差し替え担当が行います。実体側の起動と短いAPI試験は確認済みですが、全MOD機能の互換性を網羅した検証ではありません。
 
 ## 使える範囲
 
@@ -59,5 +61,6 @@ repositoryのworktreeでPowerShell 7.4以上を使います。tokenの値は貼�
 - 自動障害物処理は水平の局所処理です。液体処理、階段・縦穴、任意形状の自動施工は含みません。
 - 設置面が他のblockで遮られる配置では、安全に停止する場合があります。施工順や立ち位置を変えて対応してください。
 - 道具の耐久・Silk Touch／Fortune条件、破壊dropや消費材料の詳細台帳、全MOD組合せ・通信遅延の検証は残っています。
+- この導入済みJARの入力列は合計1,200 tick、scriptは最大72,000 tickです。[全行動の長時間・多回数実行](PUBLIC_API_V2_LONG_EXECUTION_20260929.md)を開発branchへ追加しましたが、新JARの実機検証・通常profileへの導入はまだです。
 
 引数の詳細は[クイックガイド](MCMCP_Public_API_v2_クイックガイド.md)と[Tool Catalog](MCMCP_MCP_Tool_Catalog.json)を参照してください。[実機試験記録](experiments/20260929_v2_trial_local.md)には9フェーズの結果、失敗からの修正、検証環境の復旧をまとめています。

@@ -1,0 +1,30 @@
+{
+  "date": "2026-09-29",
+  "source_commit": "633caff0d69562a63b187e7aa22bb8fe5060cf1a",
+  "jar_name": "mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar",
+  "jar_sha256": "f787171893dff9ea3027fb9139c28ad28f8dad0b05ffcc375b8fa304bc9b2e7b",
+  "jar_bytes": 3047752,
+  "public_tool_count": 13,
+  "tests": {
+    "adminBridgeTest": {
+      "tests": 28,
+      "failures": 0,
+      "errors": 0
+    },
+    "harnessTest": {
+      "tests": 13,
+      "failures": 0,
+      "errors": 0
+    },
+    "test": {
+      "tests": 1612,
+      "failures": 0,
+      "errors": 0
+    }
+  },
+  "gradle_checks": "test harnessTest adminBridgeTest verifyHarnessIsolation build",
+  "source_checks": "tools/check-source.ps1 -SkipJava -PythonExecutable python",
+  "in_game_verified": false,
+  "twenty_four_hour_continuous_run": false,
+  "normal_profile_installed": false
+}

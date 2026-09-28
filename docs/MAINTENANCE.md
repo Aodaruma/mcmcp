@@ -5,6 +5,18 @@ This guide covers issue triage, PR review, verification, and release decisions. 
 
 **現在のowner指示:** 追加の明示指示があるまで変更はPR作成までとし、下記の通常merge手順は適用しません。main統合、タグ、Release公開を自動で行わないでください。公開API v2の目標と現行v1の区別は[PUBLIC_API_V2.md](PUBLIC_API_V2.md)に記録します。
 
+## このPCへの試用JAR導入
+
+JAR差し替え、Minecraft終了、Prism GUIからの指定profile起動、再接続、MCP ONは利用者指定の差し替え担当が行う。開発担当は試験済みJAR・SHA-256・変更内容・必要な公開API確認項目を用意し、現場ゲームへ割り込まない。
+
+WindowsのAppData表示パスはCodexの仮想化領域へ転送される場合がある。表示パスのhash一致だけで導入完了としない。担当は次の記録を揃える。
+
+1. ネイティブPrismが読むprofileと、開いたJARハンドルが示す物理パスの一致。`LocalCache/Roaming`への転送と実体を区別する。
+2. 実体側旧JARのbackupとhash、新JARのhash一致、実体側の重複製品JAR不在。
+3. 再起動した対象ゲームの公開tool名・schemaと必要な機能の確認。tool数だけでは同じ数の異なる版を区別できないため、変更したschemaも照合する。
+
+実体配置と再起動後APIの両方が確認できるまで、「配置確認」「起動後確認」を分けて報告する。[2026-09-29の誤判定と訂正](experiments/20260929_v2_trial_local.md)を参照。
+
 ## ラベルとProjects / Labels and Projects
 
 **[MCMCP 開発・保守 / Development](https://github.com/users/Aodaruma/projects/5)**を使います。接続先・Status field IDは[project.json](../.github/project.json)に記録しています。公開Issue/PRだけをこのProjectへ配置します。新規追加とラベルに合わせた状態更新は保守の週次巡回で行い、常時稼働するGitHub側の即時同期とは区別します。<br>
