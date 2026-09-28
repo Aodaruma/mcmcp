@@ -68,6 +68,8 @@ final class MinecraftV2PlaceDriver
     private NavCell target;
     private V2PlaceArguments request;
     private Candidate candidate;
+    private BlockStateFingerprint before;
+    private V2BlockJobExecution.ConfirmedChange confirmedChange;
     private Stage stage = Stage.IDLE;
     private int originalSlot = -1;
     private int selectedSlot = -1;
@@ -317,10 +319,10 @@ final class MinecraftV2PlaceDriver
         var desired = new BlockStateFingerprint(request.blockId(), request.properties());
         var confirmation = prediction.confirmation(state -> desired.matches(fingerprint(state)));
         if (confirmation.serverConfirmed()) {
-            return desired.matches(fingerprint(
-                    minecraft.level.getBlockState(blockPos(target))))
-                    ? V2BlockJobExecution.StepResult.CONFIRMED
-                    : V2BlockJobExecution.StepResult.FAILED;
+            var after = fingerprint(minecraft.level.getBlockState(blockPos(target)));
+            if (!desired.matches(after)) return V2BlockJobExecution.StepResult.FAILED;
+            confirmedChange = new V2BlockJobExecution.ConfirmedChange(before, after);
+            return V2BlockJobExecution.StepResult.CONFIRMED;
         }
         if (confirmation.status() == ClientPredictionSignals.ConfirmationStatus.SERVER_STATE_MISMATCH
                 || confirmation.status() == ClientPredictionSignals.ConfirmationStatus.INCOMPATIBLE
@@ -329,6 +331,11 @@ final class MinecraftV2PlaceDriver
             return V2BlockJobExecution.StepResult.FAILED;
         }
         return V2BlockJobExecution.StepResult.RUNNING;
+    }
+
+    @Override
+    public V2BlockJobExecution.ConfirmedChange confirmedChange() {
+        return confirmedChange;
     }
 
     private V2BlockJobExecution.StepResult tickApproach(
@@ -417,6 +424,7 @@ final class MinecraftV2PlaceDriver
         var result = minecraft.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
         int afterSequence = prediction.captureIssuedPredictions();
         if (afterSequence != beforeSequence + 1 || !result.consumesAction()) return false;
+        this.before = fingerprint(before);
         dispatchedTick = clientTick;
         return true;
     }
@@ -530,6 +538,8 @@ final class MinecraftV2PlaceDriver
         approachEvidenceWaitTicks = 0;
         stagedObservationWaitTicks = 0;
         candidate = null;
+        before = null;
+        confirmedChange = null;
         crosshairWaitTicks = 0;
         dispatchedTick = 0L;
         stage = Stage.IDLE;

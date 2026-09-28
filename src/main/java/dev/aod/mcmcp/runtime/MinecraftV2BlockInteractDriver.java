@@ -45,6 +45,7 @@ final class MinecraftV2BlockInteractDriver
     private NavCell target;
     private V2BlockInteractArguments request;
     private BlockStateFingerprint before;
+    private V2BlockJobExecution.ConfirmedChange confirmedChange;
     private Stage stage = Stage.IDLE;
     private int originalSlot = -1;
     private int selectedSlot = -1;
@@ -181,10 +182,12 @@ final class MinecraftV2BlockInteractDriver
         var confirmation = prediction.confirmation(
                 state -> matchesExpected(request, before, fingerprint(state)));
         if (confirmation.serverConfirmed()) {
-            return matchesExpected(request, before,
-                    fingerprint(minecraft.level.getBlockState(blockPos(target))))
-                    ? V2BlockJobExecution.StepResult.CONFIRMED
-                    : V2BlockJobExecution.StepResult.FAILED;
+            var after = fingerprint(minecraft.level.getBlockState(blockPos(target)));
+            if (!matchesExpected(request, before, after)) {
+                return V2BlockJobExecution.StepResult.FAILED;
+            }
+            confirmedChange = new V2BlockJobExecution.ConfirmedChange(before, after);
+            return V2BlockJobExecution.StepResult.CONFIRMED;
         }
         if (confirmation.status() == ClientPredictionSignals.ConfirmationStatus.SERVER_STATE_MISMATCH
                 || confirmation.status() == ClientPredictionSignals.ConfirmationStatus.INCOMPATIBLE
@@ -193,6 +196,11 @@ final class MinecraftV2BlockInteractDriver
             return V2BlockJobExecution.StepResult.FAILED;
         }
         return V2BlockJobExecution.StepResult.RUNNING;
+    }
+
+    @Override
+    public V2BlockJobExecution.ConfirmedChange confirmedChange() {
+        return confirmedChange;
     }
 
     private boolean dispatch(long clientTick, BooleanSupplier outputAllowed) {
@@ -330,6 +338,7 @@ final class MinecraftV2BlockInteractDriver
         target = null;
         request = null;
         before = null;
+        confirmedChange = null;
         planner = null;
         waitingEvidence = null;
         approachEvidenceWaitTicks = 0;

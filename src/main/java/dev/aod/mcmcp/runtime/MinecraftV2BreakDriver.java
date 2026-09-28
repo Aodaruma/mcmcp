@@ -9,6 +9,7 @@ import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
 import dev.aod.mcmcp.client.McmcpClientConfig;
 import dev.aod.mcmcp.routine.BlockTarget;
+import dev.aod.mcmcp.routine.BlockStateFingerprint;
 import dev.aod.mcmcp.routine.MinecraftStationaryBreakPort;
 import dev.aod.mcmcp.routine.StationaryBreakGoal;
 import dev.aod.mcmcp.routine.StationaryBreakRequest;
@@ -26,6 +27,7 @@ import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -56,6 +58,8 @@ final class MinecraftV2BreakDriver
     private NavCell target;
     private V2BreakArguments request;
     private String blockId;
+    private BlockStateFingerprint before;
+    private V2BlockJobExecution.ConfirmedChange confirmedChange;
     private Stage stage = Stage.IDLE;
     private int originalSlot = -1;
     private int selectedToolSlot = -1;
@@ -184,6 +188,12 @@ final class MinecraftV2BreakDriver
                         ? V2BlockJobExecution.StepResult.RUNNING
                         : V2BlockJobExecution.StepResult.FAILED;
             }
+            var liveState = minecraft.level.getBlockState(new BlockPos(
+                    target.x(), target.y(), target.z()));
+            if (!blockId.equals(BuiltInRegistries.BLOCK.getKey(liveState.getBlock()).toString())) {
+                return V2BlockJobExecution.StepResult.FAILED;
+            }
+            before = fingerprint(liveState);
             var block = new BlockTarget(target.dimension(), target.x(), target.y(), target.z());
             var source = port.captureExpectedSource(block, Set.of(blockId));
             attackRequest = new StationaryBreakRequest(block, source,
@@ -204,9 +214,21 @@ final class MinecraftV2BreakDriver
                 && frame.crosshairOnTarget() && outputAllowed.getAsBoolean();
         return switch (attack.tick(clientTick, controlled)) {
             case RUNNING -> V2BlockJobExecution.StepResult.RUNNING;
-            case SUCCEEDED -> V2BlockJobExecution.StepResult.CONFIRMED;
+            case SUCCEEDED -> {
+                var afterState = minecraft.level.getBlockState(new BlockPos(
+                        target.x(), target.y(), target.z()));
+                if (!afterState.isAir()) yield V2BlockJobExecution.StepResult.FAILED;
+                confirmedChange = new V2BlockJobExecution.ConfirmedChange(
+                        before, fingerprint(afterState));
+                yield V2BlockJobExecution.StepResult.CONFIRMED;
+            }
             case SERVER_DENIED_OR_DESYNC -> V2BlockJobExecution.StepResult.FAILED;
         };
+    }
+
+    @Override
+    public V2BlockJobExecution.ConfirmedChange confirmedChange() {
+        return confirmedChange;
     }
 
     private V2BlockJobExecution.StepResult tickApproach(
@@ -304,10 +326,20 @@ final class MinecraftV2BreakDriver
         waitingEvidence = null;
         approachEvidenceWaitTicks = 0;
         blockId = null;
+        before = null;
+        confirmedChange = null;
         crosshairWaitTicks = 0;
         stage = Stage.IDLE;
         if (failure instanceof RuntimeException runtime) throw runtime;
         if (failure instanceof LinkageError linkage) throw linkage;
+    }
+
+    private static BlockStateFingerprint fingerprint(BlockState state) {
+        Map<String, String> properties = new LinkedHashMap<>();
+        state.getValues().forEach(value ->
+                properties.put(value.property().getName(), value.valueName()));
+        return new BlockStateFingerprint(
+                BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString(), properties);
     }
 
     private int bestHotbarTool(BlockState state) {

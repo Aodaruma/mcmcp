@@ -2,6 +2,7 @@ package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.action.AgentJobStore;
 import dev.aod.mcmcp.agent.navigation.NavCell;
+import dev.aod.mcmcp.routine.BlockStateFingerprint;
 
 import java.time.Duration;
 import java.util.ArrayDeque;
@@ -24,7 +25,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> {
     private final List<NavCell> cells;
     private final Driver<R> driver;
     private final BooleanSupplier releaseAndVerify;
-    private final ArrayDeque<Map<String, Integer>> confirmedCells = new ArrayDeque<>();
+    private final ArrayDeque<Map<String, Object>> confirmedCells = new ArrayDeque<>();
     private int index;
     private int completed;
     private int observationWaitTicks;
@@ -143,7 +144,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> {
                     index++;
                     completed++;
                     jobs.recordBlockProgress(actionId, index, completed);
-                    recordConfirmedCell(confirmedCell);
+                    recordConfirmedCell(confirmedCell, driver.confirmedChange());
                     driver.close();
                     targetActive = false;
                     if (index >= cells.size() || completed >= request.maxBlocks()) {
@@ -191,17 +192,31 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> {
     int completedBlocks() { return completed; }
     int scannedCells() { return index; }
 
-    private void recordConfirmedCell(NavCell cell) {
+    private void recordConfirmedCell(NavCell cell, ConfirmedChange change) {
         if (confirmedCells.size() == MAX_RETAINED_CONFIRMED_CELLS) {
             confirmedCells.removeFirst();
         }
-        confirmedCells.addLast(Map.of("x", cell.x(), "y", cell.y(), "z", cell.z()));
+        confirmedCells.addLast(change == null
+                ? Map.of("x", cell.x(), "y", cell.y(), "z", cell.z())
+                : Map.of("x", cell.x(), "y", cell.y(), "z", cell.z(),
+                        "before", compactState(change.before()),
+                        "after", compactState(change.after())));
         jobs.recordResult(actionId, Map.of(
                 "dimension", cell.dimension(),
                 "confirmed_count", completed,
                 "retained_from", completed - confirmedCells.size() + 1,
                 "confirmed_cells", List.copyOf(confirmedCells),
                 "truncated", completed > confirmedCells.size()));
+    }
+
+    private static String compactState(BlockStateFingerprint state) {
+        if (state.properties().isEmpty()) return state.blockId();
+        var value = new StringBuilder(state.blockId()).append('[');
+        state.properties().forEach((key, property) -> {
+            if (value.charAt(value.length() - 1) != '[') value.append(',');
+            value.append(key).append('=').append(property);
+        });
+        return value.append(']').toString();
     }
 
     private void retainTerminal(AgentJobStore.State outcome, String failure) {
@@ -230,10 +245,18 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> {
     enum BeginResult { STARTED, SKIPPED, WAITING, FAILED }
     enum StepResult { RUNNING, SKIPPED, CONFIRMED, FAILED }
 
+    record ConfirmedChange(BlockStateFingerprint before, BlockStateFingerprint after) {
+        ConfirmedChange {
+            Objects.requireNonNull(before, "before");
+            Objects.requireNonNull(after, "after");
+        }
+    }
+
     interface Driver<R extends V2BlockWorkRequest> {
         String dimension();
         BeginResult begin(NavCell target, R request, BooleanSupplier outputAllowed);
         StepResult tick(long clientTick, BooleanSupplier outputAllowed);
+        default ConfirmedChange confirmedChange() { return null; }
         void close();
     }
 }

@@ -2,6 +2,7 @@ package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.action.AgentJobStore;
 import dev.aod.mcmcp.agent.navigation.NavCell;
+import dev.aod.mcmcp.routine.BlockStateFingerprint;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayDeque;
@@ -138,6 +139,46 @@ class V2BlockJobExecutionTest {
         assertThat(store.get(id).result()).containsEntry("confirmed_count", 1);
         assertThat(store.get(id).result().get("confirmed_cells")).isEqualTo(
                 List.of(Map.of("x", 10, "y", 64, "z", 20)));
+    }
+
+    @Test
+    void confirmedStateChangeSurvivesCancellationWithItsCell() {
+        var store = new AgentJobStore();
+        var id = store.reserve(AgentJobStore.Kind.INTERACT, SESSION, 10, 100);
+        var request = V2BlockInteractArguments.parse(Map.of(
+                "target", "block", "x", 10, "y", 64, "z", 20,
+                "dx", 1, "max_interactions", 2, "block", "minecraft:lever"),
+                "minecraft:overworld");
+        var driver = new V2BlockJobExecution.Driver<V2BlockInteractArguments>() {
+            int ticks;
+            @Override public String dimension() { return "minecraft:overworld"; }
+            @Override public V2BlockJobExecution.BeginResult begin(NavCell target,
+                    V2BlockInteractArguments args, BooleanSupplier outputAllowed) {
+                return V2BlockJobExecution.BeginResult.STARTED;
+            }
+            @Override public V2BlockJobExecution.StepResult tick(long clientTick,
+                    BooleanSupplier outputAllowed) {
+                return ++ticks == 1 ? V2BlockJobExecution.StepResult.CONFIRMED
+                        : V2BlockJobExecution.StepResult.RUNNING;
+            }
+            @Override public V2BlockJobExecution.ConfirmedChange confirmedChange() {
+                return new V2BlockJobExecution.ConfirmedChange(
+                        new BlockStateFingerprint("minecraft:lever", Map.of("powered", "false")),
+                        new BlockStateFingerprint("minecraft:lever", Map.of("powered", "true")));
+            }
+            @Override public void close() { }
+        };
+        var job = new V2BlockJobExecution<>(store, id, SESSION,
+                AgentJobStore.Kind.INTERACT, request, driver, () -> true);
+        store.confirm(id, 1);
+        assertThat(job.tick(SESSION, 1, 1, true, () -> true).state())
+                .isEqualTo(AgentJobStore.State.RUNNING);
+        job.tick(SESSION, 2, 2, true, () -> true);
+        assertThat(job.cancel().state()).isEqualTo(AgentJobStore.State.CANCELLED);
+        assertThat(store.get(id).result().get("confirmed_cells")).isEqualTo(List.of(Map.of(
+                "x", 10, "y", 64, "z", 20,
+                "before", "minecraft:lever[powered=false]",
+                "after", "minecraft:lever[powered=true]")));
     }
 
     @Test
