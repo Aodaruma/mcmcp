@@ -15,11 +15,7 @@ PWSH = os.environ.get('MCMCP_TEST_PWSH') or shutil.which('pwsh')
 TOKEN = 'fixture_' + 'x' * 43
 ACTION = '00000000-0000-4000-8000-000000000001'
 META = {'io.modelcontextprotocol/serverInfo': {'name': 'mcmcp', 'version': '0.1.0'}}
-START = {'schema_version': 1, 'program': {'dsl_version': 1, 'capabilities': [],
-         'body': [{'id': 'wait', 'op': 'wait_ticks', 'ticks': 1}]},
-         'budget': dict(max_duration_ms=1000, max_ticks=20, max_distance_blocks=0,
-                        max_camera_degrees=0, max_interactions=0,
-                        max_blocks_broken=0, max_blocks_placed=0)}
+START = {'x': 4, 'y': 65, 'z': 8}
 V2_START_TOOLS = {'agent_move', 'agent_break_block', 'agent_place_block',
                   'agent_interact', 'agent_inventory', 'agent_click',
                   'agent_input_sequence', 'agent_run_script'}
@@ -114,13 +110,10 @@ class TransportTests(unittest.TestCase):
                         capabilities={'tools': {'listChanged': False}})
         if request['method'] == 'tools/list':
             return dict(resultType='complete', _meta=META, tools=[{'name': n} for n in
-                ['agent_get_state', 'agent_get_mcp_status', 'agent_get_observation', 'agent_start_action',
+                ['agent_get_state', 'agent_get_mcp_status', 'agent_get_observation',
                  'agent_move', 'agent_break_block', 'agent_place_block', 'agent_interact',
                  'agent_inventory', 'agent_click', 'agent_input_sequence', 'agent_run_script',
                  'agent_get_action', 'agent_cancel_action']])
-        if request['params']['name'] == 'agent_start_action':
-            return tool_result(dict(schema_version=1, action_id=ACTION, state='queued',
-                                    accepted_at='2026-09-06T00:00:00Z'))
         if request['params']['name'] in V2_START_TOOLS:
             return tool_result(dict(schema_version=2, action_id=ACTION, state='queued'))
         if (request['params']['name'] == 'agent_get_action' and
@@ -156,7 +149,7 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(request['params']['_meta']['io.modelcontextprotocol/protocolVersion'], '2026-07-28')
 
     def test_start_waits_only_on_successful_id_and_preserves_arguments(self):
-        reply = self.invoke('-Tool', 'agent_start_action', '-WaitSeconds', '10', arguments=START)
+        reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10', arguments=START)
         self.assertTrue(reply['ok'], reply)
         self.assertEqual(reply['result']['state'], 'succeeded')
         calls = [r[0]['params'] for r in self.requests if r[0]['method'] == 'tools/call']
@@ -199,7 +192,7 @@ class TransportTests(unittest.TestCase):
                         envelope['result']['isError'] = 'false'
                     return envelope
                 self.modify = modify
-                reply = self.invoke('-Tool', 'agent_start_action', '-WaitSeconds', '10', arguments=START)
+                reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10', arguments=START)
                 self.assertFalse(reply['ok'])
                 self.assertEqual(reply['diagnostic_code'], diagnostic)
                 self.assertEqual(len(self.requests), 2)
@@ -213,7 +206,7 @@ class TransportTests(unittest.TestCase):
                 envelope['result']['structuredContent']['action_id'] = ACTION[:-1] + '2'
             return envelope
         self.modify = modify
-        reply = self.invoke('-Tool', 'agent_start_action', '-WaitSeconds', '10', arguments=START)
+        reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10', arguments=START)
         self.assertEqual(reply['diagnostic_code'], 'action_id_mismatch')
         self.assertEqual(reply['action_id'], ACTION)
         self.assertEqual(len(self.requests), 3)
@@ -227,7 +220,7 @@ class TransportTests(unittest.TestCase):
                 envelope['result'] = result
             return envelope
         self.modify = modify
-        reply = self.invoke('-Tool', 'agent_start_action', '-WaitSeconds', '10', arguments=START)
+        reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10', arguments=START)
         self.assertEqual(reply['diagnostic_code'], 'secret_blocked')
         self.assertEqual(len(self.requests), 2)
 
@@ -269,7 +262,7 @@ $null = Invoke-McmcpTransportRequest -Endpoint $args[0] `
         self.assertEqual(process.stdout, b'')
         self.assertIn('日本語のクライアント'.encode('utf-8'), self.requests[0][2])
 
-    def test_consent_without_action_id_is_success_but_does_not_poll(self):
+    def test_legacy_consent_reply_is_rejected_for_a_v2_start_without_polling(self):
         def modify(request, envelope):
             if request['method'] == 'tools/call':
                 envelope['result'] = tool_result(dict(schema_version=1, state='AWAITING_CONSENT',
@@ -277,9 +270,9 @@ $null = Invoke-McmcpTransportRequest -Endpoint $args[0] `
                     approval_scope_summary='承認対象の説明', action_reserved=False, input_acquired=False))
             return envelope
         self.modify = modify
-        reply = self.invoke('-Tool', 'agent_start_action', '-WaitSeconds', '10', arguments=START)
-        self.assertTrue(reply['ok'], reply)
-        self.assertIn('承認対象', reply['result']['approval_scope_summary'])
+        reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10', arguments=START)
+        self.assertFalse(reply['ok'], reply)
+        self.assertEqual(reply['diagnostic_code'], 'invalid_success_schema')
         self.assertEqual(len(self.requests), 2)
 
     def test_bad_inputs_never_send_requests(self):
@@ -323,10 +316,10 @@ $null = Invoke-McmcpTransportRequest -Endpoint $args[0] `
     def test_wait_timeout_keeps_known_id_and_does_not_restart_action(self):
         self.modify = lambda request, envelope: dict(envelope, result=tool_result(status('running'))) \
             if request.get('params', {}).get('name') == 'agent_get_action' else envelope
-        reply = self.invoke('-Tool', 'agent_start_action', '-WaitSeconds', '3', arguments=START)
+        reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '3', arguments=START)
         self.assertEqual(reply['diagnostic_code'], 'action_wait_timeout')
         self.assertEqual(reply['action_id'], ACTION)
-        self.assertEqual(sum(r[0].get('params', {}).get('name') == 'agent_start_action'
+        self.assertEqual(sum(r[0].get('params', {}).get('name') == 'agent_move'
                              for r in self.requests), 1)
 
     def test_shared_evaluator_wrapper_http_timeout_is_bounded(self):

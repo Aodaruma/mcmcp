@@ -11,99 +11,59 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class CatalogSchemaValidatorDiagnosticTest {
     @Test
-    void startActionReportsCatalogDerivedFailurePathsWithoutDispatching() throws Exception {
-        assertRejected(startRequest(request -> request.getAsJsonObject("program")
-                        .getAsJsonArray("body").get(0).getAsJsonObject().remove("id")),
-                "program.body[0].id: required");
-
-        assertRejected(startRequest(request -> request.getAsJsonObject("program")
-                        .getAsJsonArray("body").get(0).getAsJsonObject()
-                        .addProperty("op", "move_to")),
-                "program.body[0].op: unknown catalog value");
-
-        assertRejected(startRequest(request -> request.getAsJsonObject("program")
-                        .getAsJsonArray("body").get(0).getAsJsonObject()
-                        .getAsJsonObject("target").remove("dimension")),
-                "program.body[0].target.dimension: required");
-
-        assertRejected(startRequest(request -> request.getAsJsonObject("program")
-                        .getAsJsonArray("body").get(0).getAsJsonObject()
-                        .getAsJsonObject("target").addProperty("x", 100.5)),
-                "program.body[0].target.x: expected integer");
+    void nestedInputFailuresDoNotReachTheRuntime() throws Exception {
+        assertRejected("agent_input_sequence", json("""
+                {"steps":[{"inputs":["forward"],"hold_ticks":1.5}]}
+                """), "steps[0].hold_ticks: expected integer");
+        assertRejected("agent_input_sequence", json("""
+                {"steps":[{"hold_ticks":1}]}
+                """), "steps[0].inputs: required");
+        assertRejected("agent_input_sequence", json("""
+                {"steps":[{"inputs":["private-key"],"hold_ticks":1}]}
+                """), "steps[0].inputs[0]: not in catalog enum");
     }
 
     @Test
     void diagnosticsGeneralizeToOtherToolsAndDoNotReflectUnknownInput() throws Exception {
-        JsonObject observation = JsonParser.parseString("""
-                {"schema_version":1,"frame_id":"obs-0000000000000000",
-                 "kinds":["visible_surface"],"cursor":null,"limit":300}
-                """).getAsJsonObject();
-        assertRejected("agent_get_observation", observation, "limit: above catalog maximum");
-
-        JsonObject untrusted = new JsonObject();
-        untrusted.addProperty("secret-token-should-not-echo", "sensitive-value");
-        String message = rejection("agent_get_state", untrusted);
-        assertThat(message).isEqualTo("sections: required");
+        assertRejected("agent_place_block", json("""
+                {"x":1,"y":64,"z":2,"block":"minecraft:stone","max_blocks":4097}
+                """), "max_blocks: above catalog maximum");
+        String message = rejection("agent_input_sequence", json("""
+                {"steps":[{"inputs":["forward"],"hold_ticks":1}],
+                 "secret-token-should-not-echo":"sensitive-value"}
+                """));
+        assertThat(message).isEqualTo("$: unknown property");
         assertThat(message).doesNotContain("secret", "sensitive");
     }
 
     @Test
     void wrongSmallEnumReportsOnlyBoundedCatalogValues() throws Exception {
-        JsonObject request = takeRequest();
-        request.getAsJsonObject("program").getAsJsonArray("body").get(0)
-                .getAsJsonObject().addProperty("stack_policy", "private-submitted-policy");
-
-        String message = rejection("agent_start_action", request);
-        assertThat(message).isEqualTo(
-                "program.body[0].stack_policy: expected one of "
-                        + "[\"default_components_only\", \"item_id_any_components\"]");
-        assertThat(message).doesNotContain("private-submitted-policy");
+        String message = rejection("agent_click", json("{\"button\":\"private-button\"}"));
+        assertThat(message).isEqualTo("button: expected one of [\"left\", \"right\", \"middle\"]");
+        assertThat(message).doesNotContain("private-button");
     }
 
     @Test
     void reportsMultipleMissingFieldsInStableCatalogOrder() throws Exception {
-        JsonObject request = takeRequest();
-        JsonObject node = takeNode(request);
-        node.remove("target");
-        node.remove("expected_block");
-        node.remove("item");
-
-        String expected = "program.body[0].target: required; "
-                + "program.body[0].expected_block: required; "
-                + "program.body[0].item: required";
-        assertThat(rejection("agent_start_action", request)).isEqualTo(expected);
-
-        JsonObject reorderedRequest = request.deepCopy();
-        JsonObject reordered = new JsonObject();
-        reordered.addProperty("minimum_inventory_count", 64);
-        reordered.addProperty("stack_policy", "default_components_only");
-        reordered.addProperty("op", "take_known_container_stack");
-        reordered.addProperty("id", "take");
-        reorderedRequest.getAsJsonObject("program").getAsJsonArray("body").set(0, reordered);
-        assertThat(rejection("agent_start_action", reorderedRequest)).isEqualTo(expected);
+        String expected = "x: required; y: required; z: required";
+        assertThat(rejection("agent_place_block", json("""
+                {"block":"minecraft:stone","advance":true}
+                """))).isEqualTo(expected);
+        assertThat(rejection("agent_place_block", json("""
+                {"advance":true,"block":"minecraft:stone"}
+                """))).isEqualTo(expected);
     }
 
     @Test
-    void capsAggregatedFailuresAtFourAndFiveHundredTwelveCharacters() throws Exception {
-        JsonObject request = takeRequest();
-        JsonObject node = takeNode(request);
-        node.remove("target");
-        node.remove("expected_block");
-        node.remove("item");
-        node.remove("stack_policy");
-        node.remove("minimum_inventory_count");
-
-        var schema = new McpToolCatalog().inputSchema("agent_start_action");
-        var report = CatalogSchemaValidator.failures(schema, request);
+    void capsAggregatedFailuresAtFourAndFiveHundredTwelveCharacters() {
+        JsonObject schema = json("""
+                {"type":"object","required":["a","b","c","d","e"]}
+                """);
+        var report = CatalogSchemaValidator.failures(schema, new JsonObject());
         assertThat(report.failures()).hasSize(CatalogSchemaValidator.MAX_REPORTED_FAILURES);
         assertThat(report.summary())
-                .hasSizeLessThanOrEqualTo(
-                        CatalogSchemaValidator.MAX_FAILURE_SUMMARY_CHARACTERS)
-                .isEqualTo("program.body[0].target: required; "
-                        + "program.body[0].expected_block: required; "
-                        + "program.body[0].item: required; "
-                        + "program.body[0].stack_policy: required");
-        assertThat(rejection("agent_start_action", request)).isEqualTo(report.summary());
+                .hasSizeLessThanOrEqualTo(CatalogSchemaValidator.MAX_FAILURE_SUMMARY_CHARACTERS)
+                .isEqualTo("a: required; b: required; c: required; d: required");
     }
 
     @Test
@@ -125,17 +85,10 @@ class CatalogSchemaValidatorDiagnosticTest {
 
     @Test
     void aggregatesUnknownPropertiesWithoutReflectingNamesOrValues() throws Exception {
-        JsonObject request = takeRequest();
-        JsonObject node = takeNode(request);
-        node.remove("expected_block");
-        node.remove("item");
-        node.addProperty("secret-token-should-not-echo", "sensitive-value");
-
-        String message = rejection("agent_start_action", request);
-        assertThat(message).isEqualTo(
-                "program.body[0].expected_block: required; "
-                        + "program.body[0].item: required; "
-                        + "program.body[0]: unknown property");
+        String message = rejection("agent_place_block", json("""
+                {"x":1,"y":64,"secret-token-should-not-echo":"sensitive-value"}
+                """));
+        assertThat(message).isEqualTo("z: required; block: required; $: unknown property");
         assertThat(message).doesNotContain("secret", "sensitive");
     }
 
@@ -201,32 +154,8 @@ class CatalogSchemaValidatorDiagnosticTest {
                 .doesNotContain("secret-token");
     }
 
-    private static JsonObject startRequest(java.util.function.Consumer<JsonObject> mutation) {
-        JsonObject request = new McpToolCatalog().inputSchema("agent_start_action")
-                .getAsJsonArray("examples").get(0).getAsJsonObject().deepCopy();
-        mutation.accept(request);
-        return request;
-    }
-
-    private static JsonObject takeRequest() {
-        return new McpToolCatalog().inputSchema("agent_start_action")
-                .getAsJsonArray("examples").asList().stream()
-                .map(example -> example.getAsJsonObject())
-                .filter(example -> example.getAsJsonObject("program").getAsJsonArray("body")
-                        .get(0).getAsJsonObject().get("op").getAsString()
-                        .equals("take_known_container_stack"))
-                .findFirst()
-                .orElseThrow()
-                .deepCopy();
-    }
-
-    private static JsonObject takeNode(JsonObject request) {
-        return request.getAsJsonObject("program").getAsJsonArray("body").get(0)
-                .getAsJsonObject();
-    }
-
-    private static void assertRejected(JsonObject request, String expected) throws Exception {
-        assertRejected("agent_start_action", request, expected);
+    private static JsonObject json(String value) {
+        return JsonParser.parseString(value).getAsJsonObject();
     }
 
     private static void assertRejected(

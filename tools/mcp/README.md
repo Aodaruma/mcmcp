@@ -32,10 +32,10 @@ Use this path only when normal MCP tools are unavailable. Supply exact UTF-8 JSO
 pwsh -NoProfile -File tools/mcp/Invoke-Mcmcp.ps1 `
   -TokenPath 'C:\path\to\minecraft\config\mcmcp\mcp-token' -Tool agent_get_state
 
-# 用意したActionを一度開始し、最大60秒待つ / Start once, then wait up to 60 seconds
+# 用意したスクリプトを一度開始し、最大60秒待つ / Run a script once and wait
 pwsh -NoProfile -File tools/mcp/Invoke-Mcmcp.ps1 `
   -TokenPath 'C:\path\to\minecraft\config\mcmcp\mcp-token' `
-  -Tool agent_start_action -ArgumentsPath './action.json' -WaitSeconds 60
+  -Tool agent_run_script -ArgumentsPath './script.json' -WaitSeconds 60
 
 # v2の座標移動を一度開始し、同じaction_idで完了を待つ
 pwsh -NoProfile -File tools/mcp/Invoke-Mcmcp.ps1 `
@@ -44,11 +44,13 @@ pwsh -NoProfile -File tools/mcp/Invoke-Mcmcp.ps1 `
 ```
 
 - 成功は `ok:true` とschema検証済みの `result`、失敗は `ok:false` と下表の診断を返します。プロセス終了コードはそれぞれ0・1です。`ok:true` は通信・結果形式の成功であり、Actionの完了判定は `result.state` を確認します。
-- `-WaitSeconds` はAction開始成功時の有効なIDだけを待機に使います。`AWAITING_CONSENT` では待たずに結果を返します。各照会は既存の `wait_timeout_ms`（最大25秒）を使います。v2の詳細な作業結果が必要なときは、完了後に `agent_get_action` を `include_result:true` で明示的に呼びます。
+- `-WaitSeconds` はAction開始成功時の有効なIDだけを待機に使います。各照会は既存の `wait_timeout_ms`（最大25秒）を使います。v2の詳細な作業結果が必要なときは、完了後に `agent_get_action` を `include_result:true` で明示的に呼びます。
 - HTTP・JSON-RPC・Toolエラー、ID欠落、schema不一致では待機しません。通信失敗後に開始・移送などのmutationを自動再送しません。応答を失った操作の成否は未確認です。
 - 待機期限やCtrl+Cはクライアントの待機を終えるだけで、Actionを自動cancelしません。取得済みIDがあれば `agent_get_action` で状態を確認し、停止が必要なら `agent_cancel_action` を明示的に呼びます。新しいActionを推測で開始しないでください。
 
-Success returns `ok:true` with schema-validated `result`; failure returns `ok:false` and exits with code 1. Check `result.state` for gameplay completion. Waiting uses only the ID from a successful start and stops on any error; consent responses without an ID are returned immediately. No mutation is replayed. A wait timeout or Ctrl+C does not cancel an Action; inspect the known ID or explicitly cancel it.
+Success returns `ok:true` with schema-validated `result`; failure returns `ok:false` and exits with code 1. Check `result.state` for gameplay completion. Waiting uses only the ID from a successful start and stops on any error; No mutation is replayed. A wait timeout or Ctrl+C does not cancel an Action; inspect the known ID or explicitly cancel it.
+
+`script.json`は、例えば`{"source":"move(x=4, y=65, z=8);"}`です。旧`agent_start_action`とJSON Action DSLはv2では公開しません。
 
 ## 診断 / Diagnostics
 

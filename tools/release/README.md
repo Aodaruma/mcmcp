@@ -25,7 +25,7 @@ python tools/release/build_release.py --docs-only
 python tools/release/build_release.py
 ```
 
-Windowsでは`./gradlew`を`.\gradlew.bat`に置き換えてください。出力先は`build/release/`です。ZIPには本体JAR、README.md/PDF、画像、Action DSLガイド、LICENSE、NOTICE、フォントライセンス、SOURCE.txt、SHA256SUMS.txtを含めます。ゲーム設定・トークン・ワールド・harness/admin JARは含めません。
+Windowsでは`./gradlew`を`.\gradlew.bat`に置き換えてください。出力先は`build/release/`です。ZIPには本体JAR、README.md/PDF、画像、公開API v2ガイド、LICENSE、NOTICE、フォントライセンス、SOURCE.txt、SHA256SUMS.txtを含めます。ゲーム設定・トークン・ワールド・harness/admin JARは含めません。
 
 PDFの本文は`docs/MCMCP_配布用README.md`、画像は`docs/assets/readme/`、印刷スタイルは`tools/release/guide.css`が正本です。TyporaのCSSを流用せず、似た余白・見出し・表・Noteを独自CSSで整えています。通常の引用とGitHub形式`> [!NOTE]`等を表示でき、日本語の太字、明示改ページ、ページ番号を扱います。目次のページ番号はPDFの実際の見出し位置から再計算します。
 

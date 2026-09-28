@@ -13,10 +13,25 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class McpPublicV2ToolsTest {
     private static final UUID ACTION_ID =
             UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
+
+    @Test
+    void scriptReplacesThePublicJsonDslAndOldRequestsCannotDispatch() {
+        var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();
+        var registry = registry(calls);
+        var names = registry.listResult().getAsJsonArray("tools").asList().stream()
+                .map(tool -> tool.getAsJsonObject().get("name").getAsString()).toList();
+        assertThat(names).contains("agent_run_script").doesNotContain("agent_start_action");
+        assertThat(names).hasSize(13);
+        assertThatThrownBy(() -> registry.prepareCall("agent_start_action",
+                LegacyActionSchema.inputSchema().getAsJsonArray("examples").get(0).getAsJsonObject()))
+                .isInstanceOf(McmcpToolRegistry.UnknownToolException.class);
+        assertThat(calls).isEmpty();
+    }
 
     @Test
     void allEightBasicToolsAreDiscoverableAndDeliveryGated() throws Exception {

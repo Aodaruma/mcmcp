@@ -39,6 +39,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($PromptProfile -ceq 'container-inspect-recovery') {
+    throw 'container-inspect-recovery is a v1-only witness profile; use the matching v1 checkout. v2 game verification is separate.'
+}
 $Utf8NoBom = [Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = $Utf8NoBom
 
@@ -91,13 +94,12 @@ $AuthExpirySafetyMargin = [TimeSpan]::FromMinutes(5)
 $MinimumMcpRequestIntervalMilliseconds = 60
 $ExpectedMcmcpServerName = 'mcmcp'
 $ExpectedMcmcpServerVersion = '0.1.0'
-$ExpectedCatalogFileSha256 = '36544488f1ca9fd8e1225c9cc06b3794d40b80af4bd7c7d325cfc60b2af97d3f'
-$ExpectedToolSurfaceSha256 = '9a74b6b329ae7057a70bf85bce8766be02e76e0bd59203b8c355e5d6d597ba81'
+$ExpectedCatalogFileSha256 = '0f96f227bde4a891700cede624b2b7a6771e5fa11f93c09784d693e602e31d5b'
+$ExpectedToolSurfaceSha256 = 'e4ece2d76628e599f2231d7261fd3520dcf6527c7ac2ca5365577491a463c939'
 $AllowedTools = @(
     'agent_get_state',
     'agent_get_mcp_status',
     'agent_get_observation',
-    'agent_start_action',
     'agent_move',
     'agent_break_block',
     'agent_place_block',

@@ -30,6 +30,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+/** Current public transport checks plus frozen v1 fixtures for reused internal executors. */
 class McpToolCatalogTest {
     private static com.google.gson.JsonObject legacyActionOutputSchema() {
         var output = new McpToolCatalog().outputSchema("agent_get_action");
@@ -40,7 +41,7 @@ class McpToolCatalogTest {
 
     @Test
     void exactContainerQuantityIsOptionalBoundedAndDiscoverable() {
-        var definitions = new McpToolCatalog().inputSchema("agent_start_action").getAsJsonObject("$defs");
+        var definitions = LegacyActionSchema.inputSchema().getAsJsonObject("$defs");
         for (String name : List.of("takeContainerStackNode", "storeContainerStackNode")) {
             var node = definitions.getAsJsonObject(name);
             var quantity = node.getAsJsonObject("properties").getAsJsonObject("transfer_count");
@@ -77,7 +78,7 @@ class McpToolCatalogTest {
     @Test
     void copperContainerAllowlistIsSharedByEveryPublishedActionAndRoutingLabelSchema() {
         var catalog = new McpToolCatalog();
-        var schema = catalog.inputSchema("agent_start_action");
+        var schema = LegacyActionSchema.inputSchema();
         var definitions = schema.getAsJsonObject("$defs");
         Set<String> published = Set.copyOf(definitions
                 .getAsJsonObject("knownContainerBlock")
@@ -139,24 +140,15 @@ class McpToolCatalogTest {
     }
 
     @Test
-    void validConstructionExamplePassesAggregateSchemaAndReachesDispatch() throws Exception {
-        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+    void legacyConstructionExampleRemainsValidForTheInternalExecutor() {
+        var schema = LegacyActionSchema.inputSchema();
         var example = schema
                 .getAsJsonArray("examples").asList().stream()
                 .map(value -> value.getAsJsonObject())
                 .filter(value -> value.getAsJsonObject("program").get("name").getAsString()
                         .equals("copy_known_oak_beam"))
                 .findFirst().orElseThrow();
-        var commands = new ArrayList<McpRuntimePort.RuntimeCommand>();
-        var registry = new McmcpToolRegistry((command, context) -> {
-            commands.add(command);
-            return CompletableFuture.completedFuture(
-                    McpRuntimePort.RuntimeReply.success(toolResult(command)));
-        }, Duration.ofSeconds(1));
-
-        var prepared = registry.prepareCall("agent_start_action", example);
-
-        assertThat(commands).singleElement().isInstanceOf(McpRuntimePort.StartAction.class);
+        assertThat(CatalogSchemaValidator.matches(schema, example)).isTrue();
         assertThat(schema.getAsJsonObject("$defs").getAsJsonObject("applyKnownBlockPlanNode")
                 .get("description").getAsString())
                 .contains("adopted without input or placement budget")
@@ -168,8 +160,6 @@ class McpToolCatalogTest {
         assertThat(clear.get("description").getAsString())
                 .contains("later fresh exact air observation")
                 .contains("separate Action after reobservation");
-        registry.abandonDelivery(prepared);
-        assertThat(commands.getLast()).isInstanceOf(McpRuntimePort.AbandonActionDelivery.class);
     }
 
     @Test
@@ -180,19 +170,18 @@ class McpToolCatalogTest {
             return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(
                     toolResult(command)));
         }, Duration.ofSeconds(1));
-        var start = new McpToolCatalog().inputSchema("agent_start_action")
-                .getAsJsonArray("examples").get(0).getAsJsonObject();
+        var start = JsonParser.parseString("{\"x\":4,\"y\":65,\"z\":8}").getAsJsonObject();
 
-        var delivered = registry.prepareCall("agent_start_action", start);
-        assertThat(commands).singleElement().isInstanceOf(McpRuntimePort.StartAction.class);
+        var delivered = registry.prepareCall("agent_move", start);
+        assertThat(commands).singleElement().isInstanceOf(McpRuntimePort.StartMove.class);
         registry.confirmDelivery(delivered);
         assertThat(commands.getLast()).isInstanceOf(McpRuntimePort.ConfirmActionDelivery.class);
 
         commands.clear();
-        var lost = registry.prepareCall("agent_start_action", start);
+        var lost = registry.prepareCall("agent_move", start);
         registry.abandonDelivery(lost);
         assertThat(commands).extracting(Object::getClass).containsExactly(
-                McpRuntimePort.StartAction.class,
+                McpRuntimePort.StartMove.class,
                 McpRuntimePort.AbandonActionDelivery.class);
     }
 
@@ -207,17 +196,16 @@ class McpToolCatalogTest {
         }, Duration.ofSeconds(1));
         var expectation = RuntimeCallContext.EvaluationLeaseExpectation.active(
                 UUID.randomUUID(), 7L);
-        var start = new McpToolCatalog().inputSchema("agent_start_action")
-                .getAsJsonArray("examples").get(0).getAsJsonObject();
+        var start = JsonParser.parseString("{\"x\":4,\"y\":65,\"z\":8}").getAsJsonObject();
 
-        var delivered = registry.prepareCall("agent_start_action", start, expectation);
+        var delivered = registry.prepareCall("agent_move", start, expectation);
         registry.confirmDelivery(delivered);
         assertThat(contexts)
                 .extracting(RuntimeCallContext::evaluationLeaseExpectation)
                 .containsExactly(expectation, expectation);
 
         contexts.clear();
-        var lost = registry.prepareCall("agent_start_action", start, expectation);
+        var lost = registry.prepareCall("agent_move", start, expectation);
         registry.abandonDelivery(lost);
         assertThat(contexts)
                 .extracting(RuntimeCallContext::evaluationLeaseExpectation)
@@ -369,7 +357,7 @@ class McpToolCatalogTest {
                 .contains("partial.resume_requires_reobservation is true")
                 .contains("fetch fresh state or observation and plan a new Action");
 
-        var definitions = catalog.inputSchema("agent_start_action").getAsJsonObject("$defs");
+        var definitions = LegacyActionSchema.inputSchema().getAsJsonObject("$defs");
         var take = definitions.getAsJsonObject("takeContainerStackNode")
                 .getAsJsonObject("properties");
         var store = definitions.getAsJsonObject("storeContainerStackNode")
@@ -424,11 +412,7 @@ class McpToolCatalogTest {
     @Test
     void startActionDescriptionExposesTheClosedGrammarAndAValidExample() {
         var catalog = new McpToolCatalog();
-        var startTool = catalog.listResult().getAsJsonArray("tools").asList().stream()
-                .map(element -> element.getAsJsonObject())
-                .filter(tool -> tool.get("name").getAsString().equals("agent_start_action"))
-                .findFirst()
-                .orElseThrow();
+        var startTool = LegacyActionSchema.tool();
         var schema = startTool.getAsJsonObject("inputSchema");
         String description = startTool.get("description").getAsString();
 
@@ -494,7 +478,7 @@ class McpToolCatalogTest {
 
     @Test
     void catalogAdmitsOnlyTheClosedKnownBlockFaceCameraNodeShape() {
-        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var schema = LegacyActionSchema.inputSchema();
         var request = JsonParser.parseString("""
                 {
                   "schema_version":1,
@@ -542,7 +526,7 @@ class McpToolCatalogTest {
 
     @Test
     void placementApproachCatalogIsMovementOnlyOpaqueAndExclusiveByContract() {
-        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var schema = LegacyActionSchema.inputSchema();
         var definition = schema.getAsJsonObject("$defs")
                 .getAsJsonObject("approachKnownPlacementNode");
 
@@ -580,7 +564,7 @@ class McpToolCatalogTest {
 
     @Test
     void pillarCatalogAcceptsRefOrInlineIdentityButRejectsNullAndMixedForms() {
-        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var schema = LegacyActionSchema.inputSchema();
         var request = JsonParser.parseString("""
                 {
                   "schema_version":1,
@@ -625,7 +609,7 @@ class McpToolCatalogTest {
 
     @Test
     void knownMenuOperationCatalogContractIsClosedTerminalAndBudgeted() {
-        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var schema = LegacyActionSchema.inputSchema();
         var node = schema.getAsJsonObject("$defs").getAsJsonObject("operateKnownMenuNode");
 
         assertThat(node.getAsJsonObject("properties").keySet())
@@ -702,7 +686,7 @@ class McpToolCatalogTest {
 
     @Test
     void redstoneIdentityCatalogSchemaIsClosedAndDiscoverable() {
-        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var schema = LegacyActionSchema.inputSchema();
         var request = JsonParser.parseString("""
                 {
                   "schema_version":1,
@@ -786,7 +770,7 @@ class McpToolCatalogTest {
 
     @Test
     void publishedContainerExamplesLeaveDispatchAndJitHeadroom() {
-        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var schema = LegacyActionSchema.inputSchema();
         var definitions = schema.getAsJsonObject("$defs");
         assertThat(definitions.getAsJsonObject("inspectContainerNode")
                 .get("description").getAsString())
@@ -854,7 +838,7 @@ class McpToolCatalogTest {
 
     @Test
     void knownRecipeCraftContractIsClosedDiscoverableAndBounded() {
-        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var schema = LegacyActionSchema.inputSchema();
         var definition = schema.getAsJsonObject("$defs")
                 .getAsJsonObject("craftKnownRecipeNode");
         assertThat(definition.get("description").getAsString())
@@ -890,7 +874,7 @@ class McpToolCatalogTest {
 
     @Test
     void knownSmeltContractIsClosedDiscoverableAndBounded() {
-        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var schema = LegacyActionSchema.inputSchema();
         var definition = schema.getAsJsonObject("$defs")
                 .getAsJsonObject("smeltKnownRecipeNode");
         assertThat(definition.get("description").getAsString())
@@ -934,7 +918,7 @@ class McpToolCatalogTest {
     @Test
     void brewingContractIsClosedTerminalAndSynchronizedWithStandardPotionPolicy() {
         var catalog = new McpToolCatalog();
-        var schema = catalog.inputSchema("agent_start_action");
+        var schema = LegacyActionSchema.inputSchema();
         var definitions = schema.getAsJsonObject("$defs");
         var brew = definitions.getAsJsonObject("brewKnownPotionBatchNode");
         String contract = brew.get("description").getAsString();
@@ -1055,7 +1039,7 @@ class McpToolCatalogTest {
 
     @Test
     void cropWaitCatalogDocumentsItsExactLiveReadBoundary() {
-        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var schema = LegacyActionSchema.inputSchema();
         String contract = schema.getAsJsonObject("$defs")
                 .getAsJsonObject("waitUntilNode")
                 .get("description").getAsString();
@@ -1092,7 +1076,7 @@ class McpToolCatalogTest {
 
     @Test
     void catalogClosesVisibleItemCollectionAroundContinuousObservationEvidence() {
-        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var schema = LegacyActionSchema.inputSchema();
         var request = schema.getAsJsonArray("examples").get(0).getAsJsonObject().deepCopy();
         var program = request.getAsJsonObject("program");
         program.add("capabilities", JsonParser.parseString("[\"movement\"]"));
@@ -1120,11 +1104,7 @@ class McpToolCatalogTest {
                 .getAsJsonObject().remove("displayed_item");
         assertThat(CatalogSchemaValidator.matches(schema, missingItem)).isFalse();
 
-        var startToolContract = new McpToolCatalog().listResult().getAsJsonArray("tools").asList()
-                .stream()
-                .map(element -> element.getAsJsonObject())
-                .filter(element -> element.get("name").getAsString().equals("agent_start_action"))
-                .findFirst().orElseThrow();
+        var startToolContract = LegacyActionSchema.tool();
         String description = startToolContract.get("description").getAsString();
         String collectContract = schema.getAsJsonObject("$defs")
                 .getAsJsonObject("collectVisibleItemNode").get("description").getAsString();
@@ -1185,7 +1165,7 @@ class McpToolCatalogTest {
     @Test
     void catalogSchemasDriveInputAndOutputValidation() {
         var catalog = new McpToolCatalog();
-        var actionSchema = catalog.inputSchema("agent_start_action");
+        var actionSchema = LegacyActionSchema.inputSchema();
         assertThat(CatalogSchemaValidator.matches(
                 actionSchema, actionSchema.getAsJsonArray("examples").get(0))).isTrue();
 
@@ -1315,7 +1295,7 @@ class McpToolCatalogTest {
         assertThat(refreshTools).anySatisfy(value ->
                 assertThat(value.getAsString()).isEqualTo("agent_get_action"));
 
-        assertThat(catalog.inputSchema("agent_start_action").getAsJsonObject("$defs")
+        assertThat(LegacyActionSchema.inputSchema().getAsJsonObject("$defs")
                 .getAsJsonObject("fishingSplashCondition").get("description").getAsString())
                 .contains("max_ticks is additionally limited to 900")
                 .contains("1200-tick fishing_session_ref");
@@ -1334,7 +1314,7 @@ class McpToolCatalogTest {
 
     @Test
     void catalogClosesAndBoundsCropMaturityWaits() {
-        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var schema = LegacyActionSchema.inputSchema();
         var request = schema.getAsJsonArray("examples").get(0).getAsJsonObject().deepCopy();
         var wait = JsonParser.parseString("""
                 {"id":"await_mature","op":"wait_until",
@@ -1362,7 +1342,7 @@ class McpToolCatalogTest {
 
     @Test
     void catalogClosesBoundedInputHoldsAndPublishesTheTwentyFourHourCeiling() {
-        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var schema = LegacyActionSchema.inputSchema();
         var definitions = schema.getAsJsonObject("$defs");
         var hold = definitions.getAsJsonObject("holdBoundedInputsNode");
         var properties = hold.getAsJsonObject("properties");
@@ -1422,7 +1402,7 @@ class McpToolCatalogTest {
 
     @Test
     void catalogAdmitsOnlyTheClosedFenceGateOpenNodeShape() {
-        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var schema = LegacyActionSchema.inputSchema();
         var request = schema.getAsJsonArray("examples").get(0).getAsJsonObject().deepCopy();
         var program = request.getAsJsonObject("program");
         program.add("capabilities", JsonParser.parseString(
@@ -1445,7 +1425,7 @@ class McpToolCatalogTest {
 
     @Test
     void catalogAdmitsBoundedPassageAndContainerNodesWithoutAddingTools() {
-        var schema = new McpToolCatalog().inputSchema("agent_start_action");
+        var schema = LegacyActionSchema.inputSchema();
         var request = schema.getAsJsonArray("examples").get(0).getAsJsonObject().deepCopy();
         var program = request.getAsJsonObject("program");
         program.add("capabilities", JsonParser.parseString(
@@ -1653,13 +1633,12 @@ class McpToolCatalogTest {
                 {"schema_version":1,"frame_id":"obs-0000000000000000",
                  "kinds":["visible_surface"],"cursor":null,"limit":1}
                 """).getAsJsonObject();
-        var start = catalog.inputSchema("agent_start_action")
-                .getAsJsonArray("examples").get(0).getAsJsonObject();
+        var start = JsonParser.parseString("{\"x\":4,\"y\":65,\"z\":8}").getAsJsonObject();
         var action = new com.google.gson.JsonObject();
         action.addProperty("action_id", "550e8400-e29b-41d4-a716-446655440000");
         assertThat(registry.call("agent_get_observation", observation).get("isError").getAsBoolean())
                 .isFalse();
-        assertThat(registry.call("agent_start_action", start).get("isError").getAsBoolean())
+        assertThat(registry.call("agent_move", start).get("isError").getAsBoolean())
                 .isFalse();
         assertThat(registry.call("agent_get_action", action).get("isError").getAsBoolean())
                 .isFalse();
@@ -1753,12 +1732,9 @@ class McpToolCatalogTest {
                     "action_id", "550e8400-e29b-41d4-a716-446655440000",
                     "state", "queued",
                     "accepted_at", "2026-08-26T00:00:00Z");
-            case McpRuntimePort.StartInputSequence ignored -> throw new AssertionError(
-                    "The v2 input sequence is not in the public catalog yet");
-            case McpRuntimePort.StartMove ignored -> throw new AssertionError(
-                    "The v2 move tool is not in the public catalog yet");
-            case McpRuntimePort.StartBreakBlock ignored -> throw new AssertionError(
-                    "The v2 break tool is not in the public catalog yet");
+            case McpRuntimePort.StartInputSequence ignored -> v2Queued();
+            case McpRuntimePort.StartMove ignored -> v2Queued();
+            case McpRuntimePort.StartBreakBlock ignored -> v2Queued();
             case McpRuntimePort.GetAction ignored -> nullableMap(
                     "schema_version", 1,
                     "action_id", "550e8400-e29b-41d4-a716-446655440000",
@@ -1813,6 +1789,10 @@ class McpToolCatalogTest {
                     "abandoned", true);
             default -> throw new AssertionError("Legacy runtime command escaped the public registry");
         };
+    }
+
+    private static Map<String, Object> v2Queued() {
+        return Map.of("schema_version", 2, "action_id", "550e8400-e29b-41d4-a716-446655440000", "state", "queued");
     }
 
     private static Map<String, Object> nullableMap(Object... pairs) {

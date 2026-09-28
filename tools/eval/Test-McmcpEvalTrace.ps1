@@ -62,8 +62,8 @@ $AuditPromptProfile = if ($PSCmdlet.ParameterSetName -eq 'Audit') {
 }
 $AuditProfile = $EvaluationProfiles[$AuditPromptProfile]
 $ProductionPrompt = [string]$AuditProfile['prompt']
-$ExpectedCatalogFileSha256 = '36544488f1ca9fd8e1225c9cc06b3794d40b80af4bd7c7d325cfc60b2af97d3f'
-$ExpectedToolSurfaceSha256 = '9a74b6b329ae7057a70bf85bce8766be02e76e0bd59203b8c355e5d6d597ba81'
+$ExpectedCatalogFileSha256 = '0f96f227bde4a891700cede624b2b7a6771e5fa11f93c09784d693e602e31d5b'
+$ExpectedToolSurfaceSha256 = 'e4ece2d76628e599f2231d7261fd3520dcf6527c7ac2ca5365577491a463c939'
 $ExpectedEvaluatorTimeoutSeconds = [int]$AuditProfile['timeout_minutes'] * 60
 $TurnCompletionReserveSeconds = 15
 $MaximumMcpForwardSeconds = 35
@@ -74,7 +74,6 @@ $AllowedTools = @(
     'agent_get_state',
     'agent_get_mcp_status',
     'agent_get_observation',
-    'agent_start_action',
     'agent_move',
     'agent_break_block',
     'agent_place_block',
@@ -2049,7 +2048,7 @@ function Invoke-TraceAudit {
         $manualReviewRequired.Add('製品commitとbuild記録、baseline復元、起動済みJARとFPS設定を別の起動前記録で照合すること。disk attestationだけではruntime一致を証明しない')
         $manualReviewRequired.Add('通常FPS1回とmaxFps=10の1〜3回を同一baseline・製品commit・JAR hashで比較すること。not_exercisedは欠測回復PASSに数えない')
     }
-    $manualReviewRequired.Add('agent_start_action の target が先行する正規MCP観測に由来すること')
+    $manualReviewRequired.Add('未観測座標への要求でも、MODが実行時の局所観測・reach・停止条件を確認したこと')
     $manualReviewRequired.Add('agent_get_action(wait_timeout_ms=25000) をterminalまで反復し、非terminal timeout snapshotをエラー扱いしていないこと')
     if ($AuditPromptProfile -ceq 'hard-building-copy') {
         $manualReviewRequired.Add(
@@ -3200,7 +3199,8 @@ function Invoke-AuditSelfTest {
         http_status = 429
     }
 
-    # Exercise the entire strict trace -> correlated witness path, not just the module.
+    # Historical v1 recovery traces must fail the current v2 tool allowlist.
+    # The legacy witness parser has its own standalone regression tests.
     $recoveryProfilePrompt = [string]$EvaluationProfiles['container-inspect-recovery']['prompt']
     $recoveryId = '00000000-0000-4000-8000-000000000001'
     $recoveryTarget = @{ dimension = 'minecraft:overworld'; x = 1; y = 64; z = 2 }
@@ -3413,9 +3413,9 @@ function Invoke-AuditSelfTest {
 
     $cases = @(
         [ordered]@{
-            name = 'recovery_profile_witnessed'; trace = $recoveryTrace; bridge = $recoveryBridge
-            expected_profile = 'container-inspect-recovery'; expected_exit = 0
-            required = @(); expected_recovery = 'witnessed'
+            name = 'retired_dsl_recovery_trace_rejected'; trace = $recoveryTrace; bridge = $recoveryBridge
+            expected_profile = 'container-inspect-recovery'; expected_exit = 1
+            required = @("orphan/forbidden bridge dynamic call 'call_1'")
         },
         [ordered]@{
             name = 'recovery_profile_no_attestation'; trace = $recoveryTrace; bridge = $recoveryMissingAttestation

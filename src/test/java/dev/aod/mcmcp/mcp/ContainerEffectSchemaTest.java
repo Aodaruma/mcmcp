@@ -69,7 +69,7 @@ class ContainerEffectSchemaTest {
                 gson.toJsonTree(Map.of("transferred", 896)))).isTrue();
         assertThat(CatalogSchemaValidator.matches(observation,
                 gson.toJsonTree(Map.of("transferred", 897)))).isFalse();
-        var nodes = catalog.inputSchema("agent_start_action").getAsJsonObject("$defs");
+        var nodes = LegacyActionSchema.inputSchema().getAsJsonObject("$defs");
         assertThat(nodes.getAsJsonObject("takeContainerStackNode").getAsJsonObject("properties")
                 .getAsJsonObject("minimum_inventory_count").get("maximum").getAsInt())
                 .isEqualTo(2_304);
