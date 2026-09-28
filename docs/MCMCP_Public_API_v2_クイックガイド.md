@@ -1,6 +1,6 @@
 # 公開API v2 クイックガイド
 
-開発中のv2用。実ゲームでの合格確認が残るため、配布済みv1と区別してください。旧`agent_start_action`／JSON Action DSLは公開しません。
+開発中のv2用。基本操作の[実機smoke](experiments/20260928_public_api_v2_local.md)は通過しましたが、所持収納・追加停止経路・未実装機能の確認が残るため、配布済みv1と区別してください。旧`agent_start_action`／JSON Action DSLは公開しません。
 
 ## 公開ツール
 

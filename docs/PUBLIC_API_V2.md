@@ -1,6 +1,6 @@
 # MCMCP公開API v2：改訂案
 
-2026-09-28の実装状況・未確認事項・再開順序は[進捗と再開メモ](PUBLIC_API_V2_STATUS_20260928.md)を参照。利用者の依頼により開発を一時停止し、この設計案の完成目標と実装済みの範囲を区別する。
+実装状況・未確認事項は[進捗と再開メモ](PUBLIC_API_V2_STATUS_20260928.md)、2026-09-28の再開後の実機結果は[ローカルsmoke記録](experiments/20260928_public_api_v2_local.md)を参照。この設計案の完成目標、実装済み、実機確認済みの範囲を区別する。
 
 2026-09-27。利用者の追加フィードバックを反映した実装用の設計案。基準は`main`の`f7d4bf4`。2026-09-28のDraft PRでは基本行動8ツールを一組で公開catalogへ接続した。旧JSON Action DSLの開始ツールは公開catalog・受付から削除し、13ツールになった。旧DSLの入力schemaは内部実行器の回帰試験用resourceにだけ残し、本体JARには同梱しない。実ゲーム確認と不足する行動範囲が残るため、v2完成・配布済みとは扱わない。
 
@@ -45,9 +45,9 @@ Draft PRで公開した範囲は、moveの座標／方向、Vanillaのbreak/plac
 
 内部の`AgentJobStore`はDSLから独立した共通job状態を保持する。HTTP応答の配送確認前は開始できず、world session違い・取消・操作回数上限で次の操作を拒否する。取消と既に発行した操作の結果が競合しても進行数を記録し、入力解放が確認されるまでterminal結果を公表しない。保持する結果は最新jobと直前の完了jobに限る。内部のinput sequenceと座標moveはruntimeのclient tick、配送確認、進行取得、取消へ接続済み。公開toolへ接続済みだが、ゲームでの入力所有・lease解放は未検証。部分結果の詳細は引き続き実装・試験する。
 
-`AgentJobStore`はjob固有の小さな`result`もterminal後と直前jobまで保持する。`agent_inventory({operation:"inspect"})`は配送確認後のclient tickでプレイヤーの全所持枠を読み、非空slotの番号・item ID・個数、空枠数、選択中のhotbar枠を返す。任意のitem IDで絞り込め、MOD itemも同じ形式で扱う。`operation:"swap"`はitem ID、main inventoryのsource slot（9～35）、hotbar slot（0～8）を指定し、両slotのserver payloadで交換を確認する。hotbar枠が空でなくても交換するため、数量指定の移送とは区別する。`operation:"drop"`はitem IDと1～64個の数量を取り、同じIDのstackが複数あればslot番号で特定させる。main inventoryのstackは一度だけ選択中のhotbar枠へSWAPし、両slotのサーバー更新を確認してから投棄する。各DROP packetの後は選択枠のサーバーpayloadとローカル所持品が要求どおり変化するまで次を送らない。不確実な送信・応答切れでは再送せず、確定数と未確定数を結果に残す。SWAP後の配置は元に戻さず、結果でその可能性を示す。これらのプレイヤー所持品操作はmenuを開かない。
+`AgentJobStore`はjob固有の小さな`result`もterminal後と直前jobまで保持する。`agent_inventory({operation:"inspect"})`は配送確認後のclient tickでプレイヤーの全所持枠を読み、非空slotの番号・item ID・個数、空枠数、選択中のhotbar枠を返す。任意のitem IDで絞り込め、MOD itemも同じ形式で扱う。`operation:"swap"`はitem ID、main inventoryのsource slot（9～35）、hotbar slot（0～8）を指定し、両slotのserver payloadで交換を確認する。hotbar枠が空でなくても交換するため、数量指定の移送とは区別する。`operation:"drop"`はitem IDと1～64個の数量を取り、同じIDのstackが複数あればslot番号で特定させる。main inventoryのstackは一度だけ選択中のhotbar枠へSWAPし、両slotのサーバー更新を確認してから投棄する。所持品menuの通常THROWをclient予測なしで送り、各入力の後は選択枠のサーバーpayloadとローカル所持品が要求どおり変化するまで次を送らない。不確実な送信・応答切れでは再送せず、確定数と未確定数を結果に残す。SWAP後の配置は元に戻さず、結果でその可能性を示す。これらのプレイヤー所持品操作はmenuを開かない。
 
-収納の確認は`agent_inventory({operation:"inspect",target:"container",x:4,y:65,z:8})`、取り出し／収納は`{operation:"transfer",target:"container",x:4,y:65,z:8,direction:"take",item:"minecraft:stone",count:13}`（収納は`direction:"store"`）で行う。`block`条件とinspectの`item`絞込みは任意。未観測座標も受け付け、既定の`advance:true`で局所観測した経路を通り、操作距離内の見える面から開ける。総移動距離は既定64 block・最大256、総時間は既定／最大1200 tick。`advance:false`で移動を禁止できる。現段階ではチェスト、樽、8種の銅チェストに対応する。内部の所有menu・slot確認処理を共有し、transferは1～896個の指定数を移し、再開封して照合する。取消・失敗時も`confirmed_count`、`unconfirmed`、確認済み／不確実な数量変化を残し、menuと入力を解放するまでterminalにしない。inspectは確認済みの内容をitem ID別に集約し、絞込み指定時だけ該当IDを返す。公開catalogとscriptの`inventory(...)`へ接続済みだが、MOD収納の汎用接続とこれらのv2経路の実機確認は残る。
+収納の確認は`agent_inventory({operation:"inspect",target:"container",x:4,y:65,z:8})`、取り出し／収納は`{operation:"transfer",target:"container",x:4,y:65,z:8,direction:"take",item:"minecraft:stone",count:13}`（収納は`direction:"store"`）で行う。`block`条件とinspectの`item`絞込みは任意。未観測座標も受け付け、既定の`advance:true`で局所観測した経路を通り、操作距離内の見える面から開ける。総移動距離は既定64 block・最大256、総時間は既定／最大1200 tick。`advance:false`で移動を禁止できる。現段階ではチェスト、樽、8種の銅チェストに対応する。内部の所有menu・slot確認処理を共有し、transferは1～896個の指定数を移し、再開封して照合する。取消・失敗時も`confirmed_count`、`unconfirmed`、確認済み／不確実な数量変化を残し、menuと入力を解放するまでterminalにしない。inspectは確認済みの内容をitem ID別に集約し、絞込み指定時だけ該当IDを返す。公開catalogとscriptの`inventory(...)`へ接続済み。チェストのinspect／take3／store2は実機smokeで確認したが、MOD収納の汎用接続、他の収納種類・数量・取消の実機確認は残る。
 
 収納transferは現在、既存処理が検証できる通常item・slotに限り、最大14個のsource stackと14回のPICKUP入力で事前計画できる数量を扱う。`count`の上限内でもこの条件や容量に収まらない場合は入力前に拒否する。この制限を任意MOD収納への汎用対応が完了したものとは扱わない。
 
@@ -61,7 +61,7 @@ move＋breakを利用側で毎ブロック交互に呼ぶ必要はない。`agen
 
 `agent_interact({target:"item"})`は選択中の手持ちitemを一度使用する。`item`でVanilla／MODのitem IDを指定すると所持品から選び、main inventoryにしかない場合は選択hotbar枠へ一度SWAPしてserver確認後に使う。`hold_ticks`は既定40・最大1000、`max_ticks`は既定max(200, hold_ticks+80)・最大1200。通常のuseItemと有限のUSE入力を使用し、終了・取消で長押しを解放し、元の選択枠へ戻す。SWAPした所持品配置そのものは戻さず、結果に記録する。単発使用では、使い終わったitemを自動で再使用しない。取消も通常の使用キー解放を行うため、弓など解放時に発動するitemの効果を巻き戻すものではない。
 
-item使用の既定完了は、クライアント側で使用を受け付けたこと（または確認済み所持品変化）、長押し終了、該当prediction sequenceのserver ACKを条件とする。これはitem固有のworld効果の保証ではない。結果の`server_processed`と、selected slotの新しいserver payloadから確認できた`effect_confirmed`を分ける。`result_item`を任意指定した場合は、そのitem IDになった新しいserver payloadとローカル手持ちの一致も待つ。確認できないまま期限に達した操作を再送しない。menuを開く操作は後続対応で、現段階では画面境界で停止する。クライアントの長押し保持hookと実ゲームでの飲食・取消は未確認。
+item使用の既定完了は、クライアント側で使用を受け付けたこと（または確認済み所持品変化）、長押し終了、該当prediction sequenceのserver ACKを条件とする。これはitem固有のworld効果の保証ではない。結果の`server_processed`と、selected slotの新しいserver payloadから確認できた`effect_confirmed`を分ける。`result_item`を任意指定した場合は、そのitem IDになった新しいserver payloadとローカル手持ちの一致も待つ。確認できないまま期限に達した操作を再送しない。menuを開く操作は後続対応で、現段階では画面境界で停止する。長押し保持hookはmilkの飲用完了（server ACKとbucketへの更新）で実機確認した。使用中取消や他item固有の効果は今回の実機範囲外。
 
 `agent_interact({target:"entity",entity_ref:"観測の参照",item:"minecraft:bucket",result_item:"minecraft:milk_bucket"})`は手の届く観測済みentityへ照準を合わせ、MAIN_HANDで通常のentity操作を一度だけ行う。`entity_type`は任意の種類条件。`item`省略時は現在の手持ち、`minecraft:air`なら空枠を選ぶ。itemと同じ持ち替え／server確認処理を共有し、main inventoryからの交換後は配置を元に戻さない。entityの種類やitemにVanilla専用allowlistを設けず、登録MODの通常操作へ渡す。別entityへの置換、遮蔽、reach外、画面・session変更では停止する。遠方entityへの自動接近とmenu操作は未対応。
 
@@ -71,7 +71,7 @@ entity packetにはitem使用のprediction ACKがないため、`result_item`省
 
 公開言語はJavaScript風の小さな同期言語。turtle／p5.jsのように`move(...)`、`breakBlocks(...)`、`place(...)`、`interact(...)`、`input(...)`を順に書ける。行動関数はオブジェクト引数ではなく`move(x=100, y=64, z=120)`のような名前付き引数を受ける。変数、数値・文字列・真偽値・配列・オブジェクト、`if`、回数上限付き`for`／`repeat`、利用者定義の小関数、比較を当面の対象とする。`async/await`、Promise、Node.js、module読込み、Javaへのアクセス、ネットワーク、ファイルI/Oは言語仕様に入れない。完全なECMAScriptを走らせる必要はない。
 
-実装済みの構文例（公開`agent_run_script`で受け付けるが実ゲーム未検証）:
+実装済みの構文例（公開`agent_run_script`で受け付ける。移動2反復＋inventoryの実機smokeは成功したが、以下の複合例全体の実機確認ではない）:
 
 ```js
 function advance(x, count) {
@@ -166,7 +166,7 @@ snapshotの既知の安全な停止候補を目標への直線距離、同距離
 3. 基本行動ツールを一組で公開する。まず既存の内部実行器を再利用し、目標は公開DSLの撤去と単一のjob実行基盤に収束させること。
 4. 範囲指定の破壊・設置、経路中の破壊・移動、道具fallbackを隔離fixtureで試験する。
 5. 制限付きスクリプトと入力sequenceを接続し、有限ループ・取消・部分成功・入力解放を試験する。
-6. 必要な箇所を許可済みの隔離Dockerで軽く実機確認する。従来方式の長時間の成功率計測は着手条件にしない。公開後の比較は補助として行う。main統合・Releaseは別指示まで行わない。
+6. 必要な箇所を独立したローカル検証profileまたは許可済みの隔離Dockerで軽く実機確認する。従来方式の長時間の成功率計測は着手条件にしない。公開後の比較は補助として行う。main統合・Releaseは別指示まで行わない。
 
 ## 参照
 

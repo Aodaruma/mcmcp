@@ -1,0 +1,26 @@
+{
+  "source_commit": "e79f59888e2aece6d426437e0d4c545f8e27384a",
+  "production_sha256": "6acde6beacbea21c812c390568332ccf5bcd8a21005204085ff3eda633dbdde5",
+  "fixture_admin_sha256": "9b4aeb58e57c6ac3353fe8d553f55971cf11b50766506b4e9c2cd7dc6a584230",
+  "build_candidate_and_installed_hash_match": true,
+  "world_session_id": "f4b2d604-2959-4982-b37f-8e7c6f96df69",
+  "prepared_save_file_count": 52,
+  "minecraft": "26.2",
+  "neoforge": "26.2.0.59",
+  "java": "Zulu 25",
+  "mode": "survival",
+  "difficulty": "peaceful",
+  "baseline_fixture_sha256": "75f2f8a5d210cec181729a9674220b9d79e65190d8af947fd33f69a84b061791",
+  "post_hazard_observation": {
+    "observation": "Player fell from a high place after hazard terminal; survival after input release is not certified.",
+    "time": "2026-09-28T23:24:58.773+09:00"
+  },
+  "checks": {
+    "skipped": 0,
+    "failures": 0,
+    "fixture_admin": 28,
+    "java": 1577,
+    "errors": 0,
+    "harness": 13
+  }
+}

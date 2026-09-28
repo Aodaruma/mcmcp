@@ -1,0 +1,46 @@
+[
+  {
+    "file": "cancel-03.json",
+    "sha256": "8fc117a2b0beca35e1109f35a20bf997188cbcc226f2c85e7ea86d62d8dce030"
+  },
+  {
+    "file": "candidate.json",
+    "sha256": "eef1741657a054f2cf77d51fd1f3a1919c8aa34bf767244fb1a55f5919fea66d"
+  },
+  {
+    "file": "core-01.json",
+    "sha256": "59e67ac2f5d79dbb2ee0885880bae457ec8c12d3720ba885902d30277afacd69"
+  },
+  {
+    "file": "core-02.json",
+    "sha256": "4365f5c80efcee7ab528e8d8f69f21099e9d9481b3d2b69a83a151788cee2a1f"
+  },
+  {
+    "file": "core-03.json",
+    "sha256": "3bbf769c9d7b52d8cae855a627ed52ec04785189c9e5a0af9975910a439c8fc7"
+  },
+  {
+    "file": "hazard-03.json",
+    "sha256": "9216b6e6db1a7f974a56bddf129f84e9d7d1b4bd1c7c8dd18cb1607012e20929"
+  },
+  {
+    "file": "hazard-04.json",
+    "sha256": "4b0633f570293af3b0f909fea7d110199c569f2647bdde4fbe7cd5467f11e559"
+  },
+  {
+    "file": "hazard-controller.json",
+    "sha256": "8fbaacc5146c4be1cc9d6245d83828331ebcfbfb9f26b9d178d292db723c0d3b"
+  },
+  {
+    "file": "hazard-reposition.json",
+    "sha256": "6e6def08b6f518af1e2c017aca96e52abc30af5aae52ad8a765407db75894178"
+  },
+  {
+    "file": "item-entity-03.json",
+    "sha256": "9ed31d8566207862ca1936a07ec86cad7017bdee11929755e957dbf3d9f3127b"
+  },
+  {
+    "file": "restoration.json",
+    "sha256": "0f3c837718c50e578e240d82937b21889e10ae04b9d391cdf3d388f7ce03c99e"
+  }
+]

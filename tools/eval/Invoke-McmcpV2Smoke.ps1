@@ -249,6 +249,6 @@ function Invoke-McmcpV2Smoke {
 
 if (-not $LibraryOnly) {
     $result = Invoke-McmcpV2Smoke
-    $result | Select-Object status, phase, failure, active_action_id | ConvertTo-Json -Compress
+    [pscustomobject]$result | Select-Object status, phase, failure, active_action_id | ConvertTo-Json -Compress
     if ($result.status -cne 'passed') { exit 1 }
 }
