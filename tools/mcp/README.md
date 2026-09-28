@@ -44,7 +44,7 @@ pwsh -NoProfile -File tools/mcp/Invoke-Mcmcp.ps1 `
 ```
 
 - 成功は `ok:true` とschema検証済みの `result`、失敗は `ok:false` と下表の診断を返します。プロセス終了コードはそれぞれ0・1です。`ok:true` は通信・結果形式の成功であり、Actionの完了判定は `result.state` を確認します。
-- `-WaitSeconds` はAction開始成功時の有効なIDだけを待機に使います。`AWAITING_CONSENT` では待たずに結果を返します。各照会は既存の `wait_timeout_ms`（最大25秒）を使います。
+- `-WaitSeconds` はAction開始成功時の有効なIDだけを待機に使います。`AWAITING_CONSENT` では待たずに結果を返します。各照会は既存の `wait_timeout_ms`（最大25秒）を使います。v2の詳細な作業結果が必要なときは、完了後に `agent_get_action` を `include_result:true` で明示的に呼びます。
 - HTTP・JSON-RPC・Toolエラー、ID欠落、schema不一致では待機しません。通信失敗後に開始・移送などのmutationを自動再送しません。応答を失った操作の成否は未確認です。
 - 待機期限やCtrl+Cはクライアントの待機を終えるだけで、Actionを自動cancelしません。取得済みIDがあれば `agent_get_action` で状態を確認し、停止が必要なら `agent_cancel_action` を明示的に呼びます。新しいActionを推測で開始しないでください。
 
