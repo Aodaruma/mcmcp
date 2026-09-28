@@ -1526,6 +1526,11 @@ class McpToolCatalogTest {
         var immediate = new com.google.gson.JsonObject();
         immediate.addProperty("action_id", "550e8400-e29b-41d4-a716-446655440000");
         assertThat(CatalogSchemaValidator.matches(schema, immediate)).isTrue();
+        var detailed = immediate.deepCopy();
+        detailed.addProperty("include_result", true);
+        assertThat(CatalogSchemaValidator.matches(schema, detailed)).isTrue();
+        detailed.addProperty("include_result", "true");
+        assertThat(CatalogSchemaValidator.matches(schema, detailed)).isFalse();
 
         var maximum = immediate.deepCopy();
         maximum.addProperty(

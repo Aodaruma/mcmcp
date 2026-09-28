@@ -226,8 +226,11 @@ class McmcpRuntimeV2InputRoutingTest {
             Thread.sleep(5);
         }
         assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.SUCCEEDED);
-        var result = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+        var summary = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
                 Map.of("action_id", id.toString()));
+        assertThat(summary.containsKey("result")).isFalse();
+        var result = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString(), "include_result", true));
         assertThat(result.get("kind")).isEqualTo("script");
         assertThat(((Map<?, ?>) result.get("result")).get("completed_commands")).isEqualTo(1);
     }
@@ -240,9 +243,29 @@ class McmcpRuntimeV2InputRoutingTest {
         store.confirm(id, 1);
         store.start(id, session);
         store.recordBlockProgress(id, 2, 1);
+        store.recordResult(id, Map.of("confirmed_count", 1));
         var payload = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
                 Map.of("action_id", id.toString()));
         assertThat(payload.get("kind")).isEqualTo("place_block");
+        assertThat(payload.containsKey("result")).isFalse();
+        var detailed = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString(), "include_result", true));
+        assertThat(detailed.get("result")).isEqualTo(Map.of("confirmed_count", 1));
+        var publicSummary = runtime.submit(new dev.aod.mcmcp.mcp.McpRuntimePort.GetAction(
+                Map.of("action_id", id.toString())),
+                dev.aod.mcmcp.mcp.RuntimeCallContext.withTimeout(
+                        java.time.Duration.ofSeconds(2)))
+                .toCompletableFuture().get();
+        assertThat(publicSummary.successful()).isTrue();
+        assertThat(publicSummary.data().containsKey("result")).isFalse();
+        var publicDetail = runtime.submit(new dev.aod.mcmcp.mcp.McpRuntimePort.GetAction(
+                Map.of("action_id", id.toString(), "include_result", true)),
+                dev.aod.mcmcp.mcp.RuntimeCallContext.withTimeout(
+                        java.time.Duration.ofSeconds(2)))
+                .toCompletableFuture().get();
+        assertThat(publicDetail.successful()).isTrue();
+        assertThat(publicDetail.data().get("result"))
+                .isEqualTo(Map.of("confirmed_count", 1));
         var progress = (Map<?, ?>) payload.get("progress");
         assertThat(progress.get("scanned_cells")).isEqualTo(2);
         assertThat(progress.get("placed_blocks")).isEqualTo(1);

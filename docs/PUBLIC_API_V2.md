@@ -37,7 +37,7 @@ LLMは行き先、作業範囲、条件、反復の意図を伝える。MODは�
 
 Draft PRで公開した範囲は、moveの座標／方向、Vanillaのbreak/place、block state変更のinteract、プレイヤーinventoryのinspect/drop、world内の有限click、9種類の論理入力、制限付きscriptである。moveの障害物自動破壊・設置、entity/item/menuのinteract、汎用container transfer、menu内clickはまだ対応しない。v2の`get_action`は進行数と小さな結果を返すが、block作業では確定セル座標と確認済みの変更前後block stateを直近最大128件、総数・保持開始番号・打切り有無とともに返す。drop・消費item等を含む詳細effectは未実装。実ゲームでの成功・取消・危険停止を確認するまでDraftを維持する。
 
-これらの一呼出しは共通の`action_id`を返す。短い処理は同じ応答へ完了結果を載せられる。長い処理は`running`と`action_id`を返す。`agent_get_action({action_id})`は**その一件**の進行、成功／失敗、確定した変更、途中までの結果を読む。`agent_cancel_action({action_id})`は**その一件**の停止を要求する。たとえば`agent_move`が坑道を掘り進めている間も、同じIDで進行を見て中止できる。中止は既に壊したblockを戻さない。名前は既存互換のため残し、v2では共通の「作業結果・中止」ツールとして説明する。
+これらの一呼出しは共通の`action_id`を返す。短い処理は同じ応答へ完了結果を載せられる。長い処理は`running`と`action_id`を返す。`agent_get_action({action_id})`は**その一件**の進行、成功／失敗を短く返す。確定した変更と途中までの結果は`include_result:true`で明示要求する。`agent_cancel_action({action_id})`は**その一件**の停止を要求する。たとえば`agent_move`が坑道を掘り進めている間も、同じIDで進行を見て中止できる。中止は既に壊したblockを戻さない。名前は既存互換のため残し、v2では共通の「作業結果・中止」ツールとして説明する。
 
 内部の`AgentJobStore`はDSLから独立した共通job状態を保持する。HTTP応答の配送確認前は開始できず、world session違い・取消・操作回数上限で次の操作を拒否する。取消と既に発行した操作の結果が競合しても進行数を記録し、入力解放が確認されるまでterminal結果を公表しない。保持する結果は最新jobと直前の完了jobに限る。内部のinput sequenceと座標moveはruntimeのclient tick、配送確認、進行取得、取消へ接続済み。公開toolへ接続済みだが、ゲームでの入力所有・lease解放は未検証。部分結果の詳細は引き続き実装・試験する。
 

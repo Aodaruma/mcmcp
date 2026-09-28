@@ -1218,6 +1218,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         try {
             UUID requestedId = RuntimeArguments.actionId(command.arguments());
             int requestedWaitMillis = agentActionWaitTimeoutMillis(command.arguments());
+            boolean includeV2Result = includeV2Result(command.arguments());
             var containerQuery = ContainerInspection.Query.parse(command.arguments());
             if (requestedWaitMillis > 0 && Thread.currentThread() == clientThread) {
                 return CompletableFuture.completedFuture(RuntimeReply.failure(
@@ -1233,14 +1234,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 var snapshot = scriptJobs.awaitTerminal(requestedId, effectiveWaitMillis);
                 RuntimeReply reply = withEvaluationLeaseFence(
                         context, command.toolName(),
-                        () -> RuntimeReply.success(v2JobPayload(snapshot)));
+                        () -> RuntimeReply.success(v2JobPayload(snapshot, includeV2Result)));
                 return CompletableFuture.completedFuture(reply);
             }
             if (isV2Job(requestedId)) {
                 var snapshot = v2Jobs.awaitTerminal(requestedId, effectiveWaitMillis);
                 RuntimeReply reply = withEvaluationLeaseFence(
                         context, command.toolName(),
-                        () -> RuntimeReply.success(v2JobPayload(snapshot)));
+                        () -> RuntimeReply.success(v2JobPayload(snapshot, includeV2Result)));
                 return CompletableFuture.completedFuture(reply);
             }
             AgentActionStore.Snapshot snapshot = agentActions.awaitTerminal(
@@ -2646,8 +2647,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private Map<String, Object> getAgentAction(Map<String, Object> arguments) {
         agentActionWaitTimeoutMillis(arguments);
         UUID requestedId = RuntimeArguments.actionId(arguments);
-        if (isScriptJob(requestedId)) return v2JobPayload(scriptJobs.get(requestedId));
-        if (isV2Job(requestedId)) return v2JobPayload(v2Jobs.get(requestedId));
+        boolean includeV2Result = includeV2Result(arguments);
+        if (isScriptJob(requestedId)) {
+            return v2JobPayload(scriptJobs.get(requestedId), includeV2Result);
+        }
+        if (isV2Job(requestedId)) {
+            return v2JobPayload(v2Jobs.get(requestedId), includeV2Result);
+        }
         return ActionWireMapper.actionPayload(agentActions.get(requestedId), ContainerInspection.Query.parse(arguments));
     }
 
@@ -2660,7 +2666,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
-    private static Map<String, Object> v2JobPayload(AgentJobStore.Snapshot snapshot) {
+    private static Map<String, Object> v2JobPayload(
+            AgentJobStore.Snapshot snapshot, boolean includeResult) {
         var payload = new LinkedHashMap<String, Object>();
         payload.put("schema_version", 2);
         payload.put("action_id", snapshot.actionId().toString());
@@ -2683,7 +2690,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         payload.put("progress", Collections.unmodifiableMap(progress));
         payload.put("cancel_requested", snapshot.cancelRequested());
         payload.put("failure", snapshot.failure());
-        if (!snapshot.result().isEmpty()) payload.put("result", snapshot.result());
+        if (includeResult && !snapshot.result().isEmpty()) {
+            payload.put("result", snapshot.result());
+        }
         return Collections.unmodifiableMap(payload);
     }
 
@@ -2699,7 +2708,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     static int agentActionWaitTimeoutMillis(Map<String, Object> arguments) {
         RuntimeArguments.requireAllowedKeys(
                 arguments, "agent_get_action", Set.of("action_id", "wait_timeout_ms",
-                        "include_container_results", "container_results_cursor", "container_results_limit"));
+                        "include_container_results", "container_results_cursor",
+                        "container_results_limit", "include_result"));
         if (!arguments.containsKey("action_id")) {
             throw new IllegalArgumentException("agent_get_action must contain action_id");
         }
@@ -2712,6 +2722,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     + AgentActionStore.MAX_TERMINAL_WAIT_MILLIS);
         }
         return timeoutMillis;
+    }
+
+    private static boolean includeV2Result(Map<String, Object> arguments) {
+        return arguments.containsKey("include_result")
+                && RuntimeArguments.booleanArgument(arguments, "include_result");
     }
 
     private Map<String, Object> cancelAgentAction(
