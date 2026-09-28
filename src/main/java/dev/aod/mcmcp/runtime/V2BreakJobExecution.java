@@ -98,6 +98,7 @@ final class V2BreakJobExecution {
                     }
                     case SKIPPED -> {
                         index++;
+                        jobs.recordBlockProgress(actionId, index, broken);
                         observationWaitTicks = 0;
                         return jobs.get(actionId);
                     }
@@ -121,10 +122,11 @@ final class V2BreakJobExecution {
             return switch (step) {
                 case RUNNING -> jobs.get(actionId);
                 case CONFIRMED -> {
-                    driver.close();
-                    targetActive = false;
                     index++;
                     broken++;
+                    jobs.recordBlockProgress(actionId, index, broken);
+                    driver.close();
+                    targetActive = false;
                     if (index >= cells.size() || broken >= request.maxBlocks()) {
                         retainTerminal(AgentJobStore.State.SUCCEEDED, null);
                         yield publishAfterRelease();

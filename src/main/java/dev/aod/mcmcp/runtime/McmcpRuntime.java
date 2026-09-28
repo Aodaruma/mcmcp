@@ -2011,9 +2011,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         payload.put("action_id", snapshot.actionId().toString());
         payload.put("kind", snapshot.kind().name().toLowerCase(Locale.ROOT));
         payload.put("state", snapshot.state().name().toLowerCase(Locale.ROOT));
-        payload.put("progress", Map.of(
-                "completed_operations", snapshot.completedOperations(),
-                "max_operations", snapshot.maxOperations()));
+        var progress = new LinkedHashMap<String, Object>();
+        progress.put("completed_operations", snapshot.completedOperations());
+        progress.put("max_operations", snapshot.maxOperations());
+        if (snapshot.kind() == AgentJobStore.Kind.BREAK_BLOCK) {
+            progress.put("scanned_cells", snapshot.scannedCells());
+            progress.put("broken_blocks", snapshot.brokenBlocks());
+        }
+        payload.put("progress", Collections.unmodifiableMap(progress));
         payload.put("cancel_requested", snapshot.cancelRequested());
         payload.put("failure", snapshot.failure());
         return Collections.unmodifiableMap(payload);

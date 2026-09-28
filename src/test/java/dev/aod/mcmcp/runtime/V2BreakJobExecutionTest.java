@@ -50,6 +50,10 @@ class V2BreakJobExecutionTest {
                 new NavCell("minecraft:overworld", 11, 64, 20),
                 new NavCell("minecraft:overworld", 12, 64, 20));
         assertThat(store.get(id).completedOperations()).isEqualTo(2);
+        assertThat(store.get(id).scannedCells()).isEqualTo(3);
+        assertThat(store.get(id).brokenBlocks()).isEqualTo(2);
+        store.reserve(AgentJobStore.Kind.MOVE, SESSION, 10, 100);
+        assertThat(store.get(id).brokenBlocks()).isEqualTo(2);
     }
 
     @Test

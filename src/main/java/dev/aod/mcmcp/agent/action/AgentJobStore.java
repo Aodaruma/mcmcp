@@ -94,6 +94,19 @@ public final class AgentJobStore {
         notifyAll();
     }
 
+    /** Retain confirmed block progress even after the execution owner releases its inputs. */
+    public synchronized void recordBlockProgress(UUID actionId, int scannedCells, int brokenBlocks) {
+        Job job = current(actionId);
+        if (job.kind != Kind.BREAK_BLOCK || job.state != State.RUNNING
+                || scannedCells < job.scannedCells || scannedCells > BlockWorkRegion.MAX_CELLS
+                || brokenBlocks < job.brokenBlocks || brokenBlocks > scannedCells) {
+            throw new IllegalArgumentException("invalid block progress");
+        }
+        job.scannedCells = scannedCells;
+        job.brokenBlocks = brokenBlocks;
+        notifyAll();
+    }
+
     /** Cancellation is a request; the owner must release inputs before publishing a terminal state. */
     public synchronized boolean requestCancel(UUID actionId) {
         Job job = current(actionId);
@@ -186,6 +199,7 @@ public final class AgentJobStore {
 
     public record Snapshot(UUID actionId, Kind kind, UUID worldSessionId, State state,
                            int completedOperations, int maxOperations,
+                           int scannedCells, int brokenBlocks,
                            boolean cancelRequested, String failure) { }
 
     public static final class NotFoundException extends RuntimeException { }
@@ -198,6 +212,8 @@ public final class AgentJobStore {
         final long confirmationDeadlineNanos;
         State state = State.UNCONFIRMED;
         int completedOperations;
+        int scannedCells;
+        int brokenBlocks;
         boolean cancelRequested;
         String failure;
 
@@ -212,7 +228,7 @@ public final class AgentJobStore {
 
         Snapshot snapshot() {
             return new Snapshot(id, kind, worldSessionId, state, completedOperations,
-                    maxOperations, cancelRequested, failure);
+                    maxOperations, scannedCells, brokenBlocks, cancelRequested, failure);
         }
     }
 }

@@ -130,6 +130,9 @@ class McmcpRuntimeV2InputRoutingTest {
                 Map.of("action_id", id.toString()));
         assertThat(queued.get("kind")).isEqualTo("break_block");
         assertThat(queued.get("state")).isEqualTo("queued");
+        var progress = (Map<?, ?>) queued.get("progress");
+        assertThat(progress.get("scanned_cells")).isEqualTo(0);
+        assertThat(progress.get("broken_blocks")).isEqualTo(0);
         var cancelled = (Map<?, ?>) invoke("cancelAgentAction",
                 new Class<?>[]{net.minecraft.client.Minecraft.class, Map.class},
                 null, Map.of("action_id", id.toString()));
