@@ -37,6 +37,8 @@ LLMは行き先、作業範囲、条件、反復の意図を伝える。MODは�
 
 これらの一呼出しは共通の`action_id`を返す。短い処理は同じ応答へ完了結果を載せられる。長い処理は`running`と`action_id`を返す。`agent_get_action({action_id})`は**その一件**の進行、成功／失敗、確定した変更、途中までの結果を読む。`agent_cancel_action({action_id})`は**その一件**の停止を要求する。たとえば`agent_move`が坑道を掘り進めている間も、同じIDで進行を見て中止できる。中止は既に壊したblockを戻さない。名前は既存互換のため残し、v2では共通の「作業結果・中止」ツールとして説明する。
 
+内部の`AgentJobStore`はDSLから独立した共通job状態を保持する。HTTP応答の配送確認前は開始できず、world session違い・取消・操作回数上限で次の操作を拒否する。取消とserver ACKが競合しても確認済み操作数を記録し、入力解放が確認されるまでterminal結果を公表しない。保持する結果は最新jobと直前の完了jobに限る。**現段階では状態管理だけであり、runtime／公開tool／ゲーム入力には未接続**。旧Actionとの排他、部分結果の詳細、lease解放の実証は接続時に実装・試験する。
+
 move＋breakを利用側で毎ブロック交互に呼ぶ必要はない。`agent_move`に`clear_path`を指定する、または`agent_break_block`に`advance:true`を指定して坑道を連続施工できる。範囲内で新たに露出したblockはMODが局所的に観測し、液体、落下、危険な敵、inventory満杯等で停止・報告する。既存PR #26の坑道専用DSLは参考にするが、公開上の専用命令増殖は避ける。
 
 破壊の`expected_drop`や完全な`expected_state`は必須にしない。道具は採掘可能性、速度、耐久、Silk Touch/Fortune等の条件を見て選び、適切なものがなければ他の道具または素手へfallbackできる。ただし指定した成果物が得られない可能性は結果に表す。位置、上限、block条件、除外条件を優先して、誤って別blockまで壊さない。設置ではitemと座標を基本にし、向き等のstate指定は任意にする。
