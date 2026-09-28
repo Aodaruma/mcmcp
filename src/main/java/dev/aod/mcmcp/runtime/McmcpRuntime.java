@@ -158,6 +158,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private InputSequenceJobExecution v2InputExecution;
     private CoordinateMoveJobExecution v2MoveExecution;
     private V2BlockJobExecution<V2BreakArguments> v2BreakExecution;
+    private V2BlockJobExecution<V2PlaceArguments> v2PlaceExecution;
     private Object v2InputPlayerIdentity;
     private Object v2InputLevelIdentity;
     private long v2InputControlEpoch;
@@ -178,6 +179,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private Vec3 v2BreakLastPosition;
     private double v2BreakTravelled;
     private double v2BreakMaxDistance;
+    private Object v2PlacePlayerIdentity;
+    private Object v2PlaceLevelIdentity;
+    private long v2PlaceControlEpoch;
+    private float v2PlaceHealthBaseline;
+    private Vec3 v2PlaceLastPosition;
+    private double v2PlaceTravelled;
+    private double v2PlaceMaxDistance;
     private boolean pendingAgentInputRelease;
     private boolean agentInputReleaseFaultLogged;
     private boolean pendingAgentReturnReady;
@@ -526,6 +534,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         tickActiveRoutine(minecraft);
         tickV2Move(minecraft);
         tickV2Break(minecraft);
+        tickV2Place(minecraft);
         tickV2InputSequence(minecraft);
         tickAgentAction(minecraft);
         publishSession();
@@ -844,6 +853,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || v2InputExecution != null
                 || v2MoveExecution != null
                 || v2BreakExecution != null
+                || v2PlaceExecution != null
                 || pendingAgentInputRelease
                 || pendingAgentTerminal != null
                 || agentExecution != null
@@ -853,6 +863,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || inbox.hasPendingCommand("agent_input_sequence")
                 || inbox.hasPendingCommand("agent_move")
                 || inbox.hasPendingCommand("agent_break_block")
+                || inbox.hasPendingCommand("agent_place_block")
                 || routineLifecycle.hasPendingFinalizations()
                 || routineLifecycle.hasVoiceOwner();
     }
@@ -920,6 +931,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (v2BreakExecution != null) {
             var stopped = v2BreakExecution.stop("world_boundary");
             finishV2BreakIfTerminal(stopped);
+        }
+        if (v2PlaceExecution != null) {
+            var stopped = v2PlaceExecution.stop("world_boundary");
+            finishV2PlaceIfTerminal(stopped);
         }
         clearAutomationPortSession("v2_break", v2BreakPort::clearSession);
         FrameDisplaySyncSignals.global().clear();
@@ -1028,6 +1043,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 && v2InputExecution == null
                 && v2MoveExecution == null
                 && v2BreakExecution == null
+                && v2PlaceExecution == null
                 && routines.activeRoutineId().isEmpty()
                 && pendingAgentTerminal == null
                 && !pendingAgentInputRelease
@@ -1039,7 +1055,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 && !inbox.hasPendingCommand("agent_start_action")
                 && !inbox.hasPendingCommand("agent_input_sequence")
                 && !inbox.hasPendingCommand("agent_move")
-                && !inbox.hasPendingCommand("agent_break_block");
+                && !inbox.hasPendingCommand("agent_break_block")
+                && !inbox.hasPendingCommand("agent_place_block");
     }
 
     @Override
@@ -1086,6 +1103,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         if (command instanceof StartBreakBlock block) {
             return submitV2BreakStart(block, context);
+        }
+        if (command instanceof StartPlaceBlock block) {
+            return submitV2PlaceStart(block, context);
         }
         if (command instanceof GetAction action) {
             return submitAgentGetAction(action, context);
@@ -1328,6 +1348,24 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 });
     }
 
+    private CompletionStage<RuntimeReply> submitV2PlaceStart(
+            StartPlaceBlock command, RuntimeCallContext context) {
+        var fence = publishedSession;
+        return inbox.submitControlMapped(
+                command.toolName(), fence.generation(), context.deadlineNanos(),
+                () -> withEvaluationLeaseFence(context, command.toolName(), () -> {
+                    var result = commitV2Place(
+                            Minecraft.getInstance(), sessions.snapshot(), command.arguments(), context);
+                    return RuntimeReply.success(result, new McpRuntimePort.ActionDeliveryReceipt(
+                            UUID.fromString((String) result.get("action_id"))));
+                }),
+                RuntimeFailures::mapFailure,
+                context::isCancelled,
+                reply -> {
+                    if (reply.successful()) rollbackAbandonedV2Place(reply.data());
+                });
+    }
+
     private Map<String, Object> commitV2Break(
             Minecraft minecraft, WorldSessionTracker.Snapshot session,
             Map<String, Object> arguments, RuntimeCallContext context) {
@@ -1343,7 +1381,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
                 || v2InputExecution != null || v2MoveExecution != null
-                || v2BreakExecution != null || routines.activeRoutineId().isPresent()) {
+                || v2BreakExecution != null || v2PlaceExecution != null
+                || routines.activeRoutineId().isPresent()) {
             throw new RuntimeInvocationException(
                     "task_busy", "Another action is already queued or running.", true, Map.of());
         }
@@ -1388,6 +1427,66 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return Map.of("schema_version", 2, "action_id", actionId.toString(), "state", "queued");
     }
 
+    private Map<String, Object> commitV2Place(
+            Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            Map<String, Object> arguments, RuntimeCallContext context) {
+        assertClientThread(minecraft);
+        RuntimeFailures.requireReady(session);
+        var request = V2PlaceArguments.parse(arguments, session.dimension());
+        if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
+                || endpointFaultCode != null || !multiplayerPolicyAllows(minecraft)
+                || !v2InputWorldSafe(minecraft, session)) {
+            throw new RuntimeInvocationException(
+                    "unsafe_state", "Place requires a safe local world state.", true, Map.of());
+        }
+        if (pendingAgentInputRelease || agentExecution != null
+                || agentActions.active().isPresent() || v2Jobs.active().isPresent()
+                || v2InputExecution != null || v2MoveExecution != null
+                || v2BreakExecution != null || v2PlaceExecution != null
+                || routines.activeRoutineId().isPresent()) {
+            throw new RuntimeInvocationException(
+                    "task_busy", "Another action is already queued or running.", true, Map.of());
+        }
+        requireLiveCall(context, "agent_place_block");
+        if (!arming.beginAction(session.worldSessionId())) {
+            throw new RuntimeInvocationException(
+                    "mcp_operation_disabled", "The READY authorization is no longer available.",
+                    true, Map.of());
+        }
+        UUID actionId = null;
+        try {
+            requireLiveCall(context, "agent_place_block");
+            actionId = v2Jobs.reserve(AgentJobStore.Kind.PLACE_BLOCK, session.worldSessionId(),
+                    request.maxTicks(), System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS);
+            var driver = new MinecraftV2PlaceDriver(minecraft, sessions::snapshot,
+                    agentObservations, reconciliationSignals, ClientPredictionSignals.global());
+            v2PlaceExecution = new V2BlockJobExecution<>(v2Jobs, actionId,
+                    session.worldSessionId(), AgentJobStore.Kind.PLACE_BLOCK,
+                    request, driver, () -> {
+                        boolean released = boundedActionInputRelease(
+                                () -> releaseAllAndConfirmNoInputOwner(minecraft));
+                        if (!released) arming.lock("v2_place_release_failed");
+                        return released;
+                    });
+            v2PlacePlayerIdentity = minecraft.player;
+            v2PlaceLevelIdentity = minecraft.level;
+            v2PlaceControlEpoch = arming.snapshot(session.worldSessionId()).controlEpoch();
+            v2PlaceHealthBaseline = minecraft.player.getHealth()
+                    + minecraft.player.getAbsorptionAmount();
+            v2PlaceLastPosition = minecraft.player.position();
+            v2PlaceTravelled = 0.0D;
+            v2PlaceMaxDistance = request.maxDistance();
+            requireLiveCall(context, "agent_place_block");
+        } catch (RuntimeException | LinkageError failure) {
+            if (actionId != null) v2Jobs.abandon(actionId);
+            v2PlaceExecution = null;
+            clearV2PlaceWitness();
+            arming.completeAction(session.worldSessionId());
+            throw failure;
+        }
+        return Map.of("schema_version", 2, "action_id", actionId.toString(), "state", "queued");
+    }
+
     private Map<String, Object> commitV2Move(
             Minecraft minecraft, WorldSessionTracker.Snapshot session,
             Map<String, Object> arguments, RuntimeCallContext context) {
@@ -1403,7 +1502,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
                 || v2InputExecution != null || v2MoveExecution != null
-                || v2BreakExecution != null
+                || v2BreakExecution != null || v2PlaceExecution != null
                 || routines.activeRoutineId().isPresent()) {
             throw new RuntimeInvocationException(
                     "task_busy", "Another action is already queued or running.", true, Map.of());
@@ -1483,7 +1582,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
                 || v2InputExecution != null || v2MoveExecution != null
-                || v2BreakExecution != null
+                || v2BreakExecution != null || v2PlaceExecution != null
                 || routines.activeRoutineId().isPresent()) {
             throw new RuntimeInvocationException(
                     "task_busy", "Another action is already queued or running.", true, Map.of());
@@ -1552,6 +1651,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     throw new AssertionError("agent_move must use delivery-gated admission");
             case StartBreakBlock ignored ->
                     throw new AssertionError("agent_break_block must use delivery-gated admission");
+            case StartPlaceBlock ignored ->
+                    throw new AssertionError("agent_place_block must use delivery-gated admission");
             case GetAction action -> getAgentAction(action.arguments());
             case CancelAction action -> cancelAgentAction(minecraft, action.arguments());
             case ConfirmActionDelivery delivery -> confirmAgentActionDelivery(delivery.actionId());
@@ -2071,6 +2172,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             } else if (requested && before.kind() == AgentJobStore.Kind.BREAK_BLOCK
                     && v2BreakExecution != null) {
                 finishV2BreakIfTerminal(v2BreakExecution.cancel());
+            } else if (requested && before.kind() == AgentJobStore.Kind.PLACE_BLOCK
+                    && v2PlaceExecution != null) {
+                finishV2PlaceIfTerminal(v2PlaceExecution.cancel());
             } else if (requested) {
                 throw new RuntimeInvocationException(
                         "unsafe_state", "The job owner is unavailable.", true, Map.of());
@@ -2534,6 +2638,46 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
+    private void tickV2Place(Minecraft minecraft) {
+        if (v2PlaceExecution == null) return;
+        var session = sessions.snapshot();
+        try {
+            boolean safe = v2InputWorldSafe(minecraft, session)
+                    && minecraft.player == v2PlacePlayerIdentity
+                    && minecraft.level == v2PlaceLevelIdentity
+                    && !paused && !minecraft.isPaused() && endpointFaultCode == null;
+            var control = arming.snapshot(session.worldSessionId());
+            safe &= control.mode() == LocalArmingState.Mode.AGENT
+                    && control.controlEpoch() == v2PlaceControlEpoch;
+            if (safe && v2PlaceLastPosition != null) {
+                Vec3 position = minecraft.player.position();
+                v2PlaceTravelled += position.distanceTo(v2PlaceLastPosition);
+                v2PlaceLastPosition = position;
+                safe = v2PlaceTravelled <= v2PlaceMaxDistance
+                        && minecraft.player.getHealth()
+                                + minecraft.player.getAbsorptionAmount()
+                                >= v2PlaceHealthBaseline;
+            }
+            var result = v2PlaceExecution.tick(session.worldSessionId(), session.clientTick(),
+                    System.nanoTime(), safe,
+                    () -> v2Jobs.active().isPresent()
+                            && arming.snapshot(session.worldSessionId()).mode()
+                                    == LocalArmingState.Mode.AGENT
+                            && arming.snapshot(session.worldSessionId()).controlEpoch()
+                                    == v2PlaceControlEpoch
+                            && !paused && endpointFaultCode == null);
+            finishV2PlaceIfTerminal(result);
+        } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error("MCMCP v2 place failed", failure);
+            try {
+                finishV2PlaceIfTerminal(v2PlaceExecution.stop("runtime_exception"));
+            } catch (RuntimeException | LinkageError cleanupFailure) {
+                McmcpMod.LOGGER.error("MCMCP v2 place cleanup failed", cleanupFailure);
+                arming.lock("v2_place_cleanup_failed");
+            }
+        }
+    }
+
     private boolean v2InputWorldSafe(Minecraft minecraft, WorldSessionTracker.Snapshot session) {
         if (!localControlAvailable(minecraft, session)) return false;
         var player = minecraft.player;
@@ -2577,6 +2721,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             finishV2MoveIfTerminal(result);
         } else if (result.kind() == AgentJobStore.Kind.BREAK_BLOCK) {
             finishV2BreakIfTerminal(result);
+        } else if (result.kind() == AgentJobStore.Kind.PLACE_BLOCK) {
+            finishV2PlaceIfTerminal(result);
         } else if (result.kind() == AgentJobStore.Kind.INPUT_SEQUENCE) {
             finishV2InputIfTerminal(result);
         }
@@ -2638,6 +2784,37 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             var job = v2Jobs.get(UUID.fromString(id));
             if (job.kind() == AgentJobStore.Kind.BREAK_BLOCK && !job.state().terminal()) {
                 finishV2BreakIfTerminal(v2BreakExecution.stop("delivery_not_confirmed"));
+            }
+        } catch (AgentJobStore.NotFoundException | IllegalArgumentException ignored) {
+            // An older delivery receipt cannot stop the newer job owner.
+        }
+    }
+
+    private void finishV2PlaceIfTerminal(AgentJobStore.Snapshot result) {
+        if (!result.state().terminal()) return;
+        v2PlaceExecution = null;
+        clearV2PlaceWitness();
+        returnControlReady();
+    }
+
+    private void clearV2PlaceWitness() {
+        v2PlacePlayerIdentity = null;
+        v2PlaceLevelIdentity = null;
+        v2PlaceLastPosition = null;
+        v2PlaceTravelled = 0.0D;
+        v2PlaceMaxDistance = 0.0D;
+        v2PlaceHealthBaseline = 0.0F;
+        v2PlaceControlEpoch = 0L;
+    }
+
+    private void rollbackAbandonedV2Place(Map<String, Object> receipt) {
+        if (v2PlaceExecution == null) return;
+        Object rawId = receipt.get("action_id");
+        if (!(rawId instanceof String id)) return;
+        try {
+            var job = v2Jobs.get(UUID.fromString(id));
+            if (job.kind() == AgentJobStore.Kind.PLACE_BLOCK && !job.state().terminal()) {
+                finishV2PlaceIfTerminal(v2PlaceExecution.stop("delivery_not_confirmed"));
             }
         } catch (AgentJobStore.NotFoundException | IllegalArgumentException ignored) {
             // An older delivery receipt cannot stop the newer job owner.
@@ -4432,6 +4609,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || v2InputExecution != null
                 || v2MoveExecution != null
                 || v2BreakExecution != null
+                || v2PlaceExecution != null
                 || v2Jobs.active().isPresent()) {
             retainReadyAfterDeferredAgentRelease();
             return;
@@ -4789,6 +4967,21 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             } catch (RuntimeException | LinkageError failure) {
                 v2Progress = ClientCommandInbox.StopProgress.FAILED;
                 McmcpMod.LOGGER.error("MCMCP emergency v2 break termination failed", failure);
+            }
+        }
+        if (v2PlaceExecution != null) {
+            try {
+                var stopped = v2PlaceExecution.stop(RuntimeFailures.sanitizeLocalCode(reason));
+                var placeProgress = stopped.state().terminal()
+                        ? ClientCommandInbox.StopProgress.COMPLETE
+                        : ClientCommandInbox.StopProgress.PENDING;
+                if (placeProgress == ClientCommandInbox.StopProgress.PENDING) {
+                    v2Progress = placeProgress;
+                }
+                finishV2PlaceIfTerminal(stopped);
+            } catch (RuntimeException | LinkageError failure) {
+                v2Progress = ClientCommandInbox.StopProgress.FAILED;
+                McmcpMod.LOGGER.error("MCMCP emergency v2 place termination failed", failure);
             }
         }
         AgentActionStore.FailureCode actionCode = "local_ui_disabled".equals(reason)

@@ -55,7 +55,10 @@ record V2PlaceArguments(BlockWorkRegion region, String blockId, String itemId,
     }
 
     boolean acceptsTarget(String blockId) {
-        return replaceBlocks.isEmpty() ? "minecraft:air".equals(blockId)
+        return replaceBlocks.isEmpty()
+                ? "minecraft:air".equals(blockId)
+                        || "minecraft:cave_air".equals(blockId)
+                        || "minecraft:void_air".equals(blockId)
                 : replaceBlocks.contains(blockId);
     }
 

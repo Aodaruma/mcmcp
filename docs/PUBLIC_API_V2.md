@@ -113,7 +113,9 @@ snapshotの既知の安全な停止候補を目標への直線距離、同距離
 
 `BlockWorkRegion`は破壊・設置で共用する座標範囲を保持する。`x/y/z`は始点、`dx/dy/dz`は符号付きの**終点差分**で、両端を含む。差分0は単一座標。X、Z、Yの順で安定して列挙し、最大4,096 cellと整数overflowを検査する。将来の楕円・path形状は現時点の契約に含めない。
 
-内部の`V2PlaceArguments`は同じ範囲、必須のVanilla `block`、省略可能な`item`・`properties`・`replace_blocks`と作業上限を受理する。`item`省略時はblock IDと同じitemを選ぶ。`properties`省略時は設置結果の既定stateを受け入れる。`replace_blocks`省略時はairだけを対象とし、他のblockへの置換は明示条件が必要。破壊と設置は`V2BlockJobExecution`の配送確認・範囲進行・取消・入力解放後の終端確定を共用し、進行結果では`broken_blocks`と`placed_blocks`を別名で返す。設置のMinecraft driverとruntime入口は未接続で、まだゲームへの設置や公開toolには接続していない。
+内部の`V2PlaceArguments`は同じ範囲、必須のVanilla `block`、省略可能な`item`・`properties`・`replace_blocks`と作業上限を受理する。`item`省略時はblock IDと同じitemを選ぶ。`properties`省略時は設置結果の既定stateを受け入れる。`replace_blocks`省略時はair系blockだけを対象とし、他のblockへの置換は明示条件が必要。破壊と設置は`V2BlockJobExecution`の配送確認・範囲進行・取消・入力解放後の終端確定を共用し、進行結果では`broken_blocks`と`placed_blocks`を別名で返す。
+
+内部の`StartPlaceBlock`はruntimeのclient tickへ接続した。現時点の`MinecraftV2PlaceDriver`は、手の届く単一cellについて、局所観測済みの支持面を選び、hotbarの通常BlockItemを使って設置し、予測sequenceとサーバーACK・設置後stateを照合する。支持面との不用意なinteractを避けるため短期leaseでかがみ、実crosshair・置き先・予測stateを使用直前に再確認する。ベッド・扉など複数cellを作るitemは、派生cellの所有・照合が未実装のため現時点では拒否する。範囲は共通jobが順に処理するが、遠方への自動接近、main inventoryからhotbarへの資材移動、特殊item、全Vanilla状態の実機確認は未実装。`advance`は現在まだ移動を起こさない。公開catalogには載せていない。
 
 内部の`V2BreakArguments`は未観測座標でも受け、任意の`include_blocks`／`exclude_blocks`、最大破壊数・実行tick・移動距離、`advance`を保持する。条件は新たに観測したblockへ適用する想定で、これらの引数を受理する公開ツールはまだない。`V2BreakSourcePolicy`はv1の固定許可リストから独立し、明示対象の登録済みVanilla非air blockを扱う。既存の攻撃leaseと予測確認ポートはv1ポリシーを既定として残し、v2専用インスタンスだけ新ポリシーを使える。`KnownBlockBreakAttempt`はv2向けに、期待dropなしでもサーバーACKと権威あるairへの遷移で成功を確定できる。局所rayの照準選択は、MCPへの観測配送を必須とせず、現在の視点・reach・revision・観測時刻に合う内部frameだけを使う。
 

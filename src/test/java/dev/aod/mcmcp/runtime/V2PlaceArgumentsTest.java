@@ -18,6 +18,7 @@ class V2PlaceArgumentsTest {
         assertThat(request.itemId()).isEqualTo("minecraft:stone");
         assertThat(request.properties()).isEmpty();
         assertThat(request.acceptsTarget("minecraft:air")).isTrue();
+        assertThat(request.acceptsTarget("minecraft:cave_air")).isTrue();
         assertThat(request.acceptsTarget("minecraft:dirt")).isFalse();
     }
 
