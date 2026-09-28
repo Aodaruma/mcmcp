@@ -95,15 +95,16 @@ public final class AgentJobStore {
     }
 
     /** Retain confirmed block progress even after the execution owner releases its inputs. */
-    public synchronized void recordBlockProgress(UUID actionId, int scannedCells, int brokenBlocks) {
+    public synchronized void recordBlockProgress(UUID actionId, int scannedCells, int completedBlocks) {
         Job job = current(actionId);
-        if (job.kind != Kind.BREAK_BLOCK || job.state != State.RUNNING
+        if ((job.kind != Kind.BREAK_BLOCK && job.kind != Kind.PLACE_BLOCK)
+                || job.state != State.RUNNING
                 || scannedCells < job.scannedCells || scannedCells > BlockWorkRegion.MAX_CELLS
-                || brokenBlocks < job.brokenBlocks || brokenBlocks > scannedCells) {
+                || completedBlocks < job.completedBlocks || completedBlocks > scannedCells) {
             throw new IllegalArgumentException("invalid block progress");
         }
         job.scannedCells = scannedCells;
-        job.brokenBlocks = brokenBlocks;
+        job.completedBlocks = completedBlocks;
         notifyAll();
     }
 
@@ -199,7 +200,7 @@ public final class AgentJobStore {
 
     public record Snapshot(UUID actionId, Kind kind, UUID worldSessionId, State state,
                            int completedOperations, int maxOperations,
-                           int scannedCells, int brokenBlocks,
+                           int scannedCells, int completedBlocks,
                            boolean cancelRequested, String failure) { }
 
     public static final class NotFoundException extends RuntimeException { }
@@ -213,7 +214,7 @@ public final class AgentJobStore {
         State state = State.UNCONFIRMED;
         int completedOperations;
         int scannedCells;
-        int brokenBlocks;
+        int completedBlocks;
         boolean cancelRequested;
         String failure;
 
@@ -228,7 +229,7 @@ public final class AgentJobStore {
 
         Snapshot snapshot() {
             return new Snapshot(id, kind, worldSessionId, state, completedOperations,
-                    maxOperations, scannedCells, brokenBlocks, cancelRequested, failure);
+                    maxOperations, scannedCells, completedBlocks, cancelRequested, failure);
         }
     }
 }

@@ -21,6 +21,15 @@ public final class V2BlockAimResolver {
     public static Optional<Result> resolve(ObservationFrame frame, NavCell target,
             Vec3 currentEye, UUID worldSessionId, long currentTick,
             long currentRevision, long surfaceBarrierRevision) {
+        return resolve(frame, target, null, currentEye, worldSessionId,
+                currentTick, currentRevision, surfaceBarrierRevision);
+    }
+
+    /** A placement support must expose the particular face adjacent to its target cell. */
+    public static Optional<Result> resolve(ObservationFrame frame, NavCell target,
+            ObservationRecord.Face requiredFace, Vec3 currentEye,
+            UUID worldSessionId, long currentTick,
+            long currentRevision, long surfaceBarrierRevision) {
         Objects.requireNonNull(frame, "frame");
         Objects.requireNonNull(target, "target");
         Objects.requireNonNull(currentEye, "currentEye");
@@ -34,6 +43,7 @@ public final class V2BlockAimResolver {
         for (var record : frame.records()) {
             if (!(record instanceof ObservationRecord.VisibleSurface surface)
                     || surface.rayHit() == null
+                    || (requiredFace != null && surface.face() != requiredFace)
                     || surface.position().x() != target.x()
                     || surface.position().y() != target.y()
                     || surface.position().z() != target.z()

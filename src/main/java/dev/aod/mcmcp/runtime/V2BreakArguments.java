@@ -11,7 +11,8 @@ import java.util.Set;
 /** A coordinate or signed inclusive box; observed block details are optional. */
 record V2BreakArguments(BlockWorkRegion region, Set<String> includeBlocks,
                         Set<String> excludeBlocks, int maxBlocks,
-                        int maxTicks, double maxDistance, boolean advance) {
+                        int maxTicks, double maxDistance, boolean advance)
+        implements V2BlockWorkRequest {
     V2BreakArguments {
         Objects.requireNonNull(region, "region");
         includeBlocks = Set.copyOf(includeBlocks);

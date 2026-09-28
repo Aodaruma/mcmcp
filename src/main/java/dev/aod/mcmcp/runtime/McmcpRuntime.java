@@ -157,7 +157,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private AgentExecution agentExecution;
     private InputSequenceJobExecution v2InputExecution;
     private CoordinateMoveJobExecution v2MoveExecution;
-    private V2BreakJobExecution v2BreakExecution;
+    private V2BlockJobExecution<V2BreakArguments> v2BreakExecution;
     private Object v2InputPlayerIdentity;
     private Object v2InputLevelIdentity;
     private long v2InputControlEpoch;
@@ -1361,8 +1361,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             var driver = new MinecraftV2BreakDriver(minecraft, sessions::snapshot,
                     agentObservations, reconciliationSignals, v2BreakPort,
                     () -> v2BreakMaxDistance - v2BreakTravelled);
-            v2BreakExecution = new V2BreakJobExecution(v2Jobs, actionId,
-                    session.worldSessionId(), request, driver, () -> {
+            v2BreakExecution = new V2BlockJobExecution<>(v2Jobs, actionId,
+                    session.worldSessionId(), AgentJobStore.Kind.BREAK_BLOCK,
+                    request, driver, () -> {
                         boolean released = boundedActionInputRelease(
                                 () -> releaseAllAndConfirmNoInputOwner(minecraft));
                         if (!released) arming.lock("v2_break_release_failed");
@@ -2015,9 +2016,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var progress = new LinkedHashMap<String, Object>();
         progress.put("completed_operations", snapshot.completedOperations());
         progress.put("max_operations", snapshot.maxOperations());
-        if (snapshot.kind() == AgentJobStore.Kind.BREAK_BLOCK) {
+        if (snapshot.kind() == AgentJobStore.Kind.BREAK_BLOCK
+                || snapshot.kind() == AgentJobStore.Kind.PLACE_BLOCK) {
             progress.put("scanned_cells", snapshot.scannedCells());
-            progress.put("broken_blocks", snapshot.brokenBlocks());
+            progress.put(snapshot.kind() == AgentJobStore.Kind.BREAK_BLOCK
+                    ? "broken_blocks" : "placed_blocks", snapshot.completedBlocks());
         }
         payload.put("progress", Collections.unmodifiableMap(progress));
         payload.put("cancel_requested", snapshot.cancelRequested());

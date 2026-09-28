@@ -110,15 +110,16 @@ class McmcpRuntimeV2InputRoutingTest {
         var id = store.reserve(AgentJobStore.Kind.BREAK_BLOCK, session, 10, Long.MAX_VALUE);
         var request = V2BreakArguments.parse(Map.of(
                 "x", 1, "y", 64, "z", 0), "overworld");
-        field("v2BreakExecution").set(runtime, new V2BreakJobExecution(
-                store, id, session, request, new V2BreakJobExecution.Driver() {
+        field("v2BreakExecution").set(runtime, new V2BlockJobExecution<>(
+                store, id, session, AgentJobStore.Kind.BREAK_BLOCK, request,
+                new V2BlockJobExecution.Driver<V2BreakArguments>() {
                     @Override public String dimension() { return "overworld"; }
-                    @Override public V2BreakJobExecution.BeginResult begin(NavCell target,
+                    @Override public V2BlockJobExecution.BeginResult begin(NavCell target,
                             V2BreakArguments args,
                             java.util.function.BooleanSupplier outputAllowed) {
                         throw new AssertionError("a cancelled break must not start");
                     }
-                    @Override public V2BreakJobExecution.StepResult tick(long clientTick,
+                    @Override public V2BlockJobExecution.StepResult tick(long clientTick,
                             java.util.function.BooleanSupplier outputAllowed) {
                         throw new AssertionError("a cancelled break must not tick");
                     }
@@ -139,6 +140,23 @@ class McmcpRuntimeV2InputRoutingTest {
         assertThat(cancelled.get("cancel_requested")).isEqualTo(true);
         assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.CANCELLED);
         assertThat(field("v2BreakExecution").get(runtime)).isNull();
+    }
+
+    @Test
+    void placeProgressUsesTheSharedActionStatusWithoutBreakLabels() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("v2Jobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.PLACE_BLOCK, session, 10, Long.MAX_VALUE);
+        store.confirm(id, 1);
+        store.start(id, session);
+        store.recordBlockProgress(id, 2, 1);
+        var payload = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString()));
+        assertThat(payload.get("kind")).isEqualTo("place_block");
+        var progress = (Map<?, ?>) payload.get("progress");
+        assertThat(progress.get("scanned_cells")).isEqualTo(2);
+        assertThat(progress.get("placed_blocks")).isEqualTo(1);
+        assertThat(progress.containsKey("broken_blocks")).isFalse();
     }
 
     private void installExecution(AgentJobStore store, UUID id, UUID session) throws Exception {

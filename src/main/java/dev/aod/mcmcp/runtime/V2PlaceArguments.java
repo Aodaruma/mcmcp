@@ -12,7 +12,8 @@ import java.util.Set;
 /** A bounded placement request. The desired block properties and target condition are optional. */
 record V2PlaceArguments(BlockWorkRegion region, String blockId, String itemId,
                         Map<String, String> properties, Set<String> replaceBlocks,
-                        int maxBlocks, int maxTicks, double maxDistance, boolean advance) {
+                        int maxBlocks, int maxTicks, double maxDistance, boolean advance)
+        implements V2BlockWorkRequest {
     V2PlaceArguments {
         Objects.requireNonNull(region, "region");
         requireMinecraftId(blockId, "block");

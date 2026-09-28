@@ -43,6 +43,15 @@ class V2BlockAimResolverTest {
                 EYE, SESSION, 10, 3, 3)).isEmpty();
     }
 
+    @Test
+    void placementSupportRequiresTheExposedFaceTowardTheTarget() {
+        var frame = frame(10, 3);
+        assertThat(V2BlockAimResolver.resolve(frame, TARGET,
+                ObservationRecord.Face.WEST, EYE, SESSION, 10, 3, 3)).isPresent();
+        assertThat(V2BlockAimResolver.resolve(frame, TARGET,
+                ObservationRecord.Face.UP, EYE, SESSION, 10, 3, 3)).isEmpty();
+    }
+
     private static ObservationFrame frame(long tick, long revision) {
         return new ObservationFrame("obs-0000000000000001", DIMENSION, tick, 8.0D,
                 false, List.of(new ObservationRecord.VisibleSurface(

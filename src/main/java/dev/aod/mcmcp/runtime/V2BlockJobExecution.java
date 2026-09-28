@@ -9,40 +9,45 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 
-/** One delivery-gated break job over a bounded box, with one input owner. */
-final class V2BreakJobExecution {
+/** One delivery-gated block job over a bounded box, with one input owner. */
+final class V2BlockJobExecution<R extends V2BlockWorkRequest> {
     private static final int MAX_OBSERVATION_WAIT_TICKS = 80;
     private static final long MAX_WALL_NANOS = Duration.ofMinutes(2).toNanos();
 
     private final AgentJobStore jobs;
     private final UUID actionId;
     private final UUID worldSessionId;
-    private final V2BreakArguments request;
+    private final R request;
     private final List<NavCell> cells;
-    private final Driver driver;
+    private final Driver<R> driver;
     private final BooleanSupplier releaseAndVerify;
     private int index;
-    private int broken;
+    private int completed;
     private int observationWaitTicks;
     private boolean targetActive;
     private long startedNanos = Long.MIN_VALUE;
     private AgentJobStore.State terminalIntent;
     private String terminalFailure;
 
-    V2BreakJobExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
-            V2BreakArguments request, Driver driver, BooleanSupplier releaseAndVerify) {
+    V2BlockJobExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
+            AgentJobStore.Kind kind, R request, Driver<R> driver,
+            BooleanSupplier releaseAndVerify) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.actionId = Objects.requireNonNull(actionId, "actionId");
         this.worldSessionId = Objects.requireNonNull(worldSessionId, "worldSessionId");
+        Objects.requireNonNull(kind, "kind");
+        if (kind != AgentJobStore.Kind.BREAK_BLOCK && kind != AgentJobStore.Kind.PLACE_BLOCK) {
+            throw new IllegalArgumentException("block work requires break or place kind");
+        }
         this.request = Objects.requireNonNull(request, "request");
         this.cells = request.region().cells();
         this.driver = Objects.requireNonNull(driver, "driver");
         this.releaseAndVerify = Objects.requireNonNull(releaseAndVerify, "releaseAndVerify");
         var job = jobs.get(actionId);
-        if (job.kind() != AgentJobStore.Kind.BREAK_BLOCK
+        if (job.kind() != kind
                 || !job.worldSessionId().equals(worldSessionId)
                 || !request.region().dimension().equals(driver.dimension())) {
-            throw new IllegalArgumentException("break job does not match its session");
+            throw new IllegalArgumentException("block job does not match its session");
         }
     }
 
@@ -83,7 +88,7 @@ final class V2BreakJobExecution {
             return publishAfterRelease();
         }
         try {
-            if (index >= cells.size() || broken >= request.maxBlocks()) {
+            if (index >= cells.size() || completed >= request.maxBlocks()) {
                 retainTerminal(AgentJobStore.State.SUCCEEDED, null);
                 return publishAfterRelease();
             }
@@ -98,7 +103,7 @@ final class V2BreakJobExecution {
                     }
                     case SKIPPED -> {
                         index++;
-                        jobs.recordBlockProgress(actionId, index, broken);
+                        jobs.recordBlockProgress(actionId, index, completed);
                         observationWaitTicks = 0;
                         return jobs.get(actionId);
                     }
@@ -110,7 +115,7 @@ final class V2BreakJobExecution {
                         return jobs.get(actionId);
                     }
                     case FAILED -> {
-                        retainTerminal(AgentJobStore.State.FAILED, "break_target_unavailable");
+                        retainTerminal(AgentJobStore.State.FAILED, "block_target_unavailable");
                         return publishAfterRelease();
                     }
                 }
@@ -125,28 +130,28 @@ final class V2BreakJobExecution {
                     driver.close();
                     targetActive = false;
                     index++;
-                    jobs.recordBlockProgress(actionId, index, broken);
+                    jobs.recordBlockProgress(actionId, index, completed);
                     yield jobs.get(actionId);
                 }
                 case CONFIRMED -> {
                     index++;
-                    broken++;
-                    jobs.recordBlockProgress(actionId, index, broken);
+                    completed++;
+                    jobs.recordBlockProgress(actionId, index, completed);
                     driver.close();
                     targetActive = false;
-                    if (index >= cells.size() || broken >= request.maxBlocks()) {
+                    if (index >= cells.size() || completed >= request.maxBlocks()) {
                         retainTerminal(AgentJobStore.State.SUCCEEDED, null);
                         yield publishAfterRelease();
                     }
                     yield jobs.get(actionId);
                 }
                 case FAILED -> {
-                    retainTerminal(AgentJobStore.State.FAILED, "break_not_confirmed");
+                    retainTerminal(AgentJobStore.State.FAILED, "block_not_confirmed");
                     yield publishAfterRelease();
                 }
             };
         } catch (RuntimeException | LinkageError failure) {
-            retainTerminal(AgentJobStore.State.FAILED, "break_runtime_failed");
+            retainTerminal(AgentJobStore.State.FAILED, "block_runtime_failed");
             return publishAfterRelease();
         }
     }
@@ -176,7 +181,7 @@ final class V2BreakJobExecution {
         return publishAfterRelease();
     }
 
-    int completedBlocks() { return broken; }
+    int completedBlocks() { return completed; }
     int scannedCells() { return index; }
 
     private void retainTerminal(AgentJobStore.State outcome, String failure) {
@@ -205,9 +210,9 @@ final class V2BreakJobExecution {
     enum BeginResult { STARTED, SKIPPED, WAITING, FAILED }
     enum StepResult { RUNNING, SKIPPED, CONFIRMED, FAILED }
 
-    interface Driver {
+    interface Driver<R extends V2BlockWorkRequest> {
         String dimension();
-        BeginResult begin(NavCell target, V2BreakArguments request, BooleanSupplier outputAllowed);
+        BeginResult begin(NavCell target, R request, BooleanSupplier outputAllowed);
         StepResult tick(long clientTick, BooleanSupplier outputAllowed);
         void close();
     }

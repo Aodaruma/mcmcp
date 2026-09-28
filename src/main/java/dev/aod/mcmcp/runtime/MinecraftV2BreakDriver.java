@@ -35,7 +35,8 @@ import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
 /** Approaches a requested target through known safe cells, then uses normal break input. */
-final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
+final class MinecraftV2BreakDriver
+        implements V2BlockJobExecution.Driver<V2BreakArguments> {
     private static final int MAX_APPROACH_EVIDENCE_WAIT_TICKS = 80;
     private static final double APPROACH_TOLERANCE = 0.35D;
     private static final int BREAK_ACK_GRACE_TICKS = 20;
@@ -80,12 +81,12 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
     }
 
     @Override
-    public V2BreakJobExecution.BeginResult begin(NavCell next,
+    public V2BlockJobExecution.BeginResult begin(NavCell next,
             V2BreakArguments request, BooleanSupplier outputAllowed) {
         if (stage != Stage.IDLE) throw new IllegalStateException("break driver already active");
-        if (!outputAllowed.getAsBoolean()) return V2BreakJobExecution.BeginResult.FAILED;
+        if (!outputAllowed.getAsBoolean()) return V2BlockJobExecution.BeginResult.FAILED;
         var observed = beginObservedTarget(next, request, outputAllowed);
-        if (observed != V2BreakJobExecution.BeginResult.WAITING
+        if (observed != V2BlockJobExecution.BeginResult.WAITING
                 || !request.advance() || request.maxDistance() <= 0.0D) return observed;
         target = next;
         this.request = request;
@@ -93,10 +94,10 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
         navigation = new MinecraftActionPrimitiveExecutor(
                 McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
         stage = Stage.APPROACH;
-        return V2BreakJobExecution.BeginResult.STARTED;
+        return V2BlockJobExecution.BeginResult.STARTED;
     }
 
-    private V2BreakJobExecution.BeginResult beginObservedTarget(
+    private V2BlockJobExecution.BeginResult beginObservedTarget(
             NavCell next, V2BreakArguments request, BooleanSupplier outputAllowed) {
         var session = sessions.get();
         var player = minecraft.player;
@@ -105,34 +106,34 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
                 || minecraft.gameMode == null
                 || minecraft.gameMode.getPlayerMode() != GameType.SURVIVAL
                 || !session.dimension().equals(next.dimension())) {
-            return V2BreakJobExecution.BeginResult.FAILED;
+            return V2BlockJobExecution.BeginResult.FAILED;
         }
         var position = new BlockPos(next.x(), next.y(), next.z());
-        if (!level.isLoaded(position)) return V2BreakJobExecution.BeginResult.WAITING;
+        if (!level.isLoaded(position)) return V2BlockJobExecution.BeginResult.WAITING;
         if (!player.isWithinBlockInteractionRange(position, 0.0D)) {
-            return V2BreakJobExecution.BeginResult.WAITING;
+            return V2BlockJobExecution.BeginResult.WAITING;
         }
-        if (visiblyAir(position)) return V2BreakJobExecution.BeginResult.SKIPPED;
+        if (visiblyAir(position)) return V2BlockJobExecution.BeginResult.SKIPPED;
         var frame = observations.latestInternalFrame();
-        if (frame.isEmpty()) return V2BreakJobExecution.BeginResult.WAITING;
+        if (frame.isEmpty()) return V2BlockJobExecution.BeginResult.WAITING;
         var reconciliation = reconciliationSignals.bindAndSnapshot(level, session.worldSessionId());
         long barrier = reconciliation.surfaceBarrierWorldRevision(next.x(), next.y(), next.z());
         var aim = V2BlockAimResolver.resolve(frame.orElseThrow(), next,
                 player.getEyePosition(), session.worldSessionId(), session.clientTick(),
                 reconciliation.worldRevision(), barrier);
         if (aim.isEmpty()) {
-            return V2BreakJobExecution.BeginResult.WAITING;
+            return V2BlockJobExecution.BeginResult.WAITING;
         }
         BlockState state = level.getBlockState(position);
         String currentBlockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
         if (!currentBlockId.equals(aim.orElseThrow().blockId())) {
-            return V2BreakJobExecution.BeginResult.WAITING;
+            return V2BlockJobExecution.BeginResult.WAITING;
         }
-        if (!request.accepts(currentBlockId)) return V2BreakJobExecution.BeginResult.SKIPPED;
+        if (!request.accepts(currentBlockId)) return V2BlockJobExecution.BeginResult.SKIPPED;
         if (!V2BreakSourcePolicy.allowsLiveState(state)) {
-            return V2BreakJobExecution.BeginResult.FAILED;
+            return V2BlockJobExecution.BeginResult.FAILED;
         }
-        if (!outputAllowed.getAsBoolean()) return V2BreakJobExecution.BeginResult.FAILED;
+        if (!outputAllowed.getAsBoolean()) return V2BlockJobExecution.BeginResult.FAILED;
         target = next;
         this.request = request;
         blockId = currentBlockId;
@@ -143,17 +144,17 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
                 McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
         facing.beginFace(aim.orElseThrow().aim(), 60L);
         stage = Stage.FACING;
-        return V2BreakJobExecution.BeginResult.STARTED;
+        return V2BlockJobExecution.BeginResult.STARTED;
     }
 
     @Override
-    public V2BreakJobExecution.StepResult tick(long clientTick, BooleanSupplier outputAllowed) {
+    public V2BlockJobExecution.StepResult tick(long clientTick, BooleanSupplier outputAllowed) {
         if (stage == Stage.IDLE || !outputAllowed.getAsBoolean()) {
-            return V2BreakJobExecution.StepResult.FAILED;
+            return V2BlockJobExecution.StepResult.FAILED;
         }
         var session = sessions.get();
         if (!session.worldReady() || !session.dimension().equals(target.dimension())) {
-            return V2BreakJobExecution.StepResult.FAILED;
+            return V2BlockJobExecution.StepResult.FAILED;
         }
         if (stage == Stage.APPROACH) {
             return tickApproach(session, clientTick, outputAllowed);
@@ -163,21 +164,21 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
             var result = facing.tick(minecraft, map, LocalObservationVolume.global(),
                     0.0D, 1_080.0D, clientTick, outputAllowed);
             if (result.status() == MinecraftActionPrimitiveExecutor.Status.RUNNING) {
-                return V2BreakJobExecution.StepResult.RUNNING;
+                return V2BlockJobExecution.StepResult.RUNNING;
             }
             if (result.status() != MinecraftActionPrimitiveExecutor.Status.SUCCEEDED) {
-                return V2BreakJobExecution.StepResult.FAILED;
+                return V2BlockJobExecution.StepResult.FAILED;
             }
             facing.close();
             facing = null;
             stage = Stage.WAIT_CROSSHAIR;
-            return V2BreakJobExecution.StepResult.RUNNING;
+            return V2BlockJobExecution.StepResult.RUNNING;
         }
         if (stage == Stage.WAIT_CROSSHAIR) {
             if (!crosshairOnTarget()) {
                 return ++crosshairWaitTicks <= 10
-                        ? V2BreakJobExecution.StepResult.RUNNING
-                        : V2BreakJobExecution.StepResult.FAILED;
+                        ? V2BlockJobExecution.StepResult.RUNNING
+                        : V2BlockJobExecution.StepResult.FAILED;
             }
             var block = new BlockTarget(target.dimension(), target.x(), target.y(), target.z());
             var source = port.captureExpectedSource(block, Set.of(blockId));
@@ -190,7 +191,7 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
             attack = new KnownBlockBreakAttempt(port, attackRequest, clientTick,
                     KnownBlockBreakAttempt.Completion.AUTHORITATIVE_AIR);
             stage = Stage.BREAKING;
-            return V2BreakJobExecution.StepResult.RUNNING;
+            return V2BlockJobExecution.StepResult.RUNNING;
         }
         var frame = port.observe(attackRequest);
         boolean controlled = frame.worldReady() && frame.controlContextClear()
@@ -198,13 +199,13 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
                 && frame.visibleThreatClear() && frame.targetInReach()
                 && frame.crosshairOnTarget() && outputAllowed.getAsBoolean();
         return switch (attack.tick(clientTick, controlled)) {
-            case RUNNING -> V2BreakJobExecution.StepResult.RUNNING;
-            case SUCCEEDED -> V2BreakJobExecution.StepResult.CONFIRMED;
-            case SERVER_DENIED_OR_DESYNC -> V2BreakJobExecution.StepResult.FAILED;
+            case RUNNING -> V2BlockJobExecution.StepResult.RUNNING;
+            case SUCCEEDED -> V2BlockJobExecution.StepResult.CONFIRMED;
+            case SERVER_DENIED_OR_DESYNC -> V2BlockJobExecution.StepResult.FAILED;
         };
     }
 
-    private V2BreakJobExecution.StepResult tickApproach(
+    private V2BlockJobExecution.StepResult tickApproach(
             WorldSessionTracker.Snapshot session, long clientTick,
             BooleanSupplier outputAllowed) {
         var map = observations.requireAgentMap(session);
@@ -213,27 +214,27 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
                     Math.max(0.0D, remainingDistance.getAsDouble()),
                     1_080.0D, clientTick, outputAllowed);
             return switch (motion.status()) {
-                case RUNNING -> V2BreakJobExecution.StepResult.RUNNING;
+                case RUNNING -> V2BlockJobExecution.StepResult.RUNNING;
                 case SUCCEEDED, REPLAN_REQUIRED -> {
                     navigation.close();
                     waitingEvidence = map.edges();
                     approachEvidenceWaitTicks = 0;
-                    yield V2BreakJobExecution.StepResult.RUNNING;
+                    yield V2BlockJobExecution.StepResult.RUNNING;
                 }
-                case FAILED -> V2BreakJobExecution.StepResult.FAILED;
+                case FAILED -> V2BlockJobExecution.StepResult.FAILED;
             };
         }
         var observed = beginObservedTarget(target, request, outputAllowed);
         switch (observed) {
-            case STARTED -> { return V2BreakJobExecution.StepResult.RUNNING; }
-            case SKIPPED -> { return V2BreakJobExecution.StepResult.SKIPPED; }
-            case FAILED -> { return V2BreakJobExecution.StepResult.FAILED; }
+            case STARTED -> { return V2BlockJobExecution.StepResult.RUNNING; }
+            case SKIPPED -> { return V2BlockJobExecution.StepResult.SKIPPED; }
+            case FAILED -> { return V2BlockJobExecution.StepResult.FAILED; }
             case WAITING -> { }
         }
         if (waitingEvidence != null && waitingEvidence.equals(map.edges())) {
             return ++approachEvidenceWaitTicks <= MAX_APPROACH_EVIDENCE_WAIT_TICKS
-                    ? V2BreakJobExecution.StepResult.RUNNING
-                    : V2BreakJobExecution.StepResult.FAILED;
+                    ? V2BlockJobExecution.StepResult.RUNNING
+                    : V2BlockJobExecution.StepResult.FAILED;
         }
         var current = ActionPlanning.playerCell(minecraft.player, session.dimension());
         var plan = planner.plan(map, current, session.worldSessionId(), map.worldRevision(),
@@ -243,15 +244,15 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
             case KNOWN_GOAL_ROUTE, PARTIAL_WAYPOINT -> {
                 navigation.beginNavigate(plan.route().orElseThrow(), APPROACH_TOLERANCE);
                 waitingEvidence = null;
-                yield V2BreakJobExecution.StepResult.RUNNING;
+                yield V2BlockJobExecution.StepResult.RUNNING;
             }
             case BLOCKED, REACHED_KNOWN_GOAL -> {
                 waitingEvidence = map.edges();
                 approachEvidenceWaitTicks = 0;
-                yield V2BreakJobExecution.StepResult.RUNNING;
+                yield V2BlockJobExecution.StepResult.RUNNING;
             }
             case LIMIT, CANCELLED, STALE_MAP, WORLD_MISMATCH ->
-                    V2BreakJobExecution.StepResult.FAILED;
+                    V2BlockJobExecution.StepResult.FAILED;
         };
     }
 
