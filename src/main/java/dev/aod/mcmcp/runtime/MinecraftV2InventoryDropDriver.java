@@ -1,11 +1,15 @@
 package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint;
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.network.HashedStack;
+import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.ContainerInput;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -90,7 +94,7 @@ final class MinecraftV2InventoryDropDriver implements V2OperationJobExecution.Dr
         if (selectedSlot != originalSelectedSlot) {
             inventory.setSelectedSlot(selectedSlot);
             try {
-                // TCP ordering ensures the selected slot reaches the server before DROP_ITEM.
+                // TCP ordering ensures the selected slot reaches the server before THROW.
                 minecraft.getConnection().send(new ServerboundSetCarriedItemPacket(selectedSlot));
             } catch (RuntimeException | LinkageError sendFailure) {
                 fail("selection_send_uncertain");
@@ -160,6 +164,11 @@ final class MinecraftV2InventoryDropDriver implements V2OperationJobExecution.Dr
             return V2OperationJobExecution.Step.FAILED;
         }
         boolean entireStack = before.count() == remaining;
+        int menuSlot = player.inventoryMenu.findSlot(player.getInventory(), selectedSlot).orElse(-1);
+        if (menuSlot < 0 || minecraft.getConnection() == null) {
+            fail("inventory_menu_unavailable");
+            return V2OperationJobExecution.Step.FAILED;
+        }
         inFlightCount = entireStack ? remaining : 1;
         expected = entireStack ? StackFingerprint.EMPTY
                 : new StackFingerprint(before.itemId(), before.count() - 1,
@@ -168,10 +177,15 @@ final class MinecraftV2InventoryDropDriver implements V2OperationJobExecution.Dr
         dispatchedTick = clientTick;
         stage = Stage.AWAITING_ACK; // A throwing send is uncertain and must not be retried.
         try {
-            if (!player.drop(entireStack)) {
-                fail("drop_send_uncertain");
-                return V2OperationJobExecution.Step.FAILED;
-            }
+            // LocalPlayer.drop predicts the decrement and ServerPlayer.drop suppresses
+            // the matching slot update. A normal inventory THROW without client prediction
+            // lets the server send the authoritative slot payload we require below.
+            var connection = minecraft.getConnection();
+            connection.send(new ServerboundContainerClickPacket(player.inventoryMenu.containerId,
+                    player.inventoryMenu.getStateId(), (short) menuSlot, (byte) (entireStack ? 1 : 0),
+                    ContainerInput.THROW, new Int2ObjectOpenHashMap<>(),
+                    HashedStack.create(player.inventoryMenu.getCarried(),
+                            connection.decoratedHashOpsGenenerator())));
         } catch (RuntimeException | LinkageError sendFailure) {
             fail("drop_send_uncertain");
             return V2OperationJobExecution.Step.FAILED;

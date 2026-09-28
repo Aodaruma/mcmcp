@@ -3,6 +3,7 @@ package dev.aod.mcmcp.runtime;
 import dev.aod.mcmcp.agent.action.KnownBlockBreakAttempt;
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.agent.action.V2BlockAimResolver;
+import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.navigation.CoordinateGoalPlanner;
 import dev.aod.mcmcp.agent.navigation.NavCell;
 import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
@@ -65,6 +66,7 @@ final class MinecraftV2BreakDriver
     private int selectedToolSlot = -1;
     private Object selectedPlayer;
     private int crosshairWaitTicks;
+    private boolean centerAimAttempted;
 
     MinecraftV2BreakDriver(Minecraft minecraft,
             Supplier<WorldSessionTracker.Snapshot> sessions,
@@ -184,7 +186,21 @@ final class MinecraftV2BreakDriver
         }
         if (stage == Stage.WAIT_CROSSHAIR) {
             if (!crosshairOnTarget()) {
-                return ++crosshairWaitTicks <= 10
+                // A sampled surface ray can graze an edge after approach settlement or
+                // camera quantization. Re-aim once inside the already observed cell;
+                // the actual crosshair and live source are still mandatory before attack.
+                if (++crosshairWaitTicks >= 2 && !centerAimAttempted) {
+                    centerAimAttempted = true;
+                    facing = new MinecraftActionPrimitiveExecutor(
+                            McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
+                    facing.beginFace(new MinecraftActionPrimitiveExecutor.KnownFaceTarget(
+                            session.worldSessionId(), observations.requireAgentMap(session).worldRevision(),
+                            new ActionDsl.Position(target.dimension(), target.x(), target.y(), target.z()),
+                            true), 60L);
+                    stage = Stage.FACING;
+                    return V2BlockJobExecution.StepResult.RUNNING;
+                }
+                return crosshairWaitTicks <= 10
                         ? V2BlockJobExecution.StepResult.RUNNING
                         : V2BlockJobExecution.StepResult.FAILED;
             }
@@ -329,6 +345,7 @@ final class MinecraftV2BreakDriver
         before = null;
         confirmedChange = null;
         crosshairWaitTicks = 0;
+        centerAimAttempted = false;
         stage = Stage.IDLE;
         if (failure instanceof RuntimeException runtime) throw runtime;
         if (failure instanceof LinkageError linkage) throw linkage;
