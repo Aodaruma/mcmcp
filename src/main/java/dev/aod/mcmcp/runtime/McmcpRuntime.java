@@ -1524,7 +1524,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             Map<String, Object> arguments, RuntimeCallContext context) {
         assertClientThread(minecraft);
         RuntimeFailures.requireReady(session);
-        var request = V2MoveArguments.parse(arguments, session.dimension());
+        if (minecraft.player == null) {
+            throw new RuntimeInvocationException(
+                    "unsafe_state", "Move requires a player.", true, Map.of());
+        }
+        var request = V2MoveArguments.parse(arguments,
+                ActionPlanning.playerCell(minecraft.player, session.dimension()));
         if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
                 || endpointFaultCode != null || !multiplayerPolicyAllows(minecraft)
                 || !v2InputWorldSafe(minecraft, session)) {

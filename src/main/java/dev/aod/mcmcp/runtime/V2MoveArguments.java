@@ -18,16 +18,26 @@ record V2MoveArguments(NavCell goal, double tolerance, int maxTicks, double maxD
         }
     }
 
-    static V2MoveArguments parse(Map<String, Object> arguments, String dimension) {
+    static V2MoveArguments parse(Map<String, Object> arguments, NavCell origin) {
+        Objects.requireNonNull(origin, "origin");
         RuntimeArguments.requireAllowedKeys(arguments, "agent_move",
-                Set.of("x", "y", "z", "tolerance", "max_ticks", "max_distance"));
-        if (!arguments.keySet().containsAll(Set.of("x", "y", "z"))) {
-            throw new IllegalArgumentException("agent_move requires x, y and z");
+                Set.of("x", "y", "z", "direction", "distance",
+                        "tolerance", "max_ticks", "max_distance"));
+        boolean coordinates = arguments.keySet().containsAll(Set.of("x", "y", "z"));
+        boolean relative = arguments.keySet().containsAll(Set.of("direction", "distance"));
+        if (coordinates == relative || arguments.containsKey("direction") != arguments.containsKey("distance")
+                || coordinates && (arguments.containsKey("direction") || arguments.containsKey("distance"))
+                || relative && (arguments.containsKey("x") || arguments.containsKey("y")
+                        || arguments.containsKey("z"))) {
+            throw new IllegalArgumentException(
+                    "agent_move requires either x/y/z or direction/distance");
         }
-        var goal = new NavCell(Objects.requireNonNull(dimension, "dimension"),
-                RuntimeArguments.intArgument(arguments, "x"),
-                RuntimeArguments.intArgument(arguments, "y"),
-                RuntimeArguments.intArgument(arguments, "z"));
+        NavCell goal = coordinates
+                ? new NavCell(origin.dimension(),
+                        RuntimeArguments.intArgument(arguments, "x"),
+                        RuntimeArguments.intArgument(arguments, "y"),
+                        RuntimeArguments.intArgument(arguments, "z"))
+                : relativeGoal(origin, arguments);
         double tolerance = arguments.containsKey("tolerance")
                 ? RuntimeArguments.doubleArgument(arguments, "tolerance") : 0.25D;
         int maxTicks = arguments.containsKey("max_ticks")
@@ -35,5 +45,37 @@ record V2MoveArguments(NavCell goal, double tolerance, int maxTicks, double maxD
         double maxDistance = arguments.containsKey("max_distance")
                 ? RuntimeArguments.doubleArgument(arguments, "max_distance") : 256.0D;
         return new V2MoveArguments(goal, tolerance, maxTicks, maxDistance);
+    }
+
+    private static NavCell relativeGoal(NavCell origin, Map<String, Object> arguments) {
+        String direction = RuntimeArguments.stringArgument(arguments, "direction");
+        int distance = RuntimeArguments.intArgument(arguments, "distance");
+        if (distance < 1 || distance > 256) {
+            throw new IllegalArgumentException("distance must be in 1..256 blocks");
+        }
+        int dx;
+        int dy = 0;
+        int dz;
+        switch (direction) {
+            case "north" -> { dx = 0; dz = -1; }
+            case "south" -> { dx = 0; dz = 1; }
+            case "east" -> { dx = 1; dz = 0; }
+            case "west" -> { dx = -1; dz = 0; }
+            case "northeast" -> { dx = 1; dz = -1; }
+            case "northwest" -> { dx = -1; dz = -1; }
+            case "southeast" -> { dx = 1; dz = 1; }
+            case "southwest" -> { dx = -1; dz = 1; }
+            case "up" -> { dx = 0; dy = 1; dz = 0; }
+            case "down" -> { dx = 0; dy = -1; dz = 0; }
+            default -> throw new IllegalArgumentException("unknown move direction");
+        }
+        try {
+            return new NavCell(origin.dimension(),
+                    Math.addExact(origin.x(), dx * distance),
+                    Math.addExact(origin.y(), dy * distance),
+                    Math.addExact(origin.z(), dz * distance));
+        } catch (ArithmeticException overflow) {
+            throw new IllegalArgumentException("relative move coordinate overflows", overflow);
+        }
     }
 }
