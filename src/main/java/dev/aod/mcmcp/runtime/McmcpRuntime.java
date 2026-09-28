@@ -134,6 +134,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final InputReleaseController inputRelease = new InputReleaseController();
     private final EvaluationLeaseController evaluationControl;
     private final MinecraftStationaryBreakPort stationaryBreakPort;
+    private final MinecraftStationaryBreakPort v2BreakPort;
     private final ClientReconciliationSignals reconciliationSignals;
     private final AgentObservations agentObservations;
     private final ActionAdmission actionAdmission;
@@ -156,6 +157,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private AgentExecution agentExecution;
     private InputSequenceJobExecution v2InputExecution;
     private CoordinateMoveJobExecution v2MoveExecution;
+    private V2BreakJobExecution v2BreakExecution;
     private Object v2InputPlayerIdentity;
     private Object v2InputLevelIdentity;
     private long v2InputControlEpoch;
@@ -169,6 +171,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private Vec3 v2MoveLastPosition;
     private double v2MoveTravelled;
     private double v2MoveMaxDistance;
+    private Object v2BreakPlayerIdentity;
+    private Object v2BreakLevelIdentity;
+    private long v2BreakControlEpoch;
+    private float v2BreakHealthBaseline;
+    private Vec3 v2BreakLastPosition;
+    private double v2BreakTravelled;
+    private double v2BreakMaxDistance;
     private boolean pendingAgentInputRelease;
     private boolean agentInputReleaseFaultLogged;
     private boolean pendingAgentReturnReady;
@@ -201,6 +210,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 memory,
                 observations,
                 ClientPredictionSignals.global());
+        v2BreakPort = new MinecraftStationaryBreakPort(
+                Minecraft::getInstance, sessions::snapshot, memory, observations,
+                ClientPredictionSignals.global(),
+                MinecraftStationaryBreakPort.SourcePolicy.V2_VANILLA);
         reconciliationSignals = ClientReconciliationSignals.global();
         agentObservations = new AgentObservations(memory, sessions, observations, reconciliationSignals);
         semanticActionPort = new MinecraftSemanticActionPort(
@@ -512,6 +525,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         routineLifecycle.retryPendingFinalizations(minecraft);
         tickActiveRoutine(minecraft);
         tickV2Move(minecraft);
+        tickV2Break(minecraft);
         tickV2InputSequence(minecraft);
         tickAgentAction(minecraft);
         publishSession();
@@ -529,6 +543,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             McmcpMod.LOGGER.error(
                     "MCMCP stationary-break prediction capture failed; stopping automation",
                     failure);
+            requestSafetyStop("prediction_capture_failed");
+        }
+        try {
+            v2BreakPort.captureIssuedPredictions();
+        } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error(
+                    "MCMCP v2 break prediction capture failed; stopping automation", failure);
             requestSafetyStop("prediction_capture_failed");
         }
         try {
@@ -822,6 +843,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || v2Jobs.active().isPresent()
                 || v2InputExecution != null
                 || v2MoveExecution != null
+                || v2BreakExecution != null
                 || pendingAgentInputRelease
                 || pendingAgentTerminal != null
                 || agentExecution != null
@@ -830,6 +852,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || inbox.hasPendingCommand("agent_start_action")
                 || inbox.hasPendingCommand("agent_input_sequence")
                 || inbox.hasPendingCommand("agent_move")
+                || inbox.hasPendingCommand("agent_break_block")
                 || routineLifecycle.hasPendingFinalizations()
                 || routineLifecycle.hasVoiceOwner();
     }
@@ -894,6 +917,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             var stopped = v2MoveExecution.stop("world_boundary");
             finishV2MoveIfTerminal(stopped);
         }
+        if (v2BreakExecution != null) {
+            var stopped = v2BreakExecution.stop("world_boundary");
+            finishV2BreakIfTerminal(stopped);
+        }
+        clearAutomationPortSession("v2_break", v2BreakPort::clearSession);
         FrameDisplaySyncSignals.global().clear();
         entityAttackConsent.clear();
         recoveryDescent.reset();
@@ -999,6 +1027,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 && v2Jobs.active().isEmpty()
                 && v2InputExecution == null
                 && v2MoveExecution == null
+                && v2BreakExecution == null
                 && routines.activeRoutineId().isEmpty()
                 && pendingAgentTerminal == null
                 && !pendingAgentInputRelease
@@ -1009,7 +1038,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 && !inbox.hasPendingCommand("start_routine")
                 && !inbox.hasPendingCommand("agent_start_action")
                 && !inbox.hasPendingCommand("agent_input_sequence")
-                && !inbox.hasPendingCommand("agent_move");
+                && !inbox.hasPendingCommand("agent_move")
+                && !inbox.hasPendingCommand("agent_break_block");
     }
 
     @Override
@@ -1053,6 +1083,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         if (command instanceof StartMove move) {
             return submitV2MoveStart(move, context);
+        }
+        if (command instanceof StartBreakBlock block) {
+            return submitV2BreakStart(block, context);
         }
         if (command instanceof GetAction action) {
             return submitAgentGetAction(action, context);
@@ -1277,6 +1310,82 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 });
     }
 
+    private CompletionStage<RuntimeReply> submitV2BreakStart(
+            StartBreakBlock command, RuntimeCallContext context) {
+        var fence = publishedSession;
+        return inbox.submitControlMapped(
+                command.toolName(), fence.generation(), context.deadlineNanos(),
+                () -> withEvaluationLeaseFence(context, command.toolName(), () -> {
+                    var result = commitV2Break(
+                            Minecraft.getInstance(), sessions.snapshot(), command.arguments(), context);
+                    return RuntimeReply.success(result, new McpRuntimePort.ActionDeliveryReceipt(
+                            UUID.fromString((String) result.get("action_id"))));
+                }),
+                RuntimeFailures::mapFailure,
+                context::isCancelled,
+                reply -> {
+                    if (reply.successful()) rollbackAbandonedV2Break(reply.data());
+                });
+    }
+
+    private Map<String, Object> commitV2Break(
+            Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            Map<String, Object> arguments, RuntimeCallContext context) {
+        assertClientThread(minecraft);
+        RuntimeFailures.requireReady(session);
+        var request = V2BreakArguments.parse(arguments, session.dimension());
+        if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
+                || endpointFaultCode != null || !multiplayerPolicyAllows(minecraft)
+                || !v2InputWorldSafe(minecraft, session)) {
+            throw new RuntimeInvocationException(
+                    "unsafe_state", "Break requires a safe local world state.", true, Map.of());
+        }
+        if (pendingAgentInputRelease || agentExecution != null
+                || agentActions.active().isPresent() || v2Jobs.active().isPresent()
+                || v2InputExecution != null || v2MoveExecution != null
+                || v2BreakExecution != null || routines.activeRoutineId().isPresent()) {
+            throw new RuntimeInvocationException(
+                    "task_busy", "Another action is already queued or running.", true, Map.of());
+        }
+        requireLiveCall(context, "agent_break_block");
+        if (!arming.beginAction(session.worldSessionId())) {
+            throw new RuntimeInvocationException(
+                    "mcp_operation_disabled", "The READY authorization is no longer available.",
+                    true, Map.of());
+        }
+        UUID actionId = null;
+        try {
+            requireLiveCall(context, "agent_break_block");
+            actionId = v2Jobs.reserve(AgentJobStore.Kind.BREAK_BLOCK, session.worldSessionId(),
+                    request.maxTicks(), System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS);
+            var driver = new MinecraftV2BreakDriver(minecraft, sessions::snapshot,
+                    agentObservations, reconciliationSignals, v2BreakPort);
+            v2BreakExecution = new V2BreakJobExecution(v2Jobs, actionId,
+                    session.worldSessionId(), request, driver, () -> {
+                        boolean released = boundedActionInputRelease(
+                                () -> releaseAllAndConfirmNoInputOwner(minecraft));
+                        if (!released) arming.lock("v2_break_release_failed");
+                        return released;
+                    });
+            v2BreakPlayerIdentity = minecraft.player;
+            v2BreakLevelIdentity = minecraft.level;
+            v2BreakControlEpoch = arming.snapshot(session.worldSessionId()).controlEpoch();
+            v2BreakHealthBaseline = minecraft.player.getHealth()
+                    + minecraft.player.getAbsorptionAmount();
+            v2BreakLastPosition = minecraft.player.position();
+            v2BreakTravelled = 0.0D;
+            v2BreakMaxDistance = request.maxDistance();
+            requireLiveCall(context, "agent_break_block");
+        } catch (RuntimeException | LinkageError failure) {
+            if (actionId != null) v2Jobs.abandon(actionId);
+            v2BreakExecution = null;
+            clearV2BreakWitness();
+            arming.completeAction(session.worldSessionId());
+            throw failure;
+        }
+        return Map.of("schema_version", 2, "action_id", actionId.toString(), "state", "queued");
+    }
+
     private Map<String, Object> commitV2Move(
             Minecraft minecraft, WorldSessionTracker.Snapshot session,
             Map<String, Object> arguments, RuntimeCallContext context) {
@@ -1292,6 +1401,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
                 || v2InputExecution != null || v2MoveExecution != null
+                || v2BreakExecution != null
                 || routines.activeRoutineId().isPresent()) {
             throw new RuntimeInvocationException(
                     "task_busy", "Another action is already queued or running.", true, Map.of());
@@ -1371,6 +1481,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
                 || v2InputExecution != null || v2MoveExecution != null
+                || v2BreakExecution != null
                 || routines.activeRoutineId().isPresent()) {
             throw new RuntimeInvocationException(
                     "task_busy", "Another action is already queued or running.", true, Map.of());
@@ -1437,6 +1548,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     throw new AssertionError("agent_input_sequence must use delivery-gated admission");
             case StartMove ignored ->
                     throw new AssertionError("agent_move must use delivery-gated admission");
+            case StartBreakBlock ignored ->
+                    throw new AssertionError("agent_break_block must use delivery-gated admission");
             case GetAction action -> getAgentAction(action.arguments());
             case CancelAction action -> cancelAgentAction(minecraft, action.arguments());
             case ConfirmActionDelivery delivery -> confirmAgentActionDelivery(delivery.actionId());
@@ -1946,6 +2059,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             } else if (requested && before.kind() == AgentJobStore.Kind.MOVE
                     && v2MoveExecution != null) {
                 finishV2MoveIfTerminal(v2MoveExecution.cancel());
+            } else if (requested && before.kind() == AgentJobStore.Kind.BREAK_BLOCK
+                    && v2BreakExecution != null) {
+                finishV2BreakIfTerminal(v2BreakExecution.cancel());
             } else if (requested) {
                 throw new RuntimeInvocationException(
                         "unsafe_state", "The job owner is unavailable.", true, Map.of());
@@ -2369,6 +2485,46 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
+    private void tickV2Break(Minecraft minecraft) {
+        if (v2BreakExecution == null) return;
+        var session = sessions.snapshot();
+        try {
+            boolean safe = v2InputWorldSafe(minecraft, session)
+                    && minecraft.player == v2BreakPlayerIdentity
+                    && minecraft.level == v2BreakLevelIdentity
+                    && !paused && !minecraft.isPaused() && endpointFaultCode == null;
+            var control = arming.snapshot(session.worldSessionId());
+            safe &= control.mode() == LocalArmingState.Mode.AGENT
+                    && control.controlEpoch() == v2BreakControlEpoch;
+            if (safe && v2BreakLastPosition != null) {
+                Vec3 position = minecraft.player.position();
+                v2BreakTravelled += position.distanceTo(v2BreakLastPosition);
+                v2BreakLastPosition = position;
+                safe = v2BreakTravelled <= v2BreakMaxDistance
+                        && minecraft.player.getHealth()
+                                + minecraft.player.getAbsorptionAmount()
+                                >= v2BreakHealthBaseline;
+            }
+            var result = v2BreakExecution.tick(session.worldSessionId(), session.clientTick(),
+                    System.nanoTime(), safe,
+                    () -> v2Jobs.active().isPresent()
+                            && arming.snapshot(session.worldSessionId()).mode()
+                                    == LocalArmingState.Mode.AGENT
+                            && arming.snapshot(session.worldSessionId()).controlEpoch()
+                                    == v2BreakControlEpoch
+                            && !paused && endpointFaultCode == null);
+            finishV2BreakIfTerminal(result);
+        } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error("MCMCP v2 break failed", failure);
+            try {
+                finishV2BreakIfTerminal(v2BreakExecution.stop("runtime_exception"));
+            } catch (RuntimeException | LinkageError cleanupFailure) {
+                McmcpMod.LOGGER.error("MCMCP v2 break cleanup failed", cleanupFailure);
+                arming.lock("v2_break_cleanup_failed");
+            }
+        }
+    }
+
     private boolean v2InputWorldSafe(Minecraft minecraft, WorldSessionTracker.Snapshot session) {
         if (!localControlAvailable(minecraft, session)) return false;
         var player = minecraft.player;
@@ -2410,6 +2566,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private void finishV2JobIfTerminal(AgentJobStore.Snapshot result) {
         if (result.kind() == AgentJobStore.Kind.MOVE) {
             finishV2MoveIfTerminal(result);
+        } else if (result.kind() == AgentJobStore.Kind.BREAK_BLOCK) {
+            finishV2BreakIfTerminal(result);
         } else if (result.kind() == AgentJobStore.Kind.INPUT_SEQUENCE) {
             finishV2InputIfTerminal(result);
         }
@@ -2443,6 +2601,37 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
         } catch (AgentJobStore.NotFoundException | IllegalArgumentException ignored) {
             // A newer retained job cannot be stopped by an old receipt.
+        }
+    }
+
+    private void finishV2BreakIfTerminal(AgentJobStore.Snapshot result) {
+        if (!result.state().terminal()) return;
+        v2BreakExecution = null;
+        clearV2BreakWitness();
+        returnControlReady();
+    }
+
+    private void clearV2BreakWitness() {
+        v2BreakPlayerIdentity = null;
+        v2BreakLevelIdentity = null;
+        v2BreakLastPosition = null;
+        v2BreakTravelled = 0.0D;
+        v2BreakMaxDistance = 0.0D;
+        v2BreakHealthBaseline = 0.0F;
+        v2BreakControlEpoch = 0L;
+    }
+
+    private void rollbackAbandonedV2Break(Map<String, Object> receipt) {
+        if (v2BreakExecution == null) return;
+        Object rawId = receipt.get("action_id");
+        if (!(rawId instanceof String id)) return;
+        try {
+            var job = v2Jobs.get(UUID.fromString(id));
+            if (job.kind() == AgentJobStore.Kind.BREAK_BLOCK && !job.state().terminal()) {
+                finishV2BreakIfTerminal(v2BreakExecution.stop("delivery_not_confirmed"));
+            }
+        } catch (AgentJobStore.NotFoundException | IllegalArgumentException ignored) {
+            // An older delivery receipt cannot stop the newer job owner.
         }
     }
 
@@ -4233,6 +4422,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || pendingAgentAdmission != null
                 || v2InputExecution != null
                 || v2MoveExecution != null
+                || v2BreakExecution != null
                 || v2Jobs.active().isPresent()) {
             retainReadyAfterDeferredAgentRelease();
             return;
@@ -4575,6 +4765,21 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             } catch (RuntimeException | LinkageError failure) {
                 v2Progress = ClientCommandInbox.StopProgress.FAILED;
                 McmcpMod.LOGGER.error("MCMCP emergency v2 move termination failed", failure);
+            }
+        }
+        if (v2BreakExecution != null) {
+            try {
+                var stopped = v2BreakExecution.stop(RuntimeFailures.sanitizeLocalCode(reason));
+                var breakProgress = stopped.state().terminal()
+                        ? ClientCommandInbox.StopProgress.COMPLETE
+                        : ClientCommandInbox.StopProgress.PENDING;
+                if (breakProgress == ClientCommandInbox.StopProgress.PENDING) {
+                    v2Progress = breakProgress;
+                }
+                finishV2BreakIfTerminal(stopped);
+            } catch (RuntimeException | LinkageError failure) {
+                v2Progress = ClientCommandInbox.StopProgress.FAILED;
+                McmcpMod.LOGGER.error("MCMCP emergency v2 break termination failed", failure);
             }
         }
         AgentActionStore.FailureCode actionCode = "local_ui_disabled".equals(reason)
