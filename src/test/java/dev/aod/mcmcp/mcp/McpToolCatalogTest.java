@@ -1154,8 +1154,8 @@ class McpToolCatalogTest {
         assertThat(observation)
                 .contains("With no arguments, atomically pins and returns the latest observation frame")
                 .contains("compact block")
-                .contains("explicit queries retain detailed visible_surface records")
-                .contains("default omits unknown_boundary")
+                .contains("explicit queries retain detailed visible_surface and traversability records")
+                .contains("default omits traversability, unknown_boundary")
                 .contains("absence never means air")
                 .contains("pass schema_version=1")
                 .contains("call with no arguments to read the newest frame");

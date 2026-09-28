@@ -3,6 +3,12 @@ package dev.aod.mcmcp.runtime;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.Face;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.ShapeClass;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.Traversability;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.TraversabilityStatus;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.TargetSupport;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.TransitionClearance;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.Fluid;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.EvidenceProvenance;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.UnknownBoundary;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.UnknownBoundaryReason;
 import dev.aod.mcmcp.agent.observation.ObservationRecord.VisibleSurface;
@@ -29,6 +35,11 @@ class AgentObservationsDefaultRequestTest {
                         new VisibleSurface(new BlockPosition(dimension, 1, 63, 2), Face.UP,
                                 new ResourceId("minecraft:stone"), null, null, ShapeClass.OPAQUE,
                                 null, position, position, 9, 0),
+                        new Traversability(position,
+                                new WorldPosition(dimension, 2, 64, 2),
+                                TraversabilityStatus.CONFIRMED, TargetSupport.CONFIRMED,
+                                TransitionClearance.CONFIRMED, Fluid.NONE,
+                                position, 9, 0, EvidenceProvenance.LOCAL_VOLUME),
                         new UnknownBoundary(
                                 position, UnknownBoundaryReason.UNLOADED, position, 9, 0))));
 
@@ -53,5 +64,9 @@ class AgentObservationsDefaultRequestTest {
         explicit.put("limit", 1);
         var detailed = observations.getAgentObservation(explicit).wirePage();
         assertThat((List<?>) detailed.get("records")).hasSize(1);
+
+        explicit.put("kinds", List.of("traversability"));
+        var detailedRoute = observations.getAgentObservation(explicit).wirePage();
+        assertThat((List<?>) detailedRoute.get("records")).hasSize(1);
     }
 }

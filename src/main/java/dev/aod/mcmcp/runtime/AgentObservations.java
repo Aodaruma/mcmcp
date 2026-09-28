@@ -112,7 +112,6 @@ final class AgentObservations {
             arguments.put("kinds", List.of(
                     ObservationKind.VISIBLE_SURFACE.wireName(),
                     ObservationKind.VISIBLE_ENTITY.wireName(),
-                    ObservationKind.TRAVERSABILITY.wireName(),
                     ObservationKind.HAZARD.wireName()));
             arguments.put("cursor", null);
             arguments.put("limit", 64);

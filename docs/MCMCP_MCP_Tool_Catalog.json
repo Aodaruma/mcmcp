@@ -891,7 +891,7 @@
     {
       "name": "agent_get_observation",
       "title": "Get MCMCP Observation",
-      "description": "With no arguments, atomically pins and returns the latest observation frame, up to 64 compact block, visible entity, traversability, and hazard records. Compact blocks group only actually visible faces by position plus block/state and encode faces with D/U/N/S/W/E; they never imply unseen faces or air. The default omits unknown_boundary and sound_clue records; absence never means air. For precise evidence or paging, pass schema_version=1, an announced frame_id, kinds, cursor=null on the first page, limit=1..256, and optional filter; explicit queries retain detailed visible_surface records. Filters only narrow already visible records and do not scan unseen world state. If a frame expires, call with no arguments to read the newest frame.",
+      "description": "With no arguments, atomically pins and returns the latest observation frame, up to 64 compact block, visible entity, and hazard records. Compact blocks group only actually visible faces by position plus block/state and encode faces with D/U/N/S/W/E; they never imply unseen faces or air. The default omits traversability, unknown_boundary, and sound_clue records; absence never means air. For precise evidence or paging, pass schema_version=1, an announced frame_id, kinds, cursor=null on the first page, limit=1..256, and optional filter; explicit queries retain detailed visible_surface and traversability records. Filters only narrow already visible records and do not scan unseen world state. If a frame expires, call with no arguments to read the newest frame.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
