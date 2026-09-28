@@ -113,6 +113,54 @@ class V2InventoryInspectExecutionTest {
                 .containsEntry("unconfirmed_count", 1);
     }
 
+    @Test
+    void cancellationCapturesCleanupEffectsEvenWhenMenuReleaseNeedsAnotherTick() {
+        var jobs = new AgentJobStore();
+        var session = UUID.randomUUID();
+        var id = jobs.reserve(AgentJobStore.Kind.INVENTORY, session, 100, 100);
+        var closes = new AtomicInteger();
+        var ticks = new AtomicInteger();
+        var released = new AtomicInteger();
+        var execution = new V2InventoryJobExecution(jobs, id, session,
+                new V2InventoryJobExecution.Driver() {
+                    @Override
+                    public void begin(long clientTick, BooleanSupplier allowed) { }
+
+                    @Override
+                    public V2InventoryJobExecution.Step tick(long clientTick, BooleanSupplier allowed) {
+                        ticks.incrementAndGet();
+                        return V2InventoryJobExecution.Step.RUNNING;
+                    }
+
+                    @Override
+                    public Map<String, Object> result() {
+                        return closes.get() == 0 ? Map.of("confirmed_count", 0)
+                                : Map.of("confirmed_count", 7, "unconfirmed", true);
+                    }
+
+                    @Override
+                    public boolean allowsScreenChange() { return true; }
+
+                    @Override
+                    public void close() {
+                        if (closes.incrementAndGet() == 1) throw new IllegalStateException("release pending");
+                    }
+                }, () -> { released.incrementAndGet(); return true; });
+        assertThat(execution.allowsScreenChange()).isFalse();
+        jobs.confirm(id, 2);
+        execution.tick(session, 1, 3, true, () -> true);
+        assertThat(execution.allowsScreenChange()).isTrue();
+        var pending = execution.cancel();
+        assertThat(pending.state()).isEqualTo(AgentJobStore.State.RUNNING);
+        assertThat(pending.result()).containsEntry("confirmed_count", 7).containsEntry("unconfirmed", true);
+        assertThat(released).hasValue(0);
+        var terminal = execution.tick(session, 2, 4, false, () -> false);
+        assertThat(terminal.state()).isEqualTo(AgentJobStore.State.CANCELLED);
+        assertThat(terminal.result()).containsEntry("confirmed_count", 7).containsEntry("unconfirmed", true);
+        assertThat(ticks).hasValue(1);
+        assertThat(released).hasValue(1);
+    }
+
     private static final class StubDriver implements V2InventoryJobExecution.Driver {
         private final AtomicInteger calls;
         private final Map<String, Object> captured;

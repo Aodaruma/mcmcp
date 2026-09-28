@@ -3938,8 +3938,8 @@
     },
     {
       "name": "agent_inventory",
-      "title": "Inspect, Swap or Drop Inventory",
-      "description": "Inspects player inventory, exchanges one main-inventory stack with an explicit hotbar slot, or drops a specified quantity. Mutations wait for server slot confirmation. Container transfer is not yet supported in this draft.",
+      "title": "Inspect and Move Inventory",
+      "description": "Inspects player inventory, swaps a main-inventory stack with a hotbar slot, or drops a quantity. With target=container and x/y/z, approaches and inspects a chest, barrel or copper chest; transfer takes or stores an exact count. Mutations require server confirmation; cancellation retains confirmed partial quantities. MOD storage is not yet supported in this draft.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
@@ -4027,6 +4027,128 @@
               "source_slot",
               "hotbar_slot",
               "item"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "const": "inspect"
+              },
+              "target": {
+                "const": "container"
+              },
+              "x": {
+                "type": "integer"
+              },
+              "y": {
+                "type": "integer"
+              },
+              "z": {
+                "type": "integer"
+              },
+              "block": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "advance": {
+                "type": "boolean",
+                "default": true
+              },
+              "max_distance": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 256,
+                "default": 64
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1200,
+                "default": 1200
+              }
+            },
+            "required": [
+              "operation",
+              "target",
+              "x",
+              "y",
+              "z"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "const": "transfer"
+              },
+              "target": {
+                "const": "container"
+              },
+              "x": {
+                "type": "integer"
+              },
+              "y": {
+                "type": "integer"
+              },
+              "z": {
+                "type": "integer"
+              },
+              "block": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "advance": {
+                "type": "boolean",
+                "default": true
+              },
+              "max_distance": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 256,
+                "default": 64
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1200,
+                "default": 1200
+              },
+              "direction": {
+                "enum": [
+                  "take",
+                  "store"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 896
+              }
+            },
+            "required": [
+              "operation",
+              "target",
+              "x",
+              "y",
+              "z",
+              "direction",
+              "item",
+              "count"
             ]
           }
         ]

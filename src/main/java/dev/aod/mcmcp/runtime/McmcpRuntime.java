@@ -1717,6 +1717,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         minecraft, session.worldSessionId(), swap);
                 case V2InventoryInspectArguments inspect ->
                         inventoryInspectDriver(minecraft, inspect);
+                case V2InventoryContainerArguments container -> new MinecraftV2ContainerDriver(
+                        minecraft, sessions::snapshot, agentObservations, reconciliationSignals,
+                        phaseFiveInventoryPort, container, session.dimension());
             };
             v2InventoryExecution = new V2InventoryJobExecution(v2Jobs, actionId,
                     session.worldSessionId(), driver, () -> {
@@ -3351,7 +3354,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var session = sessions.snapshot();
         try {
             var control = arming.snapshot(session.worldSessionId());
-            boolean safe = v2InputWorldSafe(minecraft, session)
+            boolean safe = v2InputWorldSafe(minecraft, session,
+                    v2InventoryExecution.allowsScreenChange())
                     && minecraft.player == v2InventoryPlayerIdentity
                     && minecraft.level == v2InventoryLevelIdentity
                     && !paused && !minecraft.isPaused() && endpointFaultCode == null

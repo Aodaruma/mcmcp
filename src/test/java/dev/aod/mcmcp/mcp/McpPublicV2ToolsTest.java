@@ -86,6 +86,24 @@ class McpPublicV2ToolsTest {
     }
 
     @Test
+    void coordinateContainerInspectionAndExactTransferUseTheSharedJob() throws Exception {
+        var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();
+        var registry = registry(calls);
+        for (String operation : List.of("\"operation\":\"inspect\"",
+                "\"operation\":\"transfer\",\"direction\":\"take\",\"item\":\"example:material\",\"count\":13",
+                "\"operation\":\"transfer\",\"direction\":\"store\",\"item\":\"example:material\",\"count\":13")) {
+            var input = JsonParser.parseString("{" + operation
+                    + ",\"target\":\"container\",\"x\":4,\"y\":65,\"z\":8}").getAsJsonObject();
+            var prepared = registry.prepareCall("agent_inventory", input);
+            assertThat(prepared.response().get("isError").getAsBoolean()).isFalse();
+            assertThat(calls.getLast()).isInstanceOf(McpRuntimePort.StartInventory.class);
+            assertThat(prepared.deliveryReceipt()).isInstanceOf(McpRuntimePort.ActionDeliveryReceipt.class);
+            registry.confirmDelivery(prepared);
+            assertThat(calls.getLast()).isInstanceOf(McpRuntimePort.ConfirmActionDelivery.class);
+        }
+    }
+
+    @Test
     void incompleteOrUnsupportedRequestsAreRejectedBeforeRuntimeDispatch()
             throws Exception {
         var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();
@@ -93,7 +111,10 @@ class McpPublicV2ToolsTest {
         var invalid = Map.of(
                 "agent_move", List.of("{}", "{\"x\":1,\"y\":2,\"z\":3,\"direction\":\"north\",\"distance\":1}"),
                 "agent_inventory", List.of("{\"operation\":\"transfer\"}",
-                        "{\"operation\":\"drop\",\"item\":\"minecraft:stone\"}"),
+                        "{\"operation\":\"drop\",\"item\":\"minecraft:stone\"}",
+                        "{\"operation\":\"inspect\",\"target\":\"container\",\"x\":1}",
+                        "{\"operation\":\"transfer\",\"target\":\"container\",\"x\":1,\"y\":2,\"z\":3,"
+                                + "\"direction\":\"take\",\"item\":\"minecraft:stone\",\"count\":0}"),
                 "agent_click", List.of("{\"button\":\"right\",\"x\":1}",
                         "{\"button\":\"left\",\"entity_ref\":\"bad\"}"),
                 "agent_interact", List.of("{\"target\":\"entity\",\"entity_ref\":\"bad\"}"));

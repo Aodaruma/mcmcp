@@ -129,7 +129,8 @@ final class V2InventoryJobExecution {
 
     private AgentJobStore.Snapshot publishAfterRelease() {
         try {
-            driver.close();
+            try { driver.close(); }
+            finally { if (begun) captureResultSafely(); }
             if (releaseAndVerify.getAsBoolean()) {
                 if (terminalIntent == AgentJobStore.State.SUCCEEDED
                         && jobs.get(actionId).cancelRequested()) {
@@ -146,10 +147,13 @@ final class V2InventoryJobExecution {
 
     enum Step { RUNNING, CONFIRMED, FAILED }
 
+    boolean allowsScreenChange() { return begun && driver.allowsScreenChange(); }
+
     interface Driver {
         void begin(long clientTick, BooleanSupplier outputAllowed);
         Step tick(long clientTick, BooleanSupplier outputAllowed);
         Map<String, Object> result();
+        default boolean allowsScreenChange() { return false; }
         void close();
     }
 }
