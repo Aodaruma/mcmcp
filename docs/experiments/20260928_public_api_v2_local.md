@@ -13,7 +13,7 @@ Issue #84 / Draft PR #85。2026-09-28、利用者の再開指示に従って、�
 
 T0前に対象chunkをforceloadし、base fixtureをadminで適用。`prepare-ui.mcfunction`をゲームUI経由で一度実行し、cow・道具・資材を用意した。準備中のslime被害を避けるためpeacefulにし、体力20と足場・開始位置・持ち物を確認した。保存終了後のsave全体52ファイルを再試験用baselineとし、失敗後は全体を復元してJARを交換した。ゲーム操作は公開MCP runnerで実施し、Hazardの外部controllerだけが稼働確認後に水を適用した。
 
-実機導入JAR、保存candidate、製品commitで再生成したJARのhashは一致した。[対象metadata](artifacts/20260928-v2-local/candidate.json)と[証拠manifest](artifacts/20260928-v2-local/manifest.json)を参照。認証情報、profile本体、ゲームlogは公開添付に含めない。
+実機導入JAR、保存candidate、製品commitで再生成したJARのhashは一致した。[対象metadata](artifacts/20260928-v2-local/candidate.json)と[証拠manifest](artifacts/20260928-v2-local/manifest.json)を参照。公開JSONの改行はLFへ正規化し、manifestは公開ファイルのhashを示す。認証情報、profile本体、ゲームlogは公開添付に含めない。
 
 ## 実機で見つけた不具合と修正
 
