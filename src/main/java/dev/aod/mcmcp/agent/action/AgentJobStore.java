@@ -98,7 +98,8 @@ public final class AgentJobStore {
     /** Retain confirmed block progress even after the execution owner releases its inputs. */
     public synchronized void recordBlockProgress(UUID actionId, int scannedCells, int completedBlocks) {
         Job job = current(actionId);
-        if ((job.kind != Kind.BREAK_BLOCK && job.kind != Kind.PLACE_BLOCK)
+        if ((job.kind != Kind.BREAK_BLOCK && job.kind != Kind.PLACE_BLOCK
+                && job.kind != Kind.INTERACT)
                 || job.state != State.RUNNING
                 || scannedCells < job.scannedCells || scannedCells > BlockWorkRegion.MAX_CELLS
                 || completedBlocks < job.completedBlocks || completedBlocks > scannedCells) {

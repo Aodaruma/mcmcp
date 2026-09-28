@@ -36,8 +36,9 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> {
         this.actionId = Objects.requireNonNull(actionId, "actionId");
         this.worldSessionId = Objects.requireNonNull(worldSessionId, "worldSessionId");
         Objects.requireNonNull(kind, "kind");
-        if (kind != AgentJobStore.Kind.BREAK_BLOCK && kind != AgentJobStore.Kind.PLACE_BLOCK) {
-            throw new IllegalArgumentException("block work requires break or place kind");
+        if (kind != AgentJobStore.Kind.BREAK_BLOCK && kind != AgentJobStore.Kind.PLACE_BLOCK
+                && kind != AgentJobStore.Kind.INTERACT) {
+            throw new IllegalArgumentException("unsupported block work kind");
         }
         this.request = Objects.requireNonNull(request, "request");
         this.cells = request.cells();

@@ -9,6 +9,7 @@ import net.minecraft.world.phys.Vec3;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 /** Selects a current local ray for an explicitly requested v2 block coordinate. */
 public final class V2BlockAimResolver {
@@ -30,10 +31,22 @@ public final class V2BlockAimResolver {
             ObservationRecord.Face requiredFace, Vec3 currentEye,
             UUID worldSessionId, long currentTick,
             long currentRevision, long surfaceBarrierRevision) {
+        return resolve(frame, target, requiredFace, currentEye, worldSessionId,
+                currentTick, currentRevision, surfaceBarrierRevision,
+                id -> id.startsWith("minecraft:"));
+    }
+
+    /** Interactions may aim at registered MOD blocks; break/place keep their Vanilla policy. */
+    public static Optional<Result> resolve(ObservationFrame frame, NavCell target,
+            ObservationRecord.Face requiredFace, Vec3 currentEye,
+            UUID worldSessionId, long currentTick,
+            long currentRevision, long surfaceBarrierRevision,
+            Predicate<String> allowedBlock) {
         Objects.requireNonNull(frame, "frame");
         Objects.requireNonNull(target, "target");
         Objects.requireNonNull(currentEye, "currentEye");
         Objects.requireNonNull(worldSessionId, "worldSessionId");
+        Objects.requireNonNull(allowedBlock, "allowedBlock");
         if (currentTick < 0 || currentRevision < 0 || surfaceBarrierRevision < 0
                 || surfaceBarrierRevision > currentRevision
                 || !frame.dimension().value().equals(target.dimension())) return Optional.empty();
@@ -47,7 +60,7 @@ public final class V2BlockAimResolver {
                     || surface.position().x() != target.x()
                     || surface.position().y() != target.y()
                     || surface.position().z() != target.z()
-                    || !surface.block().value().startsWith("minecraft:")
+                    || !allowedBlock.test(surface.block().value())
                     || surface.worldRevision() < surfaceBarrierRevision
                     || surface.worldRevision() > currentRevision
                     || surface.observedTick() > currentTick

@@ -92,9 +92,9 @@ loop・関数呼出しを事前展開せず、ASTを直接評価する。関数�
 
 結果は`SUCCESS / INVALID / LIMIT / CANCELLED / FAILED`、消費work・反復数・呼出数・成功数を返す。sinkの失敗・例外・取消で直ちに停止し、再送しない。取消signalとthread interruptionをparseのtoken境界、AST・呼出しgraph検証、評価node、loop、sink前後で確認する。sinkにも取消signalを渡す。同期sink自体を強制中断したり、wall-clock deadlineを保証する仕組みはこの増分にはなく、sinkが待機中も取消と有限期限に協調することが前提。
 
-内部の`StartScript`は配送確認後に専用workerでこの言語を実行する。`move`／`breakBlocks`／`place`／`inventory`／`click`／`input`を既存の内部v2 jobへ1命令ずつ渡し、各命令のterminalを待って次へ進む。親scriptは別の共通job IDを持ち、命令の確定数を保持する。取消・緊急停止時は実行中の子jobに取消を要求し、その入力解放が終わるまで親をterminalにしない。source・work・反復・呼出し数・実行時間は有限にする。workerはMinecraft stateを直接読まない。
+内部の`StartScript`は配送確認後に専用workerでこの言語を実行する。`move`／`breakBlocks`／`place`／`interact`／`inventory`／`click`／`input`を既存の内部v2 jobへ1命令ずつ渡し、各命令のterminalを待って次へ進む。親scriptは別の共通job IDを持ち、命令の確定数を保持する。取消・緊急停止時は実行中の子jobに取消を要求し、その入力解放が終わるまで親をterminalにしない。source・work・反復・呼出し数・実行時間は有限にする。workerはMinecraft stateを直接読まない。
 
-**未完了:** `interact` handler、命令ごとの失敗詳細、screenをまたぐ操作、観測量予算、実ゲームでの成功／取消／危険停止の確認。`agent_run_script`は内部runtimeへ接続したが公開catalogには未登録である。基本行動handlerと停止契約を実ゲームで検証し、基本tool一式と同時公開するまで内部prototypeに留める。
+**未完了:** `interact`のentity・item・menu handler、命令ごとの失敗詳細、screenをまたぐ操作、観測量予算、実ゲームでの成功／取消／危険停止の確認。`agent_run_script`は内部runtimeへ接続したが公開catalogには未登録である。基本行動handlerと停止契約を実ゲームで検証し、基本tool一式と同時公開するまで内部prototypeに留める。
 
 ## このブランチで実装済みの内部座標ナビゲーション
 
@@ -114,6 +114,8 @@ snapshotの既知の安全な停止候補を目標への直線距離、同距離
 **未完了:** block／entity状態など座標半径以外の到達条件、障害の自動破壊・設置、scriptからの利用、公開`agent_move`、ゲームでの到達・停止試験。現段階で公開catalog/schemaは変更しない。基本tool一式の公開は接続・検証後に行う。
 
 ## このブランチで実装済みの内部ブロック作業基盤
+
+内部の`StartInteract`は現時点でblock対象の状態変更だけを扱う。単一座標またはblock ID条件付きの範囲を受け、必要なら既知の安全経路で近づく。MODのblock IDも照準対象にできる。手持ちは空hotbar枠、または明示したitem IDのhotbar枠を使い、通常の右クリック後に予測sequence・サーバーACK・変更後のblock stateを確認する。`expected_after_block`／`expected_after_properties`を指定した場合はその条件にも一致させる。stateが変わらないmenu開閉、entity／item使用、main inventoryからのitem移送は未実装で、公開catalogにはまだ載せていない。
 
 `BlockWorkRegion`は破壊・設置で共用する座標範囲を保持する。`x/y/z`は始点、`dx/dy/dz`は符号付きの**終点差分**で、両端を含む。差分0は単一座標。X、Z、Yの順で安定して列挙し、最大4,096 cellと整数overflowを検査する。将来の楕円・path形状は現時点の契約に含めない。
 
