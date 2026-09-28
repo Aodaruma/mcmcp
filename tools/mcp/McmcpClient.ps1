@@ -24,7 +24,10 @@ function Invoke-McmcpClient {
     param(
         [Parameter(Mandatory)][string]$TokenPath,
         [string]$Endpoint = 'http://127.0.0.1:8765/mcp',
-        [ValidateSet('agent_get_state', 'agent_get_observation', 'agent_start_action',
+        [ValidateSet('agent_get_state', 'agent_get_mcp_status', 'agent_get_observation',
+            'agent_start_action', 'agent_move', 'agent_break_block', 'agent_place_block',
+            'agent_interact', 'agent_inventory', 'agent_click',
+            'agent_input_sequence', 'agent_run_script',
             'agent_get_action', 'agent_cancel_action')][string]$Tool = 'agent_get_state',
         [object]$Arguments = ([ordered]@{}),
         [switch]$Check,
@@ -33,8 +36,11 @@ function Invoke-McmcpClient {
     $bearer = $null
     $actionId = $null
     try {
-        if ($WaitSeconds -gt 0 -and ($Check -or $Tool -cne 'agent_start_action')) {
-            throw (New-McmcpClientFailure 'input' 'wait_requires_start_action')
+        $startTools = @('agent_start_action', 'agent_move', 'agent_break_block',
+            'agent_place_block', 'agent_interact', 'agent_inventory', 'agent_click',
+            'agent_input_sequence', 'agent_run_script')
+        if ($WaitSeconds -gt 0 -and ($Check -or $Tool -cnotin $startTools)) {
+            throw (New-McmcpClientFailure 'input' 'wait_requires_start_tool')
         }
         try {
             $catalog = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../../docs/MCMCP_MCP_Tool_Catalog.json') `
@@ -93,13 +99,15 @@ function Invoke-McmcpClient {
             $listed = Send-Request 'tools/list' $null @{ _meta = $meta } 15
             try {
                 Assert-McmcpServerMeta $listed 'tools/list'
-                if ($listed.resultType -cne 'complete' -or @($listed.tools).Count -ne 6 -or
+                if ($listed.resultType -cne 'complete' -or
+                    @($listed.tools).Count -ne @($catalog.tools).Count -or
                     (@($listed.tools.name | Sort-Object) -join ',') -cne
                     (@($catalog.tools.name | Sort-Object) -join ',')) { throw 'tool mismatch' }
             } catch {
                 throw (New-McmcpClientFailure 'protocol_validation' 'tool_catalog_mismatch')
             }
-            return [ordered]@{ ok = $true; connection = 'reachable'; tool_count = 6 }
+            return [ordered]@{ ok = $true; connection = 'reachable'
+                tool_count = @($catalog.tools).Count }
         }
         $clock = [Diagnostics.Stopwatch]::StartNew()
         do {
@@ -139,7 +147,7 @@ function Invoke-McmcpClient {
                 $data.action_id -cne (Get-PropertyValue $Arguments 'action_id')) {
                 throw (New-McmcpClientFailure 'protocol_validation' 'action_id_mismatch')
             }
-            if ($Tool -ceq 'agent_start_action' -and $WaitSeconds -gt 0 -and $data.state -ceq 'queued') {
+            if ($Tool -cin $startTools -and $WaitSeconds -gt 0 -and $data.state -ceq 'queued') {
                 # Only the schema-validated successful start may supply this ID.
                 $actionId = $data.action_id
                 $Tool = 'agent_get_action'

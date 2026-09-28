@@ -562,7 +562,7 @@ function Write-FishingArtifacts {
     $manifest = [ordered]@{
         schema_version = 1; gate = 'phase9-fishing'
         status = if ($null -eq $Failure) { 'passed' } else { 'failed' }
-        fixed_tools = @($script:AllowedTools); fixed_five_only = $true
+        fixed_tools = @($script:AllowedTools); fixed_five_only = $false
         normal_player_actions_only = $true; public_input_release = $InputRelease
         result = $GateResult
         failure = if ($null -eq $Failure) { $null } else {

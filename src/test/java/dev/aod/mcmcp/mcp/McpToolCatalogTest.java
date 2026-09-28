@@ -31,6 +31,13 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class McpToolCatalogTest {
+    private static com.google.gson.JsonObject legacyActionOutputSchema() {
+        var output = new McpToolCatalog().outputSchema("agent_get_action");
+        var legacy = output.getAsJsonArray("oneOf").get(0).getAsJsonObject().deepCopy();
+        legacy.add("$defs", output.getAsJsonObject("$defs"));
+        return legacy;
+    }
+
     @Test
     void exactContainerQuantityIsOptionalBoundedAndDiscoverable() {
         var definitions = new McpToolCatalog().inputSchema("agent_start_action").getAsJsonObject("$defs");
@@ -387,7 +394,7 @@ class McpToolCatalogTest {
                 .contains("whole-stack batch")
                 .contains("never split");
 
-        var action = catalog.outputSchema("agent_get_action");
+        var action = legacyActionOutputSchema();
         var properties = action.getAsJsonObject("properties");
         var failure = properties.getAsJsonObject("failure").getAsJsonArray("oneOf")
                 .get(1).getAsJsonObject().getAsJsonObject("properties");
@@ -1005,10 +1012,10 @@ class McpToolCatalogTest {
                 .contains("bounded kill-zone")
                 .contains("newly spawned mobs")
                 .contains("effective-health decrease revokes authority");
-        assertThat(catalog.outputSchema("agent_get_action")
+        assertThat(legacyActionOutputSchema()
                 .getAsJsonObject("$defs").getAsJsonObject("effectObservation")
                 .getAsJsonObject("properties").has("health_before")).isTrue();
-        assertThat(catalog.outputSchema("agent_get_action")
+        assertThat(legacyActionOutputSchema()
                 .getAsJsonObject("$defs").getAsJsonObject("effectObservation")
                 .getAsJsonObject("properties").getAsJsonObject("cycle")
                 .get("maximum").getAsInt()).isEqualTo(64);
@@ -1030,11 +1037,11 @@ class McpToolCatalogTest {
                         .getAsJsonObject("standard_potions").getAsJsonObject("items")
                         .getAsJsonObject("properties"), "potion"))
                 .containsExactlyInAnyOrderElementsOf(StandardPotionPolicy.potionIds());
-        assertThat(catalog.outputSchema("agent_get_action")
+        assertThat(legacyActionOutputSchema()
                 .getAsJsonObject("properties").getAsJsonObject("progress")
                 .getAsJsonObject("properties").getAsJsonObject("interactions")
                 .get("maximum").getAsInt()).isEqualTo(2_048);
-        var actionOutput = catalog.outputSchema("agent_get_action");
+        var actionOutput = legacyActionOutputSchema();
         assertThat(actionOutput.getAsJsonObject("properties")
                 .getAsJsonObject("effect_aggregate")
                 .getAsJsonObject("properties")
@@ -1263,7 +1270,7 @@ class McpToolCatalogTest {
     @Test
     void actionHistorySchemaBoundsCanonicalSourceAndForcesOpaqueReferenceRefresh() {
         var catalog = new McpToolCatalog();
-        var output = catalog.outputSchema("agent_get_action");
+        var output = legacyActionOutputSchema();
         var properties = output.getAsJsonObject("properties");
 
         assertThat(properties.getAsJsonObject("source")
@@ -1281,13 +1288,13 @@ class McpToolCatalogTest {
         assertThat(output.getAsJsonArray("required").asList().stream()
                 .map(JsonElement::getAsString))
                 .contains("source", "template", "reference_requirements");
-        assertThat(catalog.listResult().getAsJsonArray("tools")).hasSize(6);
+        assertThat(catalog.listResult().getAsJsonArray("tools")).hasSize(McpToolCatalog.REQUIRED_NAMES.size());
     }
 
     @Test
     void fishingEffectsAndTheirRefreshProducerMatchThePublishedSchema() {
         var catalog = new McpToolCatalog();
-        var output = catalog.outputSchema("agent_get_action");
+        var output = legacyActionOutputSchema();
         var observationSchema = output.getAsJsonObject("$defs")
                 .getAsJsonObject("effectObservation");
         var castAfter = JsonParser.parseString("""
@@ -1316,7 +1323,7 @@ class McpToolCatalogTest {
 
     @Test
     void knownBlockBreakEffectsMatchThePublishedSchema() {
-        var observationSchema = new McpToolCatalog().outputSchema("agent_get_action")
+        var observationSchema = legacyActionOutputSchema()
                 .getAsJsonObject("$defs").getAsJsonObject("effectObservation");
         var before = JsonParser.parseString("""
                 {"block":"minecraft:cobblestone","properties":{},
@@ -1481,12 +1488,12 @@ class McpToolCatalogTest {
                 .getAsJsonObject().getAsJsonObject("routing_label")
                 .addProperty("entity_ref", "raw-uuid");
         assertThat(CatalogSchemaValidator.matches(schema, rawRoutingRef)).isFalse();
-        assertThat(new McpToolCatalog().listResult().getAsJsonArray("tools")).hasSize(6);
+        assertThat(new McpToolCatalog().listResult().getAsJsonArray("tools")).hasSize(McpToolCatalog.REQUIRED_NAMES.size());
     }
 
     @Test
     void actionProgressSchemaMatchesTheRuntimeRecordingLimits() {
-        var output = new McpToolCatalog().outputSchema("agent_get_action");
+        var output = legacyActionOutputSchema();
         var progress = output.getAsJsonObject("properties")
                 .getAsJsonObject("progress")
                 .getAsJsonObject("properties");
@@ -1564,7 +1571,7 @@ class McpToolCatalogTest {
                 new dev.aod.mcmcp.agent.dsl.ActionDsl.Position("minecraft:overworld", 1, 64, 2),
                 new dev.aod.mcmcp.agent.action.ContainerInspection.Contents(
                         java.util.UUID.randomUUID(), 5, 7, items));
-        var schema = catalog.outputSchema("agent_get_action").getAsJsonObject("properties")
+        var schema = legacyActionOutputSchema().getAsJsonObject("properties")
                 .getAsJsonObject("container_results").getAsJsonObject("properties")
                 .getAsJsonObject("results").getAsJsonObject("items");
         var payload = new com.google.gson.Gson().toJsonTree(result.payload());

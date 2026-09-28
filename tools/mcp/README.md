@@ -1,8 +1,8 @@
 # MCP接続診断・fallback / Connection diagnostics and fallback
 
-通常はゲームの **Esc → MCP接続設定 → Codex / Claude Codeを自動設定** を使い、AIクライアントを再起動してください。登録された5つのMCP Toolを優先します。設定と確認手順は[接続ガイド](../../docs/MCMCP_導入と接続ガイド.md)を参照してください。
+通常はゲームの **Esc → MCP接続設定 → Codex / Claude Codeを自動設定** を使い、AIクライアントを再起動してください。登録されたMCP Toolを優先します。設定と確認手順は[接続ガイド](../../docs/MCMCP_導入と接続ガイド.md)を参照してください。
 
-Use in-game setup and restart your AI client first. Prefer its five registered MCP tools. This developer utility is a fallback for an environment where those tools are unavailable; it is not an additional MCP server or a replacement for normal registration.
+Use in-game setup and restart your AI client first. Prefer its registered MCP tools. This developer utility is a fallback for an environment where those tools are unavailable; it is not an additional MCP server or a replacement for normal registration.
 
 必要環境は **PowerShell 7.4以上** と本repositoryのcloneです。Windows PowerShell 5.1の `powershell.exe` ではなく `pwsh` を使います。追加PowerShell moduleは不要です。tokenをコマンドへ貼らず、起動中のゲームのtokenファイルのパスを指定します。
 
@@ -17,7 +17,7 @@ pwsh -NoProfile -File tools/mcp/Invoke-Mcmcp.ps1 `
   -TokenPath 'C:\path\to\minecraft\config\mcmcp\mcp-token' -Check
 ```
 
-`-Check` は接続と6 Toolの登録だけを確認します。worldの読み取り・Action開始・ONへの切替は行いません。成功時は `{"ok":true,"connection":"reachable","tool_count":6}` を返します。ゲーム内の操作許可とは別の判定です。
+`-Check` は接続とcatalog記載のTool登録だけを確認します。worldの読み取り・Action開始・ONへの切替は行いません。成功時の`tool_count`はcatalogの件数です。ゲーム内の操作許可とは別の判定です。
 
 `-Check` only discovers the server and lists tools. A reachable connection does not imply that gameplay is enabled. No Action is started and no control setting is changed.
 
@@ -36,6 +36,11 @@ pwsh -NoProfile -File tools/mcp/Invoke-Mcmcp.ps1 `
 pwsh -NoProfile -File tools/mcp/Invoke-Mcmcp.ps1 `
   -TokenPath 'C:\path\to\minecraft\config\mcmcp\mcp-token' `
   -Tool agent_start_action -ArgumentsPath './action.json' -WaitSeconds 60
+
+# v2の座標移動を一度開始し、同じaction_idで完了を待つ
+pwsh -NoProfile -File tools/mcp/Invoke-Mcmcp.ps1 `
+  -TokenPath 'C:\path\to\minecraft\config\mcmcp\mcp-token' `
+  -Tool agent_move -ArgumentsPath './move.json' -WaitSeconds 60
 ```
 
 - 成功は `ok:true` とschema検証済みの `result`、失敗は `ok:false` と下表の診断を返します。プロセス終了コードはそれぞれ0・1です。`ok:true` は通信・結果形式の成功であり、Actionの完了判定は `result.state` を確認します。

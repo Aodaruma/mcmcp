@@ -656,7 +656,7 @@ class McpHttpServerTest {
 
         HttpResponse<String> list = send(request(
                 "tools/list", null, metaParams(), McpTestFixtures.TOKEN));
-        assertThat(json(list).getAsJsonObject("result").getAsJsonArray("tools")).hasSize(6);
+        assertThat(json(list).getAsJsonObject("result").getAsJsonArray("tools")).hasSize(McpToolCatalog.REQUIRED_NAMES.size());
         assertThat(list.body()).doesNotContain(
                 "evaluation_turn", "evaluation_lease", McpHttpServer.EVALUATION_TURN_PATH);
     }

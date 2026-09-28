@@ -101,7 +101,7 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 | RuntimeArguments / RuntimeFailures | 型・値の検証、固定の公開失敗への変換 |
 | RoutineArguments / RoutineIdentity / RoutineCatalog | 既存の内部routine互換経路の要求・同一性・一覧 |
 
-`routine/` はすべて旧機能という意味ではありません。現在のActionもそこにあるMinecraft操作portや小さなoperationを利用します。削除時は実際の呼出元を確認してください。`McpToolSchemas` は内部routine入力schemaだけを保持し、固定5 Toolの正本はcatalog側にあります。
+`routine/` はすべて旧機能という意味ではありません。現在のActionもそこにあるMinecraft操作portや小さなoperationを利用します。削除時は実際の呼出元を確認してください。`McpToolSchemas` は内部routine入力schemaだけを保持し、公開Toolの正本はcatalog側にあります。
 
 ## 在庫操作の分割
 
@@ -134,7 +134,7 @@ capability gateの入口は `Invoke-Mcmcp*CapabilityGate.ps1` です。共通支
 
 共有ファイルにはparameter bindingや実行シナリオを置きません。`-LibraryOnly` の読込で通信・token読取・artifact作成を始めず、呼出元のscopeとmock transport差替えを維持します。`tools/mcp/McmcpTransport.ps1` とは現状の検証契約に差があるため、単純な置換はできません。
 
-`run-build-gate.ps1` の旧routine呼出しは現在の固定5 Toolと互換ではありません。新規実装の雛形には使わず、capability gateと公開DSLを参照してください。
+`run-build-gate.ps1` の旧routine呼出しは現在の公開Toolと互換ではありません。新規実装の雛形には使わず、capability gateと公開DSLを参照してください。
 
 ## 変更と検証の進め方
 
@@ -154,4 +154,4 @@ capability gateの入口は `Invoke-Mcmcp*CapabilityGate.ps1` です。共通支
 
 ## 平面施工の保存・再開
 
-外部runnerは tools/building/Invoke-McmcpBuilding.ps1、行列と原子的checkpointは McmcpBuildingLedger.ps1。固定5 Toolと tools/mcp/McmcpClient.ps1 のschema検証を再利用する。対応試験は Test-McmcpBuilding.ps1 と Test-McmcpBuildingRecovery.ps1。ゲーム内の入力・設置・server確認は既存primitiveが所有する。
+外部runnerは tools/building/Invoke-McmcpBuilding.ps1、行列と原子的checkpointは McmcpBuildingLedger.ps1。公開Toolと tools/mcp/McmcpClient.ps1 のschema検証を再利用する。対応試験は Test-McmcpBuilding.ps1 と Test-McmcpBuildingRecovery.ps1。ゲーム内の入力・設置・server確認は既存primitiveが所有する。

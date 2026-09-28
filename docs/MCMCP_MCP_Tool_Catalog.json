@@ -3472,9 +3472,853 @@
       }
     },
     {
+      "name": "agent_move",
+      "title": "Move to Coordinates",
+      "description": "Moves toward an absolute cell or relative direction using locally known safe route segments. The destination may be unobserved; no unknown cell is assumed safe. Use agent_get_action with the returned action_id.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "x": {
+                "type": "integer"
+              },
+              "y": {
+                "type": "integer"
+              },
+              "z": {
+                "type": "integer"
+              },
+              "arrival_radius": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 16
+              },
+              "tolerance": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 0.49
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1200
+              },
+              "max_distance": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 256
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "z"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "direction": {
+                "enum": [
+                  "north",
+                  "south",
+                  "east",
+                  "west",
+                  "northeast",
+                  "northwest",
+                  "southeast",
+                  "southwest",
+                  "up",
+                  "down"
+                ]
+              },
+              "distance": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 256
+              },
+              "arrival_radius": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 16
+              },
+              "tolerance": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 0.49
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1200
+              },
+              "max_distance": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 256
+              }
+            },
+            "required": [
+              "direction",
+              "distance"
+            ]
+          }
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "action_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "state": {
+            "const": "queued"
+          }
+        },
+        "required": [
+          "schema_version",
+          "action_id",
+          "state"
+        ],
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    {
+      "name": "agent_break_block",
+      "title": "Break Blocks",
+      "description": "Breaks one cell or a signed inclusive box of Vanilla blocks. Filters are optional; advance approaches through known safe cells and confirms each break. Never replays an uncertain mutation.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "z": {
+            "type": "integer"
+          },
+          "dx": {
+            "type": "integer"
+          },
+          "dy": {
+            "type": "integer"
+          },
+          "dz": {
+            "type": "integer"
+          },
+          "include_blocks": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 128,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^minecraft:[a-z0-9_./-]+$",
+              "maxLength": 128
+            }
+          },
+          "exclude_blocks": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 128,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^minecraft:[a-z0-9_./-]+$",
+              "maxLength": 128
+            }
+          },
+          "max_blocks": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4096
+          },
+          "max_ticks": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1200
+          },
+          "max_distance": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 256
+          },
+          "advance": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "z"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "action_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "state": {
+            "const": "queued"
+          }
+        },
+        "required": [
+          "schema_version",
+          "action_id",
+          "state"
+        ],
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    {
+      "name": "agent_place_block",
+      "title": "Place Blocks",
+      "description": "Places a Vanilla block at one cell or over a signed inclusive box. Desired properties and replace filter are optional. Uses local support evidence and server confirmation.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "z": {
+            "type": "integer"
+          },
+          "dx": {
+            "type": "integer"
+          },
+          "dy": {
+            "type": "integer"
+          },
+          "dz": {
+            "type": "integer"
+          },
+          "block": {
+            "type": "string",
+            "pattern": "^minecraft:[a-z0-9_./-]+$",
+            "maxLength": 128
+          },
+          "item": {
+            "type": "string",
+            "pattern": "^minecraft:[a-z0-9_./-]+$",
+            "maxLength": 128
+          },
+          "properties": {
+            "type": "object",
+            "maxProperties": 32,
+            "propertyNames": {
+              "pattern": "^[a-z0-9_]{1,64}$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9_./-]+$"
+            }
+          },
+          "replace_blocks": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 128,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^minecraft:[a-z0-9_./-]+$",
+              "maxLength": 128
+            }
+          },
+          "max_blocks": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4096
+          },
+          "max_ticks": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1200
+          },
+          "max_distance": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 256
+          },
+          "advance": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "z",
+          "block"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "action_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "state": {
+            "const": "queued"
+          }
+        },
+        "required": [
+          "schema_version",
+          "action_id",
+          "state"
+        ],
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    {
+      "name": "agent_interact",
+      "title": "Interact with Block",
+      "description": "Uses a block once or over a filtered signed inclusive box, then confirms a server-side block-state change. Menu, entity, and item interactions are not yet supported in this draft.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "target": {
+            "const": "block"
+          },
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "z": {
+            "type": "integer"
+          },
+          "dx": {
+            "type": "integer"
+          },
+          "dy": {
+            "type": "integer"
+          },
+          "dz": {
+            "type": "integer"
+          },
+          "block": {
+            "type": "string",
+            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+            "maxLength": 128
+          },
+          "item": {
+            "type": "string",
+            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+            "maxLength": 128
+          },
+          "expected_after_block": {
+            "type": "string",
+            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+            "maxLength": 128
+          },
+          "expected_after_properties": {
+            "type": "object",
+            "maxProperties": 32,
+            "propertyNames": {
+              "pattern": "^[a-z0-9_]{1,64}$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9_./-]+$"
+            }
+          },
+          "max_interactions": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4096
+          },
+          "max_ticks": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1200
+          },
+          "max_distance": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 256
+          },
+          "advance": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "target",
+          "x",
+          "y",
+          "z"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "action_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "state": {
+            "const": "queued"
+          }
+        },
+        "required": [
+          "schema_version",
+          "action_id",
+          "state"
+        ],
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    {
+      "name": "agent_inventory",
+      "title": "Inspect or Drop Inventory",
+      "description": "Inspects player inventory without opening a screen or drops a specified quantity with server slot confirmation. Container transfer is not yet supported in this draft.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "const": "inspect"
+              },
+              "item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              }
+            },
+            "required": [
+              "operation"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "const": "drop"
+              },
+              "item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "slot": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 35
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1200
+              }
+            },
+            "required": [
+              "operation",
+              "item",
+              "count"
+            ]
+          }
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "action_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "state": {
+            "const": "queued"
+          }
+        },
+        "required": [
+          "schema_version",
+          "action_id",
+          "state"
+        ],
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    {
+      "name": "agent_click",
+      "title": "Click in World",
+      "description": "Issues finite left, right, or middle mouse input. An optional exact block or observed entity_ref guards the current crosshair and reach; this low-level tool does not prove a semantic world effect.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "button": {
+                "enum": [
+                  "left",
+                  "right",
+                  "middle"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 32
+              },
+              "hold_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20
+              },
+              "gap_ticks": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 40
+              }
+            },
+            "required": [
+              "button"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "button": {
+                "enum": [
+                  "left",
+                  "right",
+                  "middle"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 32
+              },
+              "hold_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20
+              },
+              "gap_ticks": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 40
+              },
+              "x": {
+                "type": "integer"
+              },
+              "y": {
+                "type": "integer"
+              },
+              "z": {
+                "type": "integer"
+              },
+              "block": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              }
+            },
+            "required": [
+              "button",
+              "x",
+              "y",
+              "z"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "button": {
+                "enum": [
+                  "left",
+                  "right",
+                  "middle"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 32
+              },
+              "hold_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20
+              },
+              "gap_ticks": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 40
+              },
+              "entity_ref": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{24}$"
+              },
+              "entity_type": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              }
+            },
+            "required": [
+              "button",
+              "entity_ref"
+            ]
+          }
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "action_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "state": {
+            "const": "queued"
+          }
+        },
+        "required": [
+          "schema_version",
+          "action_id",
+          "state"
+        ],
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    {
+      "name": "agent_input_sequence",
+      "title": "Run Finite Input Sequence",
+      "description": "Runs bounded logical keys and mouse actions in simultaneous or sequential steps. Releases all owned input on completion, cancellation, and safety stop.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "inputs": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 9,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "forward",
+                      "back",
+                      "left",
+                      "right",
+                      "jump",
+                      "sneak",
+                      "attack",
+                      "use",
+                      "pick"
+                    ]
+                  }
+                },
+                "hold_ticks": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1200
+                },
+                "gap_ticks": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1200
+                },
+                "repeat": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1200
+                }
+              },
+              "required": [
+                "inputs",
+                "hold_ticks"
+              ]
+            }
+          },
+          "stop_when": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "x": {
+                "type": "integer"
+              },
+              "y": {
+                "type": "integer"
+              },
+              "z": {
+                "type": "integer"
+              },
+              "radius": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 16
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "z"
+            ]
+          }
+        },
+        "required": [
+          "steps"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "action_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "state": {
+            "const": "queued"
+          }
+        },
+        "required": [
+          "schema_version",
+          "action_id",
+          "state"
+        ],
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    {
+      "name": "agent_run_script",
+      "title": "Run Restricted Action Script",
+      "description": "Runs a bounded synchronous JavaScript-like action script with keyword arguments, variables, functions, branches, and finite loops. No host, file, network, module, async, or arbitrary Java access.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32768
+          },
+          "max_work": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000
+          },
+          "max_iterations": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "max_calls": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "max_duration_ticks": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 72000
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "action_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "state": {
+            "const": "queued"
+          }
+        },
+        "required": [
+          "schema_version",
+          "action_id",
+          "state"
+        ],
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+
+    {
       "name": "agent_get_action",
       "title": "Get MCMCP Action",
-      "description": "Returns bounded progress, a policy-filtered trace, a bounded latest-effect ring (monotonic seq; earlier entries may be evicted) with terminal aggregate, terminal partial/resume metadata, and the bounded canonical JSON source/hash for one explicit action handle. A confirmed effect has server-derived before/after evidence; unknown means a mutation was dispatched without a confirmed after-state and requires reobservation, never blind replay. Failed or cancelled terminal does not roll back confirmed effects: apply each confirmed effect exactly once. recoverable never authorizes replaying the same Action; when partial.resume_requires_reobservation is true, fetch fresh state or observation and plan a new Action. source is audit data, not replay authority. template is identical only when no opaque reference exists; otherwise every opaque ref and its coupled recipe fingerprint are null, ready_for_agent_start_action=false, and reference_requirements says how to refresh them. Opaque refs are never declared live by this off-client-thread read and must always be refreshed before cloning. wait_timeout_ms is an optional integer from 0 through 25000; zero or omission returns immediately, otherwise it waits off the Minecraft client thread until terminal or timeout. Set include_container_results=true to return complete item-ID totals from successful inspect_known_container nodes (up to 54 types per container, component differences aggregated). container_results_limit is 1..8 (default 4); pass next_cursor as container_results_cursor with include_container_results=true for more containers. Cursors freeze a result-count snapshot and are bound to action_id. Each result is immutable server-synchronized evidence published only after owned-menu cleanup; observed_client_tick and packet_revision describe the captured server snapshot, not present inventory or mutation authority. total_item_types, returned_item_types and truncated explicitly report completeness. All successful inspection occurrences (max 256 expanded nodes) are retained without eviction while the Action is retained; the store retains only the latest Action and previous terminal Action. Read all pages before starting further Actions. A missing result is not an empty chest; failed/unconfirmed inspections have no result. An empty verified chest has a result with items=[] and total_item_types=0. During execution, query again without a cursor for newly completed results. trace remains a short, possibly truncated summary; use container_results for complete inventories. Omission/false preserves the legacy output without container_results. Page-only arguments require the option to be true.",
+      "description": "For v2 jobs, returns kind, state, progress, cancellation, failure and bounded result. Legacy v1 Actions: returns bounded progress, a policy-filtered trace, a bounded latest-effect ring (monotonic seq; earlier entries may be evicted) with terminal aggregate, terminal partial/resume metadata, and the bounded canonical JSON source/hash for one explicit action handle. A confirmed effect has server-derived before/after evidence; unknown means a mutation was dispatched without a confirmed after-state and requires reobservation, never blind replay. Failed or cancelled terminal does not roll back confirmed effects: apply each confirmed effect exactly once. recoverable never authorizes replaying the same Action; when partial.resume_requires_reobservation is true, fetch fresh state or observation and plan a new Action. source is audit data, not replay authority. template is identical only when no opaque reference exists; otherwise every opaque ref and its coupled recipe fingerprint are null, ready_for_agent_start_action=false, and reference_requirements says how to refresh them. Opaque refs are never declared live by this off-client-thread read and must always be refreshed before cloning. wait_timeout_ms is an optional integer from 0 through 25000; zero or omission returns immediately, otherwise it waits off the Minecraft client thread until terminal or timeout. Set include_container_results=true to return complete item-ID totals from successful inspect_known_container nodes (up to 54 types per container, component differences aggregated). container_results_limit is 1..8 (default 4); pass next_cursor as container_results_cursor with include_container_results=true for more containers. Cursors freeze a result-count snapshot and are bound to action_id. Each result is immutable server-synchronized evidence published only after owned-menu cleanup; observed_client_tick and packet_revision describe the captured server snapshot, not present inventory or mutation authority. total_item_types, returned_item_types and truncated explicitly report completeness. All successful inspection occurrences (max 256 expanded nodes) are retained without eviction while the Action is retained; the store retains only the latest Action and previous terminal Action. Read all pages before starting further Actions. A missing result is not an empty chest; failed/unconfirmed inspections have no result. An empty verified chest has a result with items=[] and total_item_types=0. During execution, query again without a cursor for newly completed results. trace remains a short, possibly truncated summary; use container_results for complete inventories. Omission/false preserves the legacy output without container_results. Page-only arguments require the option to be true.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -3514,437 +4358,965 @@
       },
       "outputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "additionalProperties": false,
         "$defs": {
           "effectObservation": {
             "type": "object",
             "description": "Bounded semantic observation only; raw menu slots, payloads, credentials, and secrets are never present.",
             "additionalProperties": false,
             "properties": {
-              "block": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 192},
-              "properties": {"type": "object", "maxProperties": 32, "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,63}$"}, "additionalProperties": {"type": "string", "pattern": "^[a-z0-9_.:/,+\\-= ]*$", "maxLength": 192}},
-              "affected_blocks": {"type": "integer", "minimum": 1, "maximum": 2},
-              "source_count": {"type": "integer", "minimum": 0, "maximum": 3456},
-              "destination_count": {"type": "integer", "minimum": 0, "maximum": 3456},
-              "source_item": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 192},
-              "destination_item": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 192},
-              "transferred": {"type": "integer", "minimum": 1, "maximum": 896},
-              "displayed_item": {"type":"string", "pattern":"^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength":128, "description":"Server-observed frame item; minecraft:air means a confirmed empty display. Omitted means unknown."},
-              "rotation": {"type":"integer", "minimum":0, "maximum":7},
-              "body_alive": {"type":"boolean"},
-              "hand": {"enum": ["main_hand", "off_hand"]},
-              "rod_item": {"const": "minecraft:fishing_rod"},
-              "bobber_present": {"type": "boolean"},
-              "fishing_session_ref": {"type": "string", "pattern": "^[A-Za-z0-9_-]{24}$"},
-              "rod_damage": {"type": "integer", "minimum": -1, "maximum": 2147483647},
-              "inventory_count": {"type": "integer", "minimum": 0, "maximum": 2304},
-              "cycle": {"type": "integer", "minimum": 1, "maximum": 64},
-              "expected_drop": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 192},
-              "minimum_inventory_count": {"type": "integer", "minimum": 1, "maximum": 2304}
-              ,"entity_type": {"type": "string", "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$", "maxLength": 128}
-              ,"health": {"type": "number"}
-              ,"health_before": {"type": "number"}
-              ,"health_current": {"type": "number"}
-              ,"health_delta": {"type": "number"}
-              ,"absorption_before": {"type": "number"}
-              ,"absorption_current": {"type": "number"}
-              ,"effective_health_before": {"type": "number"}
-              ,"effective_health_previous": {"type": "number"}
-              ,"effective_health_current": {"type": "number"}
-              ,"outcome": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"}
-              ,"reason": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"}
-              ,"completion_reason": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"}
-              ,"max_attacks": {"type": "integer", "minimum": 1, "maximum": 2048}
-              ,"dispatched_attacks": {"type": "integer", "minimum": 0, "maximum": 2048}
-              ,"confirmed_attacks": {"type": "integer", "minimum": 0, "maximum": 2048}
-              ,"unknown_attacks": {"type": "integer", "minimum": 0, "maximum": 2048}
+              "block": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 192
+              },
+              "properties": {
+                "type": "object",
+                "maxProperties": 32,
+                "propertyNames": {
+                  "pattern": "^[a-z][a-z0-9_]{0,63}$"
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9_.:/,+\\-= ]*$",
+                  "maxLength": 192
+                }
+              },
+              "affected_blocks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2
+              },
+              "source_count": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3456
+              },
+              "destination_count": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3456
+              },
+              "source_item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 192
+              },
+              "destination_item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 192
+              },
+              "transferred": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 896
+              },
+              "displayed_item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128,
+                "description": "Server-observed frame item; minecraft:air means a confirmed empty display. Omitted means unknown."
+              },
+              "rotation": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 7
+              },
+              "body_alive": {
+                "type": "boolean"
+              },
+              "hand": {
+                "enum": [
+                  "main_hand",
+                  "off_hand"
+                ]
+              },
+              "rod_item": {
+                "const": "minecraft:fishing_rod"
+              },
+              "bobber_present": {
+                "type": "boolean"
+              },
+              "fishing_session_ref": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{24}$"
+              },
+              "rod_damage": {
+                "type": "integer",
+                "minimum": -1,
+                "maximum": 2147483647
+              },
+              "inventory_count": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2304
+              },
+              "cycle": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "expected_drop": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 192
+              },
+              "minimum_inventory_count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2304
+              },
+              "entity_type": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "health": {
+                "type": "number"
+              },
+              "health_before": {
+                "type": "number"
+              },
+              "health_current": {
+                "type": "number"
+              },
+              "health_delta": {
+                "type": "number"
+              },
+              "absorption_before": {
+                "type": "number"
+              },
+              "absorption_current": {
+                "type": "number"
+              },
+              "effective_health_before": {
+                "type": "number"
+              },
+              "effective_health_previous": {
+                "type": "number"
+              },
+              "effective_health_current": {
+                "type": "number"
+              },
+              "outcome": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]{1,64}$"
+              },
+              "reason": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]{1,64}$"
+              },
+              "completion_reason": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]{1,64}$"
+              },
+              "max_attacks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2048
+              },
+              "dispatched_attacks": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2048
+              },
+              "confirmed_attacks": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2048
+              },
+              "unknown_attacks": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2048
+              }
             }
           }
         },
-        "properties": {
-          "schema_version": {"const": 1},
-          "action_id": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-          },
-          "state": {"enum": ["queued", "running", "succeeded", "failed", "cancelled"]},
-          "progress": {
+        "oneOf": [
+          {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "phase": {"enum": ["queued", "executing", "replanning", "recovering", "finished"]},
-              "current_node_id": {
-                "type": ["string", "null"],
-                "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+              "schema_version": {
+                "const": 1
               },
-              "executed_nodes": {"type": "integer", "minimum": 0, "maximum": 256},
-              "total_node_upper_bound": {"type": "integer", "minimum": 1, "maximum": 256},
-              "distance_travelled": {"type": "number", "minimum": 0, "maximum": 48},
-              "camera_degrees": {"type": "number", "minimum": 0, "maximum": 1080},
-              "interactions": {"type": "integer", "minimum": 0, "maximum": 2048},
-              "blocks_broken": {"type": "integer", "minimum": 0, "maximum": 64},
-              "blocks_placed": {"type": "integer", "minimum": 0, "maximum": 16},
-              "ticks": {"type": "integer", "minimum": 0, "maximum": 1728200}
-            },
-            "required": ["phase", "current_node_id", "executed_nodes", "total_node_upper_bound", "distance_travelled", "camera_degrees", "interactions", "blocks_broken", "blocks_placed", "ticks"]
-          },
-          "failure": {
-            "oneOf": [
-              {"type": "null"},
-              {
+              "action_id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "state": {
+                "enum": [
+                  "queued",
+                  "running",
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "progress": {
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "code": {
+                  "phase": {
                     "enum": [
-                      "CANCELLED_BY_CLIENT",
-                      "USER_DISABLED",
-                      "EMERGENCY_STOP",
-                      "BUDGET_EXCEEDED",
-                      "PATH_BLOCKED",
-                      "WORLD_CHANGED",
-                      "SAFETY_RECOVERED",
-                      "RECOVERY_EXHAUSTED",
-                      "SERVER_DENIED_OR_DESYNC",
-                      "SAFETY_INTERRUPTED",
-                      "CONDITION_TIMEOUT",
-                      "PREDICATE_UNAVAILABLE",
-                      "CAPABILITY_DENIED",
-                      "DELIVERY_UNCONFIRMED",
-                      "INTERNAL_ERROR"
+                      "queued",
+                      "executing",
+                      "replanning",
+                      "recovering",
+                      "finished"
                     ]
                   },
-                  "recoverable": {"type": "boolean", "description": "True means fresh observation and replanning may recover. It never authorizes blind replay of the original Action."},
-                  "evidence": {
-                    "type": "array",
-                    "maxItems": 16,
-                    "items": {"type": "string", "maxLength": 128}
-                  }
-                },
-                "required": ["code", "recoverable", "evidence"]
-              }
-            ]
-          },
-          "trace": {
-            "type": "array",
-            "maxItems": 256,
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "tick": {"type": "integer", "minimum": 0, "maximum": 1728200},
-                "event": {"type": "string", "pattern": "^[A-Z0-9_]+$", "maxLength": 64},
-                "detail": {"type": "string", "maxLength": 256}
-              },
-              "required": ["tick", "event", "detail"]
-            }
-          },
-          "effects": {
-            "type": "array",
-            "description": "Bounded latest-effect ring recorded at authoritative observation/ACK points. Sequence numbers remain monotonic when earlier entries are evicted. An unknown entry means a mutation was dispatched but its after-state was not confirmed; it must never be replayed blindly. inventory_swap records an internal construction material exchange between main inventory and the selected hotbar: source/destination item and count refer to those two roles, never raw slot indices. Confirmed swaps conserve the items and are distinct from block placement. An interrupted unconfirmed swap has an empty observed_after and may reconcile later; reobserve before planning another action.",
-            "maxItems": 64,
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "seq": {"type": "integer", "minimum": 1, "maximum": 2050},
-                "node_id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$"},
-                "kind": {"enum": ["block_place", "block_break", "inventory_swap", "container_take", "container_store", "frame_item_remove", "frame_item_insert", "fishing_cast", "fishing_reel", "entity_attack", "kill_zone_summary", "safety_interrupted"]},
-                "subject": {"type": "string", "pattern": "^[a-z0-9_.:/,+-]{1,192}$"},
-                "observed_before": {"$ref": "#/$defs/effectObservation"},
-                "observed_after": {"$ref": "#/$defs/effectObservation"},
-                "verification": {"enum": ["confirmed", "qualified", "unknown"], "description": "Independent of terminal state. A confirmed effect remains committed even when the Action later fails or is cancelled and must be applied exactly once."},
-                "client_tick": {"type": "integer", "minimum": 0},
-                "world_revision": {"type": "integer", "minimum": 0}
-              },
-              "required": ["seq", "node_id", "kind", "subject", "observed_before", "observed_after", "verification", "client_tick", "world_revision"]
-            }
-          },
-          "effect_aggregate": {
-            "type": "object",
-            "description": "Fixed-size lifetime aggregate that remains complete when older effect-ring entries are evicted.",
-            "additionalProperties": false,
-            "properties": {
-              "total_effects": {"type": "integer", "minimum": 0, "maximum": 2050},
-              "retained_effects": {"type": "integer", "minimum": 0, "maximum": 64},
-              "confirmed_effects": {"type": "integer", "minimum": 0, "maximum": 2050},
-              "qualified_effects": {"type": "integer", "minimum": 0, "maximum": 2050},
-              "unknown_effects": {"type": "integer", "minimum": 0, "maximum": 2050},
-              "dispatched_attacks": {"type": "integer", "minimum": 0, "maximum": 2048},
-              "confirmed_attacks": {"type": "integer", "minimum": 0, "maximum": 2048},
-              "unknown_attacks": {"type": "integer", "minimum": 0, "maximum": 2048}
-            },
-            "required": ["total_effects", "retained_effects", "confirmed_effects", "qualified_effects", "unknown_effects", "dispatched_attacks", "confirmed_attacks", "unknown_attacks"]
-          },
-          "partial": {
-            "description": "Null while non-terminal. Every terminal result carries bounded interruption/resume metadata derived from the live ledger, never reconstructed after completion.",
-            "oneOf": [
-              {"type": "null"},
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "has_confirmed_effects": {"type": "boolean", "description": "True when this terminal Action has one or more committed confirmed effects, including failed or cancelled Actions."},
-                  "interrupted_node_id": {
-                    "type": ["string", "null"],
+                  "current_node_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
                     "pattern": "^[a-z][a-z0-9_-]{0,31}$"
                   },
-                  "remaining_node_upper_bound": {"type": "integer", "minimum": 0, "maximum": 256},
-                  "resume_requires_reobservation": {"type": "boolean", "description": "When true, obtain fresh state or observation and plan a new Action. Do this even when every retained effect is confirmed; never replay the original Action blindly."}
+                  "executed_nodes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 256
+                  },
+                  "total_node_upper_bound": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 256
+                  },
+                  "distance_travelled": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 48
+                  },
+                  "camera_degrees": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1080
+                  },
+                  "interactions": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2048
+                  },
+                  "blocks_broken": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 64
+                  },
+                  "blocks_placed": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 16
+                  },
+                  "ticks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1728200
+                  }
                 },
-                "required": ["has_confirmed_effects", "interrupted_node_id", "remaining_node_upper_bound", "resume_requires_reobservation"]
-              }
-            ]
-          },
-          "source": {
-            "type": "object",
-            "description": "Canonical normalized Action DSL accepted for this action. It contains only caller-submitted, parser-recognized fields and never reflects secrets, hidden state, raw slots, or runtime-only data.",
-            "additionalProperties": false,
-            "properties": {
-              "media_type": {"const": "application/vnd.mcmcp.action-dsl+json;version=1"},
-              "canonical_json": {"type": "string", "minLength": 1, "maxLength": 131072},
-              "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-              "contains_opaque_refs": {"type": "boolean"},
-              "replayable": {"type": "boolean", "description": "False whenever the retained source contains any opaque reference; use the redacted template and refresh every reference instead."}
-            },
-            "required": ["media_type", "canonical_json", "sha256", "contains_opaque_refs", "replayable"]
-          },
-          "template": {
-            "type": "object",
-            "description": "Safe clone template. Any opaque references and coupled recipe fingerprint are JSON null until replaced from a fresh producer result, making the template intentionally invalid for agent_start_action while blocked.",
-            "additionalProperties": false,
-            "properties": {
-              "media_type": {"const": "application/vnd.mcmcp.action-dsl+json;version=1"},
-              "canonical_json": {"type": "string", "minLength": 1, "maxLength": 131072},
-              "ready_for_agent_start_action": {"type": "boolean"},
-              "blocked_by": {
-                "oneOf": [
-                  {"type": "null"},
-                  {"const": "FRESH_REFERENCE_REQUIRED"}
+                "required": [
+                  "phase",
+                  "current_node_id",
+                  "executed_nodes",
+                  "total_node_upper_bound",
+                  "distance_travelled",
+                  "camera_degrees",
+                  "interactions",
+                  "blocks_broken",
+                  "blocks_placed",
+                  "ticks"
                 ]
-              }
-            },
-            "required": ["media_type", "canonical_json", "ready_for_agent_start_action", "blocked_by"]
-          },
-          "reference_requirements": {
-            "type": "array",
-            "maxItems": 512,
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "path": {"type": "string", "minLength": 1, "maxLength": 512},
-                "kind": {"enum": ["container_label_entity_ref", "frame_display_entity_ref", "operation_ref", "placement_state_ref", "recipe_ref", "fishing_session_ref", "kill_zone_consent_ref"]},
-                "coupled_paths": {
-                  "type": "array", "minItems": 0, "maxItems": 1,
-                  "items": {"type": "string", "minLength": 1, "maxLength": 512}
-                },
-                "refresh_tool": {"enum": ["agent_get_state", "agent_get_observation", "agent_get_action"]},
-                "source_path": {"type": "string", "minLength": 1, "maxLength": 160},
-                "alternative_sources": {
-                  "type": "array",
-                  "minItems": 1,
-                  "maxItems": 1,
-                  "items": {
+              },
+              "failure": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
-                      "tool": {
-                        "const": "agent_get_state"
+                      "code": {
+                        "enum": [
+                          "CANCELLED_BY_CLIENT",
+                          "USER_DISABLED",
+                          "EMERGENCY_STOP",
+                          "BUDGET_EXCEEDED",
+                          "PATH_BLOCKED",
+                          "WORLD_CHANGED",
+                          "SAFETY_RECOVERED",
+                          "RECOVERY_EXHAUSTED",
+                          "SERVER_DENIED_OR_DESYNC",
+                          "SAFETY_INTERRUPTED",
+                          "CONDITION_TIMEOUT",
+                          "PREDICATE_UNAVAILABLE",
+                          "CAPABILITY_DENIED",
+                          "DELIVERY_UNCONFIRMED",
+                          "INTERNAL_ERROR"
+                        ]
                       },
-                      "source_path": {
-                        "const": "/placement_materials/*/placement_state_ref"
+                      "recoverable": {
+                        "type": "boolean",
+                        "description": "True means fresh observation and replanning may recover. It never authorizes blind replay of the original Action."
+                      },
+                      "evidence": {
+                        "type": "array",
+                        "maxItems": 16,
+                        "items": {
+                          "type": "string",
+                          "maxLength": 128
+                        }
                       }
                     },
                     "required": [
-                      "tool",
-                      "source_path"
+                      "code",
+                      "recoverable",
+                      "evidence"
                     ]
                   }
-                },
-                "status": {"const": "refresh_required"}
+                ]
               },
-              "required": ["path", "kind", "coupled_paths", "refresh_tool", "source_path", "status"]
-            }
-          },
-            "container_results": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "results": {
-                  "type": "array",
-                  "maxItems": 8,
-                  "items": {
+              "trace": {
+                "type": "array",
+                "maxItems": 256,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "tick": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1728200
+                    },
+                    "event": {
+                      "type": "string",
+                      "pattern": "^[A-Z0-9_]+$",
+                      "maxLength": 64
+                    },
+                    "detail": {
+                      "type": "string",
+                      "maxLength": 256
+                    }
+                  },
+                  "required": [
+                    "tick",
+                    "event",
+                    "detail"
+                  ]
+                }
+              },
+              "effects": {
+                "type": "array",
+                "description": "Bounded latest-effect ring recorded at authoritative observation/ACK points. Sequence numbers remain monotonic when earlier entries are evicted. An unknown entry means a mutation was dispatched but its after-state was not confirmed; it must never be replayed blindly. inventory_swap records an internal construction material exchange between main inventory and the selected hotbar: source/destination item and count refer to those two roles, never raw slot indices. Confirmed swaps conserve the items and are distinct from block placement. An interrupted unconfirmed swap has an empty observed_after and may reconcile later; reobserve before planning another action.",
+                "maxItems": 64,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "seq": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2050
+                    },
+                    "node_id": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+                    },
+                    "kind": {
+                      "enum": [
+                        "block_place",
+                        "block_break",
+                        "inventory_swap",
+                        "container_take",
+                        "container_store",
+                        "frame_item_remove",
+                        "frame_item_insert",
+                        "fishing_cast",
+                        "fishing_reel",
+                        "entity_attack",
+                        "kill_zone_summary",
+                        "safety_interrupted"
+                      ]
+                    },
+                    "subject": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9_.:/,+-]{1,192}$"
+                    },
+                    "observed_before": {
+                      "$ref": "#/$defs/effectObservation"
+                    },
+                    "observed_after": {
+                      "$ref": "#/$defs/effectObservation"
+                    },
+                    "verification": {
+                      "enum": [
+                        "confirmed",
+                        "qualified",
+                        "unknown"
+                      ],
+                      "description": "Independent of terminal state. A confirmed effect remains committed even when the Action later fails or is cancelled and must be applied exactly once."
+                    },
+                    "client_tick": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "world_revision": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "seq",
+                    "node_id",
+                    "kind",
+                    "subject",
+                    "observed_before",
+                    "observed_after",
+                    "verification",
+                    "client_tick",
+                    "world_revision"
+                  ]
+                }
+              },
+              "effect_aggregate": {
+                "type": "object",
+                "description": "Fixed-size lifetime aggregate that remains complete when older effect-ring entries are evicted.",
+                "additionalProperties": false,
+                "properties": {
+                  "total_effects": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2050
+                  },
+                  "retained_effects": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 64
+                  },
+                  "confirmed_effects": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2050
+                  },
+                  "qualified_effects": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2050
+                  },
+                  "unknown_effects": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2050
+                  },
+                  "dispatched_attacks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2048
+                  },
+                  "confirmed_attacks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2048
+                  },
+                  "unknown_attacks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2048
+                  }
+                },
+                "required": [
+                  "total_effects",
+                  "retained_effects",
+                  "confirmed_effects",
+                  "qualified_effects",
+                  "unknown_effects",
+                  "dispatched_attacks",
+                  "confirmed_attacks",
+                  "unknown_attacks"
+                ]
+              },
+              "partial": {
+                "description": "Null while non-terminal. Every terminal result carries bounded interruption/resume metadata derived from the live ledger, never reconstructed after completion.",
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
-                      "result_seq": {
+                      "has_confirmed_effects": {
+                        "type": "boolean",
+                        "description": "True when this terminal Action has one or more committed confirmed effects, including failed or cancelled Actions."
+                      },
+                      "interrupted_node_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+                      },
+                      "remaining_node_upper_bound": {
                         "type": "integer",
-                        "minimum": 1,
+                        "minimum": 0,
                         "maximum": 256
                       },
-                      "node_id": {
+                      "resume_requires_reobservation": {
+                        "type": "boolean",
+                        "description": "When true, obtain fresh state or observation and plan a new Action. Do this even when every retained effect is confirmed; never replay the original Action blindly."
+                      }
+                    },
+                    "required": [
+                      "has_confirmed_effects",
+                      "interrupted_node_id",
+                      "remaining_node_upper_bound",
+                      "resume_requires_reobservation"
+                    ]
+                  }
+                ]
+              },
+              "source": {
+                "type": "object",
+                "description": "Canonical normalized Action DSL accepted for this action. It contains only caller-submitted, parser-recognized fields and never reflects secrets, hidden state, raw slots, or runtime-only data.",
+                "additionalProperties": false,
+                "properties": {
+                  "media_type": {
+                    "const": "application/vnd.mcmcp.action-dsl+json;version=1"
+                  },
+                  "canonical_json": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 131072
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  },
+                  "contains_opaque_refs": {
+                    "type": "boolean"
+                  },
+                  "replayable": {
+                    "type": "boolean",
+                    "description": "False whenever the retained source contains any opaque reference; use the redacted template and refresh every reference instead."
+                  }
+                },
+                "required": [
+                  "media_type",
+                  "canonical_json",
+                  "sha256",
+                  "contains_opaque_refs",
+                  "replayable"
+                ]
+              },
+              "template": {
+                "type": "object",
+                "description": "Safe clone template. Any opaque references and coupled recipe fingerprint are JSON null until replaced from a fresh producer result, making the template intentionally invalid for agent_start_action while blocked.",
+                "additionalProperties": false,
+                "properties": {
+                  "media_type": {
+                    "const": "application/vnd.mcmcp.action-dsl+json;version=1"
+                  },
+                  "canonical_json": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 131072
+                  },
+                  "ready_for_agent_start_action": {
+                    "type": "boolean"
+                  },
+                  "blocked_by": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "const": "FRESH_REFERENCE_REQUIRED"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "media_type",
+                  "canonical_json",
+                  "ready_for_agent_start_action",
+                  "blocked_by"
+                ]
+              },
+              "reference_requirements": {
+                "type": "array",
+                "maxItems": 512,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    },
+                    "kind": {
+                      "enum": [
+                        "container_label_entity_ref",
+                        "frame_display_entity_ref",
+                        "operation_ref",
+                        "placement_state_ref",
+                        "recipe_ref",
+                        "fishing_session_ref",
+                        "kill_zone_consent_ref"
+                      ]
+                    },
+                    "coupled_paths": {
+                      "type": "array",
+                      "minItems": 0,
+                      "maxItems": 1,
+                      "items": {
                         "type": "string",
-                        "pattern": "^[a-z][a-z0-9_-]{0,31}$",
-                        "maxLength": 32
-                      },
-                      "node_execution": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 256
-                      },
-                      "target": {
+                        "minLength": 1,
+                        "maxLength": 512
+                      }
+                    },
+                    "refresh_tool": {
+                      "enum": [
+                        "agent_get_state",
+                        "agent_get_observation",
+                        "agent_get_action"
+                      ]
+                    },
+                    "source_path": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "alternative_sources": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 1,
+                      "items": {
                         "type": "object",
                         "additionalProperties": false,
                         "properties": {
-                          "dimension": {
-                            "type": "string",
-                            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
-                            "maxLength": 128
+                          "tool": {
+                            "const": "agent_get_state"
                           },
-                          "x": {
-                            "type": "integer",
-                            "minimum": -30000000,
-                            "maximum": 30000000
-                          },
-                          "y": {
-                            "type": "integer",
-                            "minimum": -2048,
-                            "maximum": 2048
-                          },
-                          "z": {
-                            "type": "integer",
-                            "minimum": -30000000,
-                            "maximum": 30000000
+                          "source_path": {
+                            "const": "/placement_materials/*/placement_state_ref"
                           }
                         },
                         "required": [
-                          "dimension",
-                          "x",
-                          "y",
-                          "z"
+                          "tool",
+                          "source_path"
                         ]
-                      },
-                      "world_session_id": {
-                        "type": "string",
-                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-                      },
-                      "observed_client_tick": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9223372036854775807
-                      },
-                      "packet_revision": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9223372036854775807
-                      },
-                      "items": {
-                        "type": "array",
-                        "maxItems": 54,
-                        "items": {
+                      }
+                    },
+                    "status": {
+                      "const": "refresh_required"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "kind",
+                    "coupled_paths",
+                    "refresh_tool",
+                    "source_path",
+                    "status"
+                  ]
+                }
+              },
+              "container_results": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "results": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "result_seq": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 256
+                        },
+                        "node_id": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+                          "maxLength": 32
+                        },
+                        "node_execution": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 256
+                        },
+                        "target": {
                           "type": "object",
                           "additionalProperties": false,
                           "properties": {
-                            "item_id": {
+                            "dimension": {
                               "type": "string",
                               "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
                               "maxLength": 128
                             },
-                            "count": {
+                            "x": {
                               "type": "integer",
-                              "minimum": 1,
-                              "maximum": 3456
+                              "minimum": -30000000,
+                              "maximum": 30000000
+                            },
+                            "y": {
+                              "type": "integer",
+                              "minimum": -2048,
+                              "maximum": 2048
+                            },
+                            "z": {
+                              "type": "integer",
+                              "minimum": -30000000,
+                              "maximum": 30000000
                             }
                           },
                           "required": [
-                            "item_id",
-                            "count"
+                            "dimension",
+                            "x",
+                            "y",
+                            "z"
                           ]
+                        },
+                        "world_session_id": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                        },
+                        "observed_client_tick": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9223372036854775807
+                        },
+                        "packet_revision": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9223372036854775807
+                        },
+                        "items": {
+                          "type": "array",
+                          "maxItems": 54,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "item_id": {
+                                "type": "string",
+                                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                                "maxLength": 128
+                              },
+                              "count": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 3456
+                              }
+                            },
+                            "required": [
+                              "item_id",
+                              "count"
+                            ]
+                          }
+                        },
+                        "total_item_types": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 54
+                        },
+                        "returned_item_types": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 54
+                        },
+                        "truncated": {
+                          "const": false
                         }
                       },
-                      "total_item_types": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 54
-                      },
-                      "returned_item_types": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 54
-                      },
-                      "truncated": {
-                        "const": false
-                      }
-                    },
-                    "required": [
-                      "result_seq",
-                      "node_id",
-                      "node_execution",
-                      "target",
-                      "world_session_id",
-                      "observed_client_tick",
-                      "packet_revision",
-                      "items",
-                      "total_item_types",
-                      "returned_item_types",
-                      "truncated"
-                    ]
+                      "required": [
+                        "result_seq",
+                        "node_id",
+                        "node_execution",
+                        "target",
+                        "world_session_id",
+                        "observed_client_tick",
+                        "packet_revision",
+                        "items",
+                        "total_item_types",
+                        "returned_item_types",
+                        "truncated"
+                      ]
+                    }
+                  },
+                  "total_results": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 256
+                  },
+                  "retained_results": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 256
+                  },
+                  "snapshot_result_count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 256
+                  },
+                  "returned_results": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 8
+                  },
+                  "action_terminal": {
+                    "type": "boolean"
+                  },
+                  "truncated": {
+                    "const": false
+                  },
+                  "has_more": {
+                    "type": "boolean"
+                  },
+                  "next_cursor": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 44,
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9]{1,3}:[0-9]{1,3}$"
                   }
                 },
-                "total_results": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 256
-                },
-                "retained_results": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 256
-                },
-                "snapshot_result_count": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 256
-                },
-                "returned_results": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 8
-                },
-                "action_terminal": {
-                  "type": "boolean"
-                },
-                "truncated": {
-                  "const": false
-                },
-                "has_more": {
-                  "type": "boolean"
-                },
-                "next_cursor": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "maxLength": 44,
-                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:[0-9]{1,3}:[0-9]{1,3}$"
-                }
+                "required": [
+                  "results",
+                  "total_results",
+                  "retained_results",
+                  "snapshot_result_count",
+                  "returned_results",
+                  "action_terminal",
+                  "truncated",
+                  "has_more",
+                  "next_cursor"
+                ]
+              }
+            },
+            "required": [
+              "schema_version",
+              "action_id",
+              "state",
+              "progress",
+              "failure",
+              "trace",
+              "effects",
+              "effect_aggregate",
+              "partial",
+              "source",
+              "template",
+              "reference_requirements"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "schema_version": {
+                "const": 2
               },
-              "required": [
-                "results",
-                "total_results",
-                "retained_results",
-                "snapshot_result_count",
-                "returned_results",
-                "action_terminal",
-                "truncated",
-                "has_more",
-                "next_cursor"
-              ]
-            }
-        },
-        "required": ["schema_version", "action_id", "state", "progress", "failure", "trace", "effects", "effect_aggregate", "partial", "source", "template", "reference_requirements"]
+              "action_id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "kind": {
+                "enum": [
+                  "move",
+                  "break_block",
+                  "place_block",
+                  "interact",
+                  "inventory",
+                  "click",
+                  "input_sequence",
+                  "script"
+                ]
+              },
+              "state": {
+                "enum": [
+                  "unconfirmed",
+                  "queued",
+                  "running",
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "progress": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "completed_operations": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1200
+                  },
+                  "max_operations": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1200
+                  },
+                  "scanned_cells": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4096
+                  },
+                  "broken_blocks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4096
+                  },
+                  "placed_blocks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4096
+                  },
+                  "interacted_blocks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4096
+                  }
+                },
+                "required": [
+                  "completed_operations",
+                  "max_operations"
+                ]
+              },
+              "cancel_requested": {
+                "type": "boolean"
+              },
+              "failure": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "string",
+                    "maxLength": 128
+                  }
+                ]
+              },
+              "result": {
+                "type": "object",
+                "maxProperties": 32
+              }
+            },
+            "required": [
+              "schema_version",
+              "action_id",
+              "kind",
+              "state",
+              "progress",
+              "cancel_requested",
+              "failure"
+            ]
+          }
+        ]
       }
     },
     {
@@ -3965,18 +5337,71 @@
       },
       "outputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "schema_version": {"const": 1},
-          "action_id": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "schema_version": {
+                "const": 1
+              },
+              "action_id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "cancel_requested": {
+                "type": "boolean"
+              },
+              "state_at_request": {
+                "enum": [
+                  "queued",
+                  "running",
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ]
+              }
+            },
+            "required": [
+              "schema_version",
+              "action_id",
+              "cancel_requested",
+              "state_at_request"
+            ]
           },
-          "cancel_requested": {"type": "boolean"},
-          "state_at_request": {"enum": ["queued", "running", "succeeded", "failed", "cancelled"]}
-        },
-        "required": ["schema_version", "action_id", "cancel_requested", "state_at_request"]
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "schema_version": {
+                "const": 2
+              },
+              "action_id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "cancel_requested": {
+                "type": "boolean"
+              },
+              "state_at_request": {
+                "enum": [
+                  "unconfirmed",
+                  "queued",
+                  "running",
+                  "succeeded",
+                  "failed",
+                  "cancelled"
+                ]
+              }
+            },
+            "required": [
+              "schema_version",
+              "action_id",
+              "cancel_requested",
+              "state_at_request"
+            ]
+          }
+        ]
       }
     }
   ]

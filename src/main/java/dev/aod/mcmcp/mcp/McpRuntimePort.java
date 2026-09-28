@@ -72,7 +72,7 @@ public interface McpRuntimePort {
         }
     }
 
-    /** Internal v2 dispatch path; not discoverable until the whole tool set is ready. */
+    /** Public v2 dispatch path for a delivery-gated job. */
     record StartInputSequence(Map<String, Object> arguments) implements RuntimeCommand {
         public StartInputSequence {
             arguments = immutableCopy(arguments);
@@ -84,7 +84,7 @@ public interface McpRuntimePort {
         }
     }
 
-    /** Internal v2 dispatch path; world clicks share the finite input job. */
+    /** Public v2 world clicks share the finite input job. */
     record StartClick(Map<String, Object> arguments) implements RuntimeCommand {
         public StartClick {
             arguments = immutableCopy(arguments);
@@ -96,7 +96,7 @@ public interface McpRuntimePort {
         }
     }
 
-    /** Internal v2 script dispatch path; not discoverable until all basic commands are ready. */
+    /** Public v2 script dispatch path for a delivery-gated job. */
     record StartScript(Map<String, Object> arguments) implements RuntimeCommand {
         public StartScript {
             arguments = immutableCopy(arguments);
@@ -108,7 +108,7 @@ public interface McpRuntimePort {
         }
     }
 
-    /** Internal v2 dispatch path; not discoverable until the whole tool set is ready. */
+    /** Public v2 dispatch path for a delivery-gated job. */
     record StartMove(Map<String, Object> arguments) implements RuntimeCommand {
         public StartMove {
             arguments = immutableCopy(arguments);
@@ -120,7 +120,7 @@ public interface McpRuntimePort {
         }
     }
 
-    /** Internal v2 dispatch path; not discoverable until the whole tool set is ready. */
+    /** Public v2 dispatch path for a delivery-gated job. */
     record StartBreakBlock(Map<String, Object> arguments) implements RuntimeCommand {
         public StartBreakBlock {
             arguments = immutableCopy(arguments);
@@ -132,7 +132,7 @@ public interface McpRuntimePort {
         }
     }
 
-    /** Internal v2 dispatch path; not discoverable until the whole tool set is ready. */
+    /** Public v2 dispatch path for a delivery-gated job. */
     record StartPlaceBlock(Map<String, Object> arguments) implements RuntimeCommand {
         public StartPlaceBlock {
             arguments = immutableCopy(arguments);
@@ -144,7 +144,7 @@ public interface McpRuntimePort {
         }
     }
 
-    /** Internal v2 block interaction; not discoverable until the full tool set is ready. */
+    /** Public v2 block-state interaction path. */
     record StartInteract(Map<String, Object> arguments) implements RuntimeCommand {
         public StartInteract {
             arguments = immutableCopy(arguments);
@@ -156,7 +156,7 @@ public interface McpRuntimePort {
         }
     }
 
-    /** Internal v2 inventory readback; not discoverable until every basic tool is ready. */
+    /** Public v2 player-inventory job path. */
     record StartInventory(Map<String, Object> arguments) implements RuntimeCommand {
         public StartInventory {
             arguments = immutableCopy(arguments);

@@ -1,6 +1,6 @@
 # MCMCP公開API v2：改訂案
 
-2026-09-27。利用者の追加フィードバックを反映した実装用の設計案。基準は`main`の`f7d4bf4`。この文書の新APIは実装途中または未実装であり、現在の公開MCP仕様とは区別する。
+2026-09-27。利用者の追加フィードバックを反映した実装用の設計案。基準は`main`の`f7d4bf4`。2026-09-28のDraft PRでは基本行動8ツールを一組で公開catalogへ接続した。旧JSON Action DSLも移行中だけ公開されている。実ゲーム確認と不足する行動範囲が残るため、v2完成・配布済みとは扱わない。
 
 ## 目的と責任
 
@@ -35,11 +35,13 @@ LLMは行き先、作業範囲、条件、反復の意図を伝える。MODは�
 | `agent_input_sequence` | 同時・順次のsteps、押下tick、間隔、反復数、停止条件 | 複数入力の単一所有、有限実行と解放 |
 | `agent_run_script` | 下記の制限言語のsourceと総予算 | 関数・変数・分岐・反復で複数の基本行動を組み立てて進める |
 
+Draft PRで公開した範囲は、moveの座標／方向、Vanillaのbreak/place、block state変更のinteract、プレイヤーinventoryのinspect/drop、world内の有限click、9種類の論理入力、制限付きscriptである。moveの障害物自動破壊・設置、entity/item/menuのinteract、汎用container transfer、menu内clickはまだ対応しない。v2の`get_action`は進行数と小さな結果を返すが、block単位の確定effect一覧は未実装。実ゲームでの成功・取消・危険停止を確認するまでDraftを維持する。
+
 これらの一呼出しは共通の`action_id`を返す。短い処理は同じ応答へ完了結果を載せられる。長い処理は`running`と`action_id`を返す。`agent_get_action({action_id})`は**その一件**の進行、成功／失敗、確定した変更、途中までの結果を読む。`agent_cancel_action({action_id})`は**その一件**の停止を要求する。たとえば`agent_move`が坑道を掘り進めている間も、同じIDで進行を見て中止できる。中止は既に壊したblockを戻さない。名前は既存互換のため残し、v2では共通の「作業結果・中止」ツールとして説明する。
 
-内部の`AgentJobStore`はDSLから独立した共通job状態を保持する。HTTP応答の配送確認前は開始できず、world session違い・取消・操作回数上限で次の操作を拒否する。取消と既に発行した操作の結果が競合しても進行数を記録し、入力解放が確認されるまでterminal結果を公表しない。保持する結果は最新jobと直前の完了jobに限る。内部のinput sequenceと座標moveはruntimeのclient tick、配送確認、進行取得、取消へ接続済み。**公開toolには未接続で、ゲームでの入力所有・lease解放は未検証**。他の行動種別、部分結果の詳細は接続時に実装・試験する。
+内部の`AgentJobStore`はDSLから独立した共通job状態を保持する。HTTP応答の配送確認前は開始できず、world session違い・取消・操作回数上限で次の操作を拒否する。取消と既に発行した操作の結果が競合しても進行数を記録し、入力解放が確認されるまでterminal結果を公表しない。保持する結果は最新jobと直前の完了jobに限る。内部のinput sequenceと座標moveはruntimeのclient tick、配送確認、進行取得、取消へ接続済み。公開toolへ接続済みだが、ゲームでの入力所有・lease解放は未検証。部分結果の詳細は引き続き実装・試験する。
 
-`AgentJobStore`はjob固有の小さな`result`もterminal後と直前jobまで保持する。内部の`StartInventory({operation:"inspect"})`は配送確認後のclient tickでプレイヤーの全所持枠を読み、非空slotの番号・item ID・個数、空枠数、選択中のhotbar枠を返す。任意のitem IDで絞り込め、MOD itemも同じ形式で扱う。`operation:"drop"`はitem IDと1～64個の数量を取り、同じIDのstackが複数あればslot番号で特定させる。main inventoryのstackは一度だけ選択中のhotbar枠へSWAPし、両slotのサーバー更新を確認してから投棄する。各DROP packetの後は選択枠のサーバーpayloadとローカル所持品が要求どおり変化するまで次を送らない。不確実な送信・応答切れでは再送せず、確定数と未確定数を結果に残す。SWAP後の配置は元に戻さず、結果でその可能性を示す。いずれもmenuは開かない。`agent_inventory`は公開catalog未接続であり、`transfer`、containerやMOD収納への汎用操作、`drop`の実機確認が残る。
+`AgentJobStore`はjob固有の小さな`result`もterminal後と直前jobまで保持する。内部の`StartInventory({operation:"inspect"})`は配送確認後のclient tickでプレイヤーの全所持枠を読み、非空slotの番号・item ID・個数、空枠数、選択中のhotbar枠を返す。任意のitem IDで絞り込め、MOD itemも同じ形式で扱う。`operation:"drop"`はitem IDと1～64個の数量を取り、同じIDのstackが複数あればslot番号で特定させる。main inventoryのstackは一度だけ選択中のhotbar枠へSWAPし、両slotのサーバー更新を確認してから投棄する。各DROP packetの後は選択枠のサーバーpayloadとローカル所持品が要求どおり変化するまで次を送らない。不確実な送信・応答切れでは再送せず、確定数と未確定数を結果に残す。SWAP後の配置は元に戻さず、結果でその可能性を示す。いずれもmenuは開かない。`agent_inventory`の`inspect`／`drop`は公開catalogへ接続済みであり、`transfer`、containerやMOD収納への汎用操作、`drop`の実機確認が残る。
 
 move＋breakを利用側で毎ブロック交互に呼ぶ必要はない。`agent_move`に`clear_path`を指定する、または`agent_break_block`に`advance:true`を指定して坑道を連続施工できる。範囲内で新たに露出したblockはMODが局所的に観測し、液体、落下、危険な敵、inventory満杯等で停止・報告する。既存PR #26の坑道専用DSLは参考にするが、公開上の専用命令増殖は避ける。
 
@@ -49,7 +51,7 @@ move＋breakを利用側で毎ブロック交互に呼ぶ必要はない。`agen
 
 公開言語はJavaScript風の小さな同期言語。turtle／p5.jsのように`move(...)`、`breakBlocks(...)`、`place(...)`、`interact(...)`、`input(...)`を順に書ける。行動関数はオブジェクト引数ではなく`move(x=100, y=64, z=120)`のような名前付き引数を受ける。変数、数値・文字列・真偽値・配列・オブジェクト、`if`、回数上限付き`for`／`repeat`、利用者定義の小関数、比較を当面の対象とする。`async/await`、Promise、Node.js、module読込み、Javaへのアクセス、ネットワーク、ファイルI/Oは言語仕様に入れない。完全なECMAScriptを走らせる必要はない。
 
-実装済みの構文例（まだ公開toolからは実行できない）:
+実装済みの構文例（公開`agent_run_script`で受け付けるが実ゲーム未検証）:
 
 ```js
 function advance(x, count) {
@@ -94,7 +96,7 @@ loop・関数呼出しを事前展開せず、ASTを直接評価する。関数�
 
 内部の`StartScript`は配送確認後に専用workerでこの言語を実行する。`move`／`breakBlocks`／`place`／`interact`／`inventory`／`click`／`input`を既存の内部v2 jobへ1命令ずつ渡し、各命令のterminalを待って次へ進む。親scriptは別の共通job IDを持ち、命令の確定数を保持する。取消・緊急停止時は実行中の子jobに取消を要求し、その入力解放が終わるまで親をterminalにしない。source・work・反復・呼出し数・実行時間は有限にする。workerはMinecraft stateを直接読まない。
 
-**未完了:** `interact`のentity・item・menu handler、命令ごとの失敗詳細、screenをまたぐ操作、観測量予算、実ゲームでの成功／取消／危険停止の確認。`agent_run_script`は内部runtimeへ接続したが公開catalogには未登録である。基本行動handlerと停止契約を実ゲームで検証し、基本tool一式と同時公開するまで内部prototypeに留める。
+**未完了:** `interact`のentity・item・menu handler、命令ごとの失敗詳細、screenをまたぐ操作、観測量予算、実ゲームでの成功／取消／危険停止の確認。`agent_run_script`は公開catalogへ接続済み。基本行動handlerと停止契約を実ゲームで検証するまではDraft PRの試験実装とする。
 
 ## このブランチで実装済みの内部座標ナビゲーション
 
@@ -111,21 +113,21 @@ snapshotの既知の安全な停止候補を目標への直線距離、同距離
 
 内部の`StartMove`は絶対`x/y/z`、または開始時のプレイヤーcellからの`direction/distance`を受ける。後者はワールド方位の南北東西・斜め4方向・上下を1～256 blockで指定し、座標との混用は拒否する。任意の`arrival_radius`は0～16 blockの三次元距離で、既定の0は指定cellへの到着を要求する。正の値なら指定座標に近い安全な到達可能cellで止まれ、目標cell自体が通れない場合にも使える。到達許容幅（0.1～0.49）、最大実行tick（1,200）、総移動距離（256 block）も受ける。`CoordinateMoveJobExecution`が既知区間を既存の移動executorへ渡し、中間点到着後に新しい観測を待って次を計画する。部分経路の再計画要求も新証拠を待つ。最終経路完了時は入力を解放し、次のclient tickで現在cellを読み直して到達を確定する。目標への最終経路が途中で無効になれば、その経路を自動再発行せず失敗で停止する。観測が進まない場合も有界に停止する。runtimeは配送確認、world・player・control epoch、体力、screenと局所安全、移動距離、各tickの経路証拠を確認し、取消・危険・緊急停止・world境界で入力を解放してから終端を返す。目標が未観測でも受理するが、未知地形へ踏み出すわけではない。
 
-**未完了:** block／entity状態など座標半径以外の到達条件、障害の自動破壊・設置、scriptからの利用、公開`agent_move`、ゲームでの到達・停止試験。現段階で公開catalog/schemaは変更しない。基本tool一式の公開は接続・検証後に行う。
+**未完了:** block／entity状態など座標半径以外の到達条件、障害の自動破壊・設置、scriptからの利用、ゲームでの到達・停止試験。公開catalog/schemaは基本tool一式として接続済み。
 
 ## このブランチで実装済みの内部ブロック作業基盤
 
-内部の`StartInteract`は現時点でblock対象の状態変更だけを扱う。単一座標またはblock ID条件付きの範囲を受け、必要なら既知の安全経路で近づく。MODのblock IDも照準対象にできる。手持ちは空hotbar枠、または明示したitem IDのhotbar枠を使い、通常の右クリック後に予測sequence・サーバーACK・変更後のblock stateを確認する。`expected_after_block`／`expected_after_properties`を指定した場合はその条件にも一致させる。stateが変わらないmenu開閉、entity／item使用、main inventoryからのitem移送は未実装で、公開catalogにはまだ載せていない。
+内部の`StartInteract`は現時点でblock対象の状態変更だけを扱う。単一座標またはblock ID条件付きの範囲を受け、必要なら既知の安全経路で近づく。MODのblock IDも照準対象にできる。手持ちは空hotbar枠、または明示したitem IDのhotbar枠を使い、通常の右クリック後に予測sequence・サーバーACK・変更後のblock stateを確認する。`expected_after_block`／`expected_after_properties`を指定した場合はその条件にも一致させる。stateが変わらないmenu開閉、entity／item使用、main inventoryからのitem移送は未実装で、公開catalogでは現時点の対応範囲を明示している。
 
 `BlockWorkRegion`は破壊・設置で共用する座標範囲を保持する。`x/y/z`は始点、`dx/dy/dz`は符号付きの**終点差分**で、両端を含む。差分0は単一座標。X、Z、Yの順で安定して列挙し、最大4,096 cellと整数overflowを検査する。将来の楕円・path形状は現時点の契約に含めない。
 
 内部の`V2PlaceArguments`は同じ範囲、必須のVanilla `block`、省略可能な`item`・`properties`・`replace_blocks`と作業上限を受理する。`item`省略時はblock IDと同じitemを選ぶ。`properties`省略時は設置結果の既定stateを受け入れる。`replace_blocks`省略時はair系blockだけを対象とし、他のblockへの置換は明示条件が必要。破壊と設置は`V2BlockJobExecution`の配送確認・範囲進行・取消・入力解放後の終端確定を共用し、進行結果では`broken_blocks`と`placed_blocks`を別名で返す。
 
-内部の`StartPlaceBlock`はruntimeのclient tickへ接続した。現時点の`MinecraftV2PlaceDriver`は、手の届く単一cellについて、局所観測済みの支持面を選び、通常BlockItemを使って設置し、予測sequenceとサーバーACK・設置後stateを照合する。itemがhotbarにない場合、main inventoryの対応stackを選択中のhotbar枠へ一度だけSWAPし、両slotのサーバー更新と実inventory値が一致してから設置する。不確実な送信や確認切れではSWAPを再送しない。SWAP後のhotbar配置は自動で元に戻さないため、設置失敗時にもinventory配置が変わり得る。支持面との不用意なinteractを避けるため短期leaseでかがみ、実crosshair・置き先・予測stateを使用直前に再確認する。`advance:true`の場合、未観測・遠方の置き先へは既知の安全な区間を移動して再観測する。置き先のcellは立ち位置にも経路にも使わない。既知経路が増えなければ有界に停止し、未知cellへは踏み出さない。ベッド・扉など複数cellを作るitemは、派生cellの所有・照合が未実装のため現時点では拒否する。範囲は共通jobが順に処理するが、特殊item、全Vanilla状態の実機確認は未実装。公開catalogには載せていない。
+内部の`StartPlaceBlock`はruntimeのclient tickへ接続した。現時点の`MinecraftV2PlaceDriver`は、手の届く単一cellについて、局所観測済みの支持面を選び、通常BlockItemを使って設置し、予測sequenceとサーバーACK・設置後stateを照合する。itemがhotbarにない場合、main inventoryの対応stackを選択中のhotbar枠へ一度だけSWAPし、両slotのサーバー更新と実inventory値が一致してから設置する。不確実な送信や確認切れではSWAPを再送しない。SWAP後のhotbar配置は自動で元に戻さないため、設置失敗時にもinventory配置が変わり得る。支持面との不用意なinteractを避けるため短期leaseでかがみ、実crosshair・置き先・予測stateを使用直前に再確認する。`advance:true`の場合、未観測・遠方の置き先へは既知の安全な区間を移動して再観測する。置き先のcellは立ち位置にも経路にも使わない。既知経路が増えなければ有界に停止し、未知cellへは踏み出さない。ベッド・扉など複数cellを作るitemは、派生cellの所有・照合が未実装のため現時点では拒否する。範囲は共通jobが順に処理するが、特殊item、全Vanilla状態の実機確認は未実装。公開catalogへ接続済み。
 
 内部の`V2BreakArguments`は未観測座標でも受け、任意の`include_blocks`／`exclude_blocks`、最大破壊数・実行tick・移動距離、`advance`を保持する。条件は新たに観測したblockへ適用する想定で、これらの引数を受理する公開ツールはまだない。`V2BreakSourcePolicy`はv1の固定許可リストから独立し、明示対象の登録済みVanilla非air blockを扱う。既存の攻撃leaseと予測確認ポートはv1ポリシーを既定として残し、v2専用インスタンスだけ新ポリシーを使える。`KnownBlockBreakAttempt`はv2向けに、期待dropなしでもサーバーACKと権威あるairへの遷移で成功を確定できる。局所rayの照準選択は、MCPへの観測配送を必須とせず、現在の視点・reach・revision・観測時刻に合う内部frameだけを使う。
 
-内部の`StartBreakBlock`は配送確認後に共通jobとして動き、範囲を順に調べる。`advance:true`では各X/Z列のY方向を先に処理し、2段の坑道なら手前の足元と頭上を空けてから奥へ進む。対象がまだ見えない／届かない場合、既知の安全な経路で中間点まで接近し、新しい局所観測を待ってから次区間を検討する。破壊対象のcellは立ち位置にも経路にも使わない。未知cellへは踏み出さず、既知の経路が増えなければ有界に停止する。手の届く指定cellが空気の場合は、現在の視点からの視覚・衝突・液体rayが共に遮られず、経路上のcellがロード済みのときだけ読み飛ばす。局所rayで確認できた非air対象についてhotbarからドロップ採取可能な道具を優先し、同条件では採掘速度で選ぶ。適切な道具がなければ他の道具・空手も候補に残す。照準を合わせて通常の攻撃入力を出し、v2専用の最大600tickの攻撃lease内でサーバーACKとair遷移を確認して次の対象へ進む。v1の40tick上限は維持する。走査済みcell数と確定破壊数は取消・終了後も直前のjobまで進行結果に残す。取消・危険・world変更では入力を解放してから終了状態を確定する。公開catalogからはまだ呼び出せない。
+内部の`StartBreakBlock`は配送確認後に共通jobとして動き、範囲を順に調べる。`advance:true`では各X/Z列のY方向を先に処理し、2段の坑道なら手前の足元と頭上を空けてから奥へ進む。対象がまだ見えない／届かない場合、既知の安全な経路で中間点まで接近し、新しい局所観測を待ってから次区間を検討する。破壊対象のcellは立ち位置にも経路にも使わない。未知cellへは踏み出さず、既知の経路が増えなければ有界に停止する。手の届く指定cellが空気の場合は、現在の視点からの視覚・衝突・液体rayが共に遮られず、経路上のcellがロード済みのときだけ読み飛ばす。局所rayで確認できた非air対象についてhotbarからドロップ採取可能な道具を優先し、同条件では採掘速度で選ぶ。適切な道具がなければ他の道具・空手も候補に残す。照準を合わせて通常の攻撃入力を出し、v2専用の最大600tickの攻撃lease内でサーバーACKとair遷移を確認して次の対象へ進む。v1の40tick上限は維持する。走査済みcell数と確定破壊数は取消・終了後も直前のjobまで進行結果に残す。取消・危険・world変更では入力を解放してから終了状態を確定する。公開catalogから呼び出せるが実ゲーム未検証。
 
 **未完了:** `agent_move`からの経路障害物の自動破壊、遠方の空気・液体を含む範囲への到達、エンチャントや耐久条件を含む道具選択、600tickでも壊せないブロックの扱い、ブロックごとの効果記録、ゲームでの成功・危険停止試験。現段階の`advance`は安全な既知区間を歩ける場合に限り、planner自身は障害物を壊さない。v1の固定許可リストは現行公開経路に限り保持し、v2の完成形へ引き継がない。
 
@@ -133,7 +135,7 @@ snapshotの既知の安全な停止候補を目標への直線距離、同距離
 
 ゲーム内の論理キー／左右中クリックを指定する。`steps`に複数の同時入力、順番、`hold_ticks`、`gap_ticks`、`repeat`、`until`、最大総時間を記載できるようにする。入力頻度はgame tick単位で表す。world操作を起こしうるクリックには座標範囲・対象種類・手持ちなどの任意guardを付けられ、guardなしでも総時間と入力回数の上限を保つ。画面やワールドが変われば入力を解放して停止する。OSへキーを送る機能とは区別する。
 
-内部の`FiniteInputSequence`は、9種類の論理入力について、同時押し・順次step・押下tick・gap・有限反復と外部停止条件／取消をtickごとに進める。最大64 step・合計1,200 tickで、停止後は空入力だけを返す。`InputSequenceLeaseDriver`は既存の短期leaseを使い、入力集合の切替前・停止時に旧入力を解放し、期限切れ・解放失敗なら次の入力を出さず停止する。中クリックに相当する`pick`は、独立した入力所有を持ち、押下の立ち上がり時にワールド内でVanillaのピック操作を一度呼ぶ。`InputSequenceJobExecution`はこのdriverを共通jobへ接続し、配送確認・session・安全判定を満たしたtickだけ入力を発行する。取消・world変更・危険・lease失敗では停止意図を保持し、入力解放の再試行が成功するまでjobを非terminalに保つ。内部の`StartInputSequence`からclient tick・緊急停止・既存の配送確認／進行取得／取消へ接続した。内部の`StartClick`は左右中のbutton、有限回数・押下tick・間隔を同じjobに変換する。任意のblock座標・block IDまたは観測済みのentity_ref・種類を指定した場合、開始時と各入力tickに実crosshair・reach・生存／視線を照合する。最後の入力でmenuが開いても、同じworld／所有者／安全条件を確認して入力解放を完了できる。入力はworld/session、画面、局所安全、体力、移動距離、control epochを毎tick確認し、移動には既存の衝突・revision証拠を要求する。**いずれも公開catalogにはまだ載せておらず、ゲームでの動作も未検証**。menu内クリック、範囲・手持ちなどの追加guard、任意キー、座標以外の停止条件、server結果照合、entity attackの適切な許可境界は未実装である。基本ツール一式と合わせて公開する前にこれらを解決する。
+内部の`FiniteInputSequence`は、9種類の論理入力について、同時押し・順次step・押下tick・gap・有限反復と外部停止条件／取消をtickごとに進める。最大64 step・合計1,200 tickで、停止後は空入力だけを返す。`InputSequenceLeaseDriver`は既存の短期leaseを使い、入力集合の切替前・停止時に旧入力を解放し、期限切れ・解放失敗なら次の入力を出さず停止する。中クリックに相当する`pick`は、独立した入力所有を持ち、押下の立ち上がり時にワールド内でVanillaのピック操作を一度呼ぶ。`InputSequenceJobExecution`はこのdriverを共通jobへ接続し、配送確認・session・安全判定を満たしたtickだけ入力を発行する。取消・world変更・危険・lease失敗では停止意図を保持し、入力解放の再試行が成功するまでjobを非terminalに保つ。内部の`StartInputSequence`からclient tick・緊急停止・既存の配送確認／進行取得／取消へ接続した。内部の`StartClick`は左右中のbutton、有限回数・押下tick・間隔を同じjobに変換する。任意のblock座標・block IDまたは観測済みのentity_ref・種類を指定した場合、開始時と各入力tickに実crosshair・reach・生存／視線を照合する。最後の入力でmenuが開いても、同じworld／所有者／安全条件を確認して入力解放を完了できる。入力はworld/session、画面、局所安全、体力、移動距離、control epochを毎tick確認し、移動には既存の衝突・revision証拠を要求する。**いずれも公開catalogへ接続済みだが、ゲームでの動作は未検証**。menu内クリック、範囲・手持ちなどの追加guard、任意キー、座標以外の停止条件、server結果照合、entity attackの適切な許可境界は未実装である。完成版へ進める前にこれらを解決する。
 
 内部の`agent_input_sequence`は、任意の`stop_when:{x,y,z,radius}`を受ける。プレイヤー足元のworld座標が指定cellのX/Z中心・Y値から半径内に入ったtickでは次の入力を発行せず、保持中のleaseを解放して終了する。半径は0.1～16、未指定時は0.75。画面状態・block変化・item状態など別種の停止条件と任意キー入力は未実装。
 

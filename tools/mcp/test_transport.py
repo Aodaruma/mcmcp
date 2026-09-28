@@ -20,6 +20,9 @@ START = {'schema_version': 1, 'program': {'dsl_version': 1, 'capabilities': [],
          'budget': dict(max_duration_ms=1000, max_ticks=20, max_distance_blocks=0,
                         max_camera_degrees=0, max_interactions=0,
                         max_blocks_broken=0, max_blocks_placed=0)}
+V2_START_TOOLS = {'agent_move', 'agent_break_block', 'agent_place_block',
+                  'agent_interact', 'agent_inventory', 'agent_click',
+                  'agent_input_sequence', 'agent_run_script'}
 
 
 def tool_result(data=None, error=False):
@@ -47,6 +50,12 @@ def status(state='succeeded'):
                 template=dict(media_type=media, canonical_json='{}',
                               ready_for_agent_start_action=True, blocked_by=None),
                 reference_requirements=[])
+
+
+def v2_status(state='succeeded'):
+    return dict(schema_version=2, action_id=ACTION, kind='move', state=state,
+                progress=dict(completed_operations=3, max_operations=1200),
+                cancel_requested=False, failure=None)
 
 
 @unittest.skipUnless(PWSH, 'PowerShell 7.4+ required (set MCMCP_TEST_PWSH)')
@@ -106,10 +115,18 @@ class TransportTests(unittest.TestCase):
         if request['method'] == 'tools/list':
             return dict(resultType='complete', _meta=META, tools=[{'name': n} for n in
                 ['agent_get_state', 'agent_get_mcp_status', 'agent_get_observation', 'agent_start_action',
+                 'agent_move', 'agent_break_block', 'agent_place_block', 'agent_interact',
+                 'agent_inventory', 'agent_click', 'agent_input_sequence', 'agent_run_script',
                  'agent_get_action', 'agent_cancel_action']])
         if request['params']['name'] == 'agent_start_action':
             return tool_result(dict(schema_version=1, action_id=ACTION, state='queued',
                                     accepted_at='2026-09-06T00:00:00Z'))
+        if request['params']['name'] in V2_START_TOOLS:
+            return tool_result(dict(schema_version=2, action_id=ACTION, state='queued'))
+        if (request['params']['name'] == 'agent_get_action' and
+                any(r[0].get('params', {}).get('name') in V2_START_TOOLS
+                    for r in self.requests)):
+            return tool_result(v2_status())
         return tool_result(status())
 
     def invoke(self, *options, arguments=None):
@@ -148,6 +165,19 @@ class TransportTests(unittest.TestCase):
         self.assertGreater(calls[1]['arguments']['wait_timeout_ms'], 0)
         self.assertLessEqual(calls[1]['arguments']['wait_timeout_ms'], 25000)
         self.assertEqual(len(calls), 2)
+
+    def test_v2_move_waits_for_its_common_action_id(self):
+        arguments = {'x': 4, 'y': 65, 'z': 8}
+        reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10',
+                            arguments=arguments)
+        self.assertTrue(reply['ok'], reply)
+        self.assertEqual(reply['result'], v2_status())
+        calls = [r[0]['params'] for r in self.requests
+                 if r[0]['method'] == 'tools/call']
+        self.assertEqual([c['name'] for c in calls],
+                         ['agent_move', 'agent_get_action'])
+        self.assertEqual(calls[0]['arguments'], arguments)
+        self.assertEqual(calls[1]['arguments']['action_id'], ACTION)
 
     def test_error_or_missing_id_never_polls_or_replays(self):
         for mode, diagnostic in [('rpc', 'jsonrpc_error'), ('rpc_secret', 'secret_blocked'), ('tool', 'tool_rejected'),
