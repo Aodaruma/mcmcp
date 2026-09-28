@@ -165,6 +165,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private long v2InventoryControlEpoch;
     private Object v2InputPlayerIdentity;
     private Object v2InputLevelIdentity;
+    private V2ClickArguments.Target v2ClickTarget;
     private long v2InputControlEpoch;
     private float v2InputHealthBaseline;
     private Vec3 v2InputLastPosition;
@@ -1323,7 +1324,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 () -> withEvaluationLeaseFence(context, command.toolName(), () -> {
                     var result = commitV2InputSequence(
                             Minecraft.getInstance(), sessions.snapshot(), sequence,
-                            AgentJobStore.Kind.INPUT_SEQUENCE, command.toolName(), context);
+                            null, AgentJobStore.Kind.INPUT_SEQUENCE, command.toolName(), context);
                     return RuntimeReply.success(result, new McpRuntimePort.ActionDeliveryReceipt(
                             UUID.fromString((String) result.get("action_id"))));
                 }),
@@ -1372,9 +1373,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private CompletionStage<RuntimeReply> submitV2ClickStart(
             StartClick command, RuntimeCallContext context) {
-        final FiniteInputSequence sequence;
+        final V2ClickArguments request;
         try {
-            sequence = V2ClickArguments.parse(command.arguments());
+            request = V2ClickArguments.parse(command.arguments());
         } catch (RuntimeException | LinkageError failure) {
             return CompletableFuture.completedFuture(RuntimeFailures.mapFailure(failure));
         }
@@ -1383,7 +1384,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 command.toolName(), fence.generation(), context.deadlineNanos(),
                 () -> withEvaluationLeaseFence(context, command.toolName(), () -> {
                     var result = commitV2InputSequence(
-                            Minecraft.getInstance(), sessions.snapshot(), sequence,
+                            Minecraft.getInstance(), sessions.snapshot(), request.sequence(),
+                            request.target(),
                             AgentJobStore.Kind.CLICK, command.toolName(), context);
                     return RuntimeReply.success(result, new McpRuntimePort.ActionDeliveryReceipt(
                             UUID.fromString((String) result.get("action_id"))));
@@ -1736,7 +1738,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private Map<String, Object> commitV2InputSequence(
             Minecraft minecraft, WorldSessionTracker.Snapshot session,
-            FiniteInputSequence sequence, AgentJobStore.Kind kind,
+            FiniteInputSequence sequence, V2ClickArguments.Target target,
+            AgentJobStore.Kind kind,
             String toolName, RuntimeCallContext context) {
         assertClientThread(minecraft);
         RuntimeFailures.requireReady(session);
@@ -1753,6 +1756,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || v2InventoryExecution != null || routines.activeRoutineId().isPresent()) {
             throw new RuntimeInvocationException(
                     "task_busy", "Another action is already queued or running.", true, Map.of());
+        }
+        if (!V2ClickArguments.targetMatches(minecraft, target)) {
+            throw new RuntimeInvocationException(
+                    "target_unavailable", "The requested click target is not under the crosshair.",
+                    true, Map.of());
         }
         requireLiveCall(context, toolName);
         if (!arming.beginAction(session.worldSessionId())) {
@@ -1777,6 +1785,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     }, this::witnessV2Input);
             v2InputPlayerIdentity = minecraft.player;
             v2InputLevelIdentity = minecraft.level;
+            v2ClickTarget = target;
             v2InputControlEpoch = arming.snapshot(session.worldSessionId()).controlEpoch();
             v2InputHealthBaseline = minecraft.player.getHealth()
                     + minecraft.player.getAbsorptionAmount();
@@ -2697,24 +2706,31 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (v2InputExecution == null) return;
         var session = sessions.snapshot();
         try {
-            boolean safe = v2InputWorldSafe(minecraft, session)
+            boolean finalizationSafe = v2InputWorldSafe(minecraft, session, true)
                     && minecraft.player == v2InputPlayerIdentity
                     && minecraft.level == v2InputLevelIdentity
                     && !paused && !minecraft.isPaused() && endpointFaultCode == null;
+            boolean safe = finalizationSafe && v2InputWorldSafe(minecraft, session);
             var control = arming.snapshot(session.worldSessionId());
-            safe &= control.mode() == LocalArmingState.Mode.AGENT
+            boolean owner = control.mode() == LocalArmingState.Mode.AGENT
                     && control.controlEpoch() == v2InputControlEpoch;
+            safe &= owner;
+            finalizationSafe &= owner;
+            safe &= V2ClickArguments.targetMatches(minecraft, v2ClickTarget);
             if (minecraft.player != null && v2InputLastPosition != null) {
                 Vec3 position = minecraft.player.position();
                 v2InputTravelled += position.distanceTo(v2InputLastPosition);
                 v2InputLastPosition = position;
-                safe &= v2InputTravelled <= 48.0D
+                boolean bounded = v2InputTravelled <= 48.0D
                         && minecraft.player.getHealth()
                                 + minecraft.player.getAbsorptionAmount()
                                 >= v2InputHealthBaseline;
+                safe &= bounded;
+                finalizationSafe &= bounded;
             }
             var result = v2InputExecution.tick(
-                    session.worldSessionId(), session.clientTick(), System.nanoTime(), safe, false);
+                    session.worldSessionId(), session.clientTick(), System.nanoTime(),
+                    safe, finalizationSafe, false);
             finishV2InputIfTerminal(result);
         } catch (RuntimeException | LinkageError failure) {
             McmcpMod.LOGGER.error("MCMCP v2 input sequence failed", failure);
@@ -2887,14 +2903,21 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private boolean v2InputWorldSafe(Minecraft minecraft, WorldSessionTracker.Snapshot session) {
+        return v2InputWorldSafe(minecraft, session, false);
+    }
+
+    private boolean v2InputWorldSafe(Minecraft minecraft,
+            WorldSessionTracker.Snapshot session, boolean allowScreenChange) {
         if (!localControlAvailable(minecraft, session)) return false;
         var player = minecraft.player;
         var level = minecraft.level;
         if (player.isDeadOrDying() || player.isOnFire() || player.isInLava()
                 || player.isInWater() || player.isPassenger() || player.isFallFlying()
-                || !AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
+                || (!allowScreenChange
+                        && !AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen()))
                 || minecraft.gui.overlay() != null
-                || screenOwnership.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE
+                || (!allowScreenChange
+                        && screenOwnership.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE)
                 || agentObservations.localSafety() != LocalObservationProjector.CurrentSafety.CONTINUE) {
             return false;
         }
@@ -3063,6 +3086,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private void clearV2InputWitness() {
         v2InputPlayerIdentity = null;
         v2InputLevelIdentity = null;
+        v2ClickTarget = null;
         v2InputLastPosition = null;
         v2InputTravelled = 0.0D;
         v2InputHealthBaseline = 0.0F;

@@ -42,6 +42,40 @@ class InputSequenceJobExecutionTest {
     }
 
     @Test
+    void finalClickCanReleaseAfterItOpensAMenuWithoutSendingAnotherInput() {
+        var store = new AgentJobStore();
+        var session = UUID.randomUUID();
+        var id = store.reserve(AgentJobStore.Kind.CLICK, session, 1, 100);
+        var control = new RecordingControl();
+        var sequence = new FiniteInputSequence(List.of(
+                new FiniteInputSequence.Step(Set.of(BoundedInputLease.Input.USE), 1, 0, 1)));
+        var driver = new InputSequenceLeaseDriver(sequence, (inputs, nowNanos) ->
+                BoundedInputLease.acquire(control, inputs, nowNanos, Duration.ofSeconds(1)));
+        var execution = new InputSequenceJobExecution(store, id, session,
+                AgentJobStore.Kind.CLICK, driver, () -> true, ignored -> { });
+        store.confirm(id, 1);
+        assertThat(execution.tick(session, 1, 1, true, false).state()).isEqualTo(RUNNING);
+        assertThat(execution.tick(session, 2, 2, false, true, false).state()).isEqualTo(SUCCEEDED);
+        assertThat(control.events).containsExactly("publish", "release");
+        assertThat(store.get(id).completedOperations()).isEqualTo(1);
+    }
+
+    @Test
+    void finalInputDoesNotClaimSuccessAfterWorldOwnerIsLost() {
+        var store = new AgentJobStore();
+        var session = UUID.randomUUID();
+        var id = store.reserve(INPUT_SEQUENCE, session, 1, 100);
+        var control = new RecordingControl();
+        var execution = execution(store, id, session, control, () -> true, 1);
+        store.confirm(id, 1);
+        execution.tick(session, 1, 1, true, false);
+        assertThat(execution.tick(session, 2, 2, false, false, false).state())
+                .isEqualTo(FAILED);
+        assertThat(store.get(id).failure()).isEqualTo("safety_interrupted");
+        assertThat(control.events).containsExactly("publish", "release");
+    }
+
+    @Test
     void cancelKeepsJobNonterminalUntilFailedReleaseCanBeRetried() {
         var store = new AgentJobStore();
         var session = UUID.randomUUID();

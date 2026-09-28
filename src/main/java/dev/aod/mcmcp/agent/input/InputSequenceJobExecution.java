@@ -55,6 +55,14 @@ public final class InputSequenceJobExecution {
     /** Called once per client tick after the runtime has checked world, screen and local safety. */
     public AgentJobStore.Snapshot tick(UUID currentWorldSessionId, long clientTick, long nowNanos,
                                        boolean safeToInput, boolean stopConditionMet) {
+        return tick(currentWorldSessionId, clientTick, nowNanos,
+                safeToInput, safeToInput, stopConditionMet);
+    }
+
+    /** Finalization may ignore a menu opened by the last click, but not a lost world or owner. */
+    public AgentJobStore.Snapshot tick(UUID currentWorldSessionId, long clientTick, long nowNanos,
+                                       boolean safeToInput, boolean safeToFinalize,
+                                       boolean stopConditionMet) {
         var job = jobs.get(actionId);
         if (job.state().terminal()) return job;
         if (terminalIntent != null) return publishAfterRelease();
@@ -70,6 +78,14 @@ public final class InputSequenceJobExecution {
             retainTerminal(AgentJobStore.State.FAILED, "world_session_changed");
             return publishAfterRelease();
         }
+        // After the final input, a resulting menu may already be open. No more input is sent;
+        // release the owned lease before the ordinary screen-safety gate runs again.
+        if (job.completedOperations() == job.maxOperations()) {
+            retainTerminal(safeToFinalize ? AgentJobStore.State.SUCCEEDED
+                    : AgentJobStore.State.FAILED,
+                    safeToFinalize ? null : "safety_interrupted");
+            return publishAfterRelease();
+        }
         if (!safeToInput) {
             retainTerminal(AgentJobStore.State.FAILED, "safety_interrupted");
             return publishAfterRelease();
@@ -77,10 +93,6 @@ public final class InputSequenceJobExecution {
         if (job.state() == AgentJobStore.State.QUEUED) {
             jobs.start(actionId, currentWorldSessionId);
             job = jobs.get(actionId);
-        }
-        if (job.completedOperations() == job.maxOperations()) {
-            retainTerminal(AgentJobStore.State.SUCCEEDED, null);
-            return publishAfterRelease();
         }
         if (!jobs.canDispatch(actionId, currentWorldSessionId)) {
             retainTerminal(AgentJobStore.State.FAILED, "dispatch_denied");

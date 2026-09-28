@@ -147,11 +147,13 @@ class McmcpRuntimeV2InputRoutingTest {
         var session = UUID.randomUUID();
         var store = (AgentJobStore) field("v2Jobs").get(runtime);
         var id = store.reserve(AgentJobStore.Kind.CLICK, session, 1, Long.MAX_VALUE);
-        var sequence = V2ClickArguments.parse(Map.of("button", "middle"));
+        var sequence = V2ClickArguments.parse(Map.of("button", "middle")).sequence();
         field("v2InputExecution").set(runtime, new InputSequenceJobExecution(
                 store, id, session, AgentJobStore.Kind.CLICK,
                 new InputSequenceLeaseDriver(sequence, AgentInputState.global()),
                 () -> true, ignored -> { }));
+        field("v2ClickTarget").set(runtime,
+                new V2ClickArguments.BlockTarget(1, 64, 0, "minecraft:lever"));
 
         assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
                 .isEqualTo(Map.of("action_id", id.toString(), "confirmed", true));
@@ -164,6 +166,7 @@ class McmcpRuntimeV2InputRoutingTest {
         assertThat(cancelled.get("cancel_requested")).isEqualTo(true);
         assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.CANCELLED);
         assertThat(field("v2InputExecution").get(runtime)).isNull();
+        assertThat(field("v2ClickTarget").get(runtime)).isNull();
     }
 
     @Test
