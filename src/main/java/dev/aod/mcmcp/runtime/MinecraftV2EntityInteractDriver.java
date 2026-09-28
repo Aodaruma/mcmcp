@@ -2,6 +2,9 @@ package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.agent.dsl.ActionDsl;
+import dev.aod.mcmcp.agent.navigation.CoordinateGoalPlanner;
+import dev.aod.mcmcp.agent.navigation.NavCell;
+import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
 import dev.aod.mcmcp.client.McmcpClientConfig;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint;
@@ -19,6 +22,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
+import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
 /** One native entity interaction, using the actual crosshair and no speculative retry. */
@@ -31,6 +35,12 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
     private final UUID entityId;
     private final UUID session;
     private final V2ClickArguments.EntityTarget crosshairTarget;
+    private final DoubleSupplier remainingDistance;
+    private MinecraftActionPrimitiveExecutor navigation;
+    private CoordinateGoalPlanner planner;
+    private NavCell approachGoal;
+    private Map<TraversabilityEdge.Key, TraversabilityEdge> waitingEvidence;
+    private int evidenceWaitTicks;
     private LocalPlayer player;
     private ClientLevel level;
     private V2HeldItemSelection selection;
@@ -42,12 +52,14 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
     private String failure;
 
     MinecraftV2EntityInteractDriver(Minecraft minecraft, Supplier<WorldSessionTracker.Snapshot> sessions,
-            AgentObservations observations, V2EntityInteractArguments request, Entity entity) {
+            AgentObservations observations, V2EntityInteractArguments request, Entity entity,
+            DoubleSupplier remainingDistance) {
         this.minecraft = Objects.requireNonNull(minecraft);
         this.sessions = Objects.requireNonNull(sessions);
         this.observations = Objects.requireNonNull(observations);
         this.request = Objects.requireNonNull(request);
         this.entity = Objects.requireNonNull(entity);
+        this.remainingDistance = Objects.requireNonNull(remainingDistance);
         entityId = entity.getUUID();
         session = sessions.get().worldSessionId();
         crosshairTarget = new V2ClickArguments.EntityTarget(entityId, request.type());
@@ -85,6 +97,11 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
         if (staging == V2InventorySwap.Result.WAITING) return V2OperationJobExecution.Step.RUNNING;
         if (staging != V2InventorySwap.Result.CONFIRMED) return fail("item_swap_not_confirmed");
         if (!selection.matchesRequested() || player.isHandsBusy()) return fail("item_changed_before_use");
+        if (!player.isWithinEntityInteractionRange(entity, 0.0D)) {
+            if (!request.advance() || remainingDistance.getAsDouble() <= 0) return fail("entity_out_of_reach");
+            return approach(tick, outputAllowed);
+        }
+        if (navigation != null) navigation.close();
         if (!(minecraft.hitResult instanceof EntityHitResult currentHit)
                 || currentHit.getEntity() != entity
                 || !V2ClickArguments.targetMatches(minecraft, crosshairTarget)
@@ -111,7 +128,8 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
             return V2OperationJobExecution.Step.RUNNING;
         }
         closeFacing();
-        if (!outputAllowed.getAsBoolean() || !targetValid()) return fail("entity_unavailable");
+        if (!outputAllowed.getAsBoolean() || !targetValid()
+                || !player.isWithinEntityInteractionRange(entity, 0.0D)) return fail("entity_unavailable");
         held = new V2HeldStackEvidence(StackFingerprint.fromServerPacket(player.getMainHandItem()),
                 HotbarPayloadSyncSignals.global().bindAndSnapshot(level, session).revision());
         dispatched = true; // Even a throwing native call must never be replayed.
@@ -136,10 +154,51 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
 
     private boolean targetValid() {
         return entity.isAlive() && entity.getUUID().equals(entityId) && level.getEntity(entity.getId()) == entity
-                && player.isWithinEntityInteractionRange(entity, 0.0D) && player.hasLineOfSight(entity)
+                && player.hasLineOfSight(entity)
                 && level.getWorldBorder().isWithinBounds(entity.blockPosition())
                 && (request.type() == null || request.type().equals(
                         BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString()));
+    }
+
+    private V2OperationJobExecution.Step approach(long tick, BooleanSupplier outputAllowed) {
+        var currentSession = sessions.get();
+        var map = observations.requireAgentMap(currentSession);
+        if (navigation == null) navigation = new MinecraftActionPrimitiveExecutor(
+                McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
+        if (navigation.active()) {
+            var motion = navigation.tick(minecraft, map, LocalObservationVolume.global(),
+                    Math.max(0, remainingDistance.getAsDouble()), 1080.0D, tick, outputAllowed);
+            if (motion.status() == MinecraftActionPrimitiveExecutor.Status.FAILED) return fail("entity_approach_failed");
+            if (motion.status() != MinecraftActionPrimitiveExecutor.Status.RUNNING) {
+                navigation.close();
+                waitingEvidence = map.edges();
+                evidenceWaitTicks = 0;
+            }
+            return V2OperationJobExecution.Step.RUNNING;
+        }
+        var position = entity.blockPosition();
+        var goal = new NavCell(currentSession.dimension(), position.getX(), position.getY(), position.getZ());
+        if (!goal.equals(approachGoal)) {
+            approachGoal = goal;
+            planner = new CoordinateGoalPlanner(session, goal,
+                    Math.max(0.5D, player.entityInteractionRange() - 1.0D));
+            waitingEvidence = null;
+        }
+        if (waitingEvidence != null && waitingEvidence.equals(map.edges())) {
+            return ++evidenceWaitTicks <= 80 ? V2OperationJobExecution.Step.RUNNING : fail("entity_path_not_observed");
+        }
+        var plan = planner.plan(map, ActionPlanning.playerCell(player, currentSession.dimension()),
+                session, map.worldRevision(), CoordinateGoalPlanner.Budget.DEFAULT,
+                () -> !outputAllowed.getAsBoolean());
+        switch (plan.status()) {
+            case KNOWN_GOAL_ROUTE, PARTIAL_WAYPOINT -> {
+                navigation.beginNavigate(plan.route().orElseThrow(), 0.25D);
+                waitingEvidence = null;
+            }
+            case BLOCKED, REACHED_KNOWN_GOAL -> { waitingEvidence = map.edges(); evidenceWaitTicks = 0; }
+            default -> { return fail("entity_approach_unavailable"); }
+        }
+        return V2OperationJobExecution.Step.RUNNING;
     }
 
     private void captureStack() {
@@ -180,6 +239,7 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
 
     @Override
     public void close() {
+        if (navigation != null) navigation.close();
         closeFacing();
         captureStack();
         if (selection != null) selection.close();

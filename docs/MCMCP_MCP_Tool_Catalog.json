@@ -1374,7 +1374,7 @@
     {
       "name": "agent_move",
       "title": "Move to Coordinates",
-      "description": "Moves toward an absolute cell or relative direction using locally known safe route segments. The destination may be unobserved; no unknown cell is assumed safe. Use agent_get_action with the returned action_id.",
+      "description": "Moves over locally known safe routes. clear_path defaults to false; when true, a blocked route may break ordinary visible blocks and, only with bridge_block, fill adjacent floor gaps. Each change needs server confirmation and fresh route evidence. stop_when ends early on a visible block, own item count, position, or screen condition. Unknown cells are never assumed safe.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
@@ -1410,12 +1410,323 @@
                 "type": "number",
                 "minimum": 1,
                 "maximum": 256
+              },
+              "stop_when": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "position"
+                      },
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      },
+                      "z": {
+                        "type": "integer"
+                      },
+                      "radius": {
+                        "type": "number",
+                        "minimum": 0.1,
+                        "maximum": 16,
+                        "default": 0.75
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "z"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "block"
+                      },
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      },
+                      "z": {
+                        "type": "integer"
+                      },
+                      "block": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                      },
+                      "properties": {
+                        "type": "object",
+                        "maxProperties": 32,
+                        "propertyNames": {
+                          "pattern": "^[a-z0-9_]{1,64}$"
+                        },
+                        "additionalProperties": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_./-]+$"
+                        }
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "x",
+                      "y",
+                      "z",
+                      "block"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "item"
+                      },
+                      "item": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                      },
+                      "count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000,
+                        "default": 1
+                      },
+                      "comparison": {
+                        "enum": [
+                          "at_least",
+                          "at_most",
+                          "equals"
+                        ],
+                        "default": "at_least"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "item"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "screen"
+                      },
+                      "screen": {
+                        "enum": [
+                          "none",
+                          "container",
+                          "inventory",
+                          "chat"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "screen"
+                    ]
+                  }
+                ]
+              },
+              "clear_path": {
+                "type": "boolean",
+                "default": false
               }
             },
             "required": [
               "x",
               "y",
               "z"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "x": {
+                "type": "integer"
+              },
+              "y": {
+                "type": "integer"
+              },
+              "z": {
+                "type": "integer"
+              },
+              "arrival_radius": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 16
+              },
+              "tolerance": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 0.49
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1200
+              },
+              "max_distance": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 256
+              },
+              "stop_when": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "position"
+                      },
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      },
+                      "z": {
+                        "type": "integer"
+                      },
+                      "radius": {
+                        "type": "number",
+                        "minimum": 0.1,
+                        "maximum": 16,
+                        "default": 0.75
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "z"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "block"
+                      },
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      },
+                      "z": {
+                        "type": "integer"
+                      },
+                      "block": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                      },
+                      "properties": {
+                        "type": "object",
+                        "maxProperties": 32,
+                        "propertyNames": {
+                          "pattern": "^[a-z0-9_]{1,64}$"
+                        },
+                        "additionalProperties": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_./-]+$"
+                        }
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "x",
+                      "y",
+                      "z",
+                      "block"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "item"
+                      },
+                      "item": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                      },
+                      "count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000,
+                        "default": 1
+                      },
+                      "comparison": {
+                        "enum": [
+                          "at_least",
+                          "at_most",
+                          "equals"
+                        ],
+                        "default": "at_least"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "item"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "screen"
+                      },
+                      "screen": {
+                        "enum": [
+                          "none",
+                          "container",
+                          "inventory",
+                          "chat"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "screen"
+                    ]
+                  }
+                ]
+              },
+              "clear_path": {
+                "const": true
+              },
+              "bridge_block": {
+                "type": "string",
+                "pattern": "^minecraft:[a-z0-9_./-]{1,112}$"
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "z",
+              "clear_path",
+              "bridge_block"
             ]
           },
           {
@@ -1460,11 +1771,331 @@
                 "type": "number",
                 "minimum": 1,
                 "maximum": 256
+              },
+              "stop_when": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "position"
+                      },
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      },
+                      "z": {
+                        "type": "integer"
+                      },
+                      "radius": {
+                        "type": "number",
+                        "minimum": 0.1,
+                        "maximum": 16,
+                        "default": 0.75
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "z"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "block"
+                      },
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      },
+                      "z": {
+                        "type": "integer"
+                      },
+                      "block": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                      },
+                      "properties": {
+                        "type": "object",
+                        "maxProperties": 32,
+                        "propertyNames": {
+                          "pattern": "^[a-z0-9_]{1,64}$"
+                        },
+                        "additionalProperties": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_./-]+$"
+                        }
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "x",
+                      "y",
+                      "z",
+                      "block"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "item"
+                      },
+                      "item": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                      },
+                      "count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000,
+                        "default": 1
+                      },
+                      "comparison": {
+                        "enum": [
+                          "at_least",
+                          "at_most",
+                          "equals"
+                        ],
+                        "default": "at_least"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "item"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "screen"
+                      },
+                      "screen": {
+                        "enum": [
+                          "none",
+                          "container",
+                          "inventory",
+                          "chat"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "screen"
+                    ]
+                  }
+                ]
+              },
+              "clear_path": {
+                "type": "boolean",
+                "default": false
               }
             },
             "required": [
               "direction",
               "distance"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "direction": {
+                "enum": [
+                  "north",
+                  "south",
+                  "east",
+                  "west",
+                  "northeast",
+                  "northwest",
+                  "southeast",
+                  "southwest",
+                  "up",
+                  "down"
+                ]
+              },
+              "distance": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 256
+              },
+              "arrival_radius": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 16
+              },
+              "tolerance": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 0.49
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1200
+              },
+              "max_distance": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 256
+              },
+              "stop_when": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "position"
+                      },
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      },
+                      "z": {
+                        "type": "integer"
+                      },
+                      "radius": {
+                        "type": "number",
+                        "minimum": 0.1,
+                        "maximum": 16,
+                        "default": 0.75
+                      }
+                    },
+                    "required": [
+                      "x",
+                      "y",
+                      "z"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "block"
+                      },
+                      "x": {
+                        "type": "integer"
+                      },
+                      "y": {
+                        "type": "integer"
+                      },
+                      "z": {
+                        "type": "integer"
+                      },
+                      "block": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                      },
+                      "properties": {
+                        "type": "object",
+                        "maxProperties": 32,
+                        "propertyNames": {
+                          "pattern": "^[a-z0-9_]{1,64}$"
+                        },
+                        "additionalProperties": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "pattern": "^[a-z0-9_./-]+$"
+                        }
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "x",
+                      "y",
+                      "z",
+                      "block"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "item"
+                      },
+                      "item": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                      },
+                      "count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000,
+                        "default": 1
+                      },
+                      "comparison": {
+                        "enum": [
+                          "at_least",
+                          "at_most",
+                          "equals"
+                        ],
+                        "default": "at_least"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "item"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "type": {
+                        "const": "screen"
+                      },
+                      "screen": {
+                        "enum": [
+                          "none",
+                          "container",
+                          "inventory",
+                          "chat"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "screen"
+                    ]
+                  }
+                ]
+              },
+              "clear_path": {
+                "const": true
+              },
+              "bridge_block": {
+                "type": "string",
+                "pattern": "^minecraft:[a-z0-9_./-]{1,112}$"
+              }
+            },
+            "required": [
+              "direction",
+              "distance",
+              "clear_path",
+              "bridge_block"
             ]
           }
         ]
@@ -1592,7 +2223,7 @@
     {
       "name": "agent_place_block",
       "title": "Place Blocks",
-      "description": "Places a Vanilla block at one cell or over a signed inclusive box. Desired properties and replace filter are optional. Uses local support evidence and server confirmation.",
+      "description": "Places a Vanilla block at one cell or over a signed inclusive box. Desired properties and replace filter are optional. Uses local support evidence and server confirmation. Beds, doors and double plants validate and confirm both cells; confirmed_count counts placements, and confirmed_cells includes companions. Existing matching placements are reported separately in observed_cells. Companion cells may lie just outside the anchor region.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1702,7 +2333,7 @@
     {
       "name": "agent_interact",
       "title": "Interact",
-      "description": "Uses a block, held item, or visible entity. Block use confirms a server state change. Item use waits for server processing. Entity use aims within reach and dispatches once. Without result_item, success requires client acceptance; unrelated held-item changes do not suffice. Success alone does not prove its world effect. Optional result_item requires a fresh server-confirmed held item. item selects from inventory; entity/item defaults to the current hand. Menu interactions remain pending.",
+      "description": "Uses a block, held item, observed entity, or coordinate menu through ordinary game input. Blocks and entities can be approached with advance (default true); entities must remain visible and valid. Menu operations atomically open, inspect, optionally shift-click whole stacks in Vanilla generic chest/dispenser, hopper or shulker storage menus under exact slot/item/count conditions, then close. Menu crafting output, partial transfers, cursor pickup and custom buttons are not supported. Job results distinguish accepted use from server-confirmed effects.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
@@ -1852,12 +2483,108 @@
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 1200,
-                "default": 200
+                "default": 1200
+              },
+              "advance": {
+                "type": "boolean",
+                "default": true
+              },
+              "max_distance": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 256,
+                "default": 64
               }
             },
             "required": [
               "target",
               "entity_ref"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "target": {
+                "const": "menu"
+              },
+              "x": {
+                "type": "integer"
+              },
+              "y": {
+                "type": "integer"
+              },
+              "z": {
+                "type": "integer"
+              },
+              "block": {
+                "type": "string",
+                "maxLength": 128,
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+              },
+              "menu_type": {
+                "type": "string",
+                "maxLength": 128,
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+              },
+              "clicks": {
+                "type": "array",
+                "maxItems": 16,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "quick_move"
+                    },
+                    "slot": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 255
+                    },
+                    "item": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 99
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "slot",
+                    "item",
+                    "count"
+                  ]
+                }
+              },
+              "advance": {
+                "type": "boolean",
+                "default": true
+              },
+              "max_distance": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 256,
+                "default": 64
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1200,
+                "default": 1200
+              }
+            },
+            "required": [
+              "target",
+              "x",
+              "y",
+              "z",
+              "block",
+              "menu_type"
             ]
           }
         ]
@@ -2370,7 +3097,7 @@
     {
       "name": "agent_input_sequence",
       "title": "Run Finite Input Sequence",
-      "description": "Runs bounded logical keys and mouse actions in simultaneous or sequential steps. Releases all owned input on completion, cancellation, and safety stop.",
+      "description": "Runs bounded logical keys and mouse actions in simultaneous or sequential steps. Releases all owned input on completion, cancellation, and safety stop. stop_when supports position, currently visible block state, own inventory count, and screen type; unknown blocks never satisfy a condition.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -2426,28 +3153,132 @@
             }
           },
           "stop_when": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "x": {
-                "type": "integer"
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "position"
+                  },
+                  "x": {
+                    "type": "integer"
+                  },
+                  "y": {
+                    "type": "integer"
+                  },
+                  "z": {
+                    "type": "integer"
+                  },
+                  "radius": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "maximum": 16,
+                    "default": 0.75
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ]
               },
-              "y": {
-                "type": "integer"
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "block"
+                  },
+                  "x": {
+                    "type": "integer"
+                  },
+                  "y": {
+                    "type": "integer"
+                  },
+                  "z": {
+                    "type": "integer"
+                  },
+                  "block": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                  },
+                  "properties": {
+                    "type": "object",
+                    "maxProperties": 32,
+                    "propertyNames": {
+                      "pattern": "^[a-z0-9_]{1,64}$"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9_./-]+$"
+                    }
+                  }
+                },
+                "required": [
+                  "type",
+                  "x",
+                  "y",
+                  "z",
+                  "block"
+                ]
               },
-              "z": {
-                "type": "integer"
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "item"
+                  },
+                  "item": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000,
+                    "default": 1
+                  },
+                  "comparison": {
+                    "enum": [
+                      "at_least",
+                      "at_most",
+                      "equals"
+                    ],
+                    "default": "at_least"
+                  }
+                },
+                "required": [
+                  "type",
+                  "item"
+                ]
               },
-              "radius": {
-                "type": "number",
-                "minimum": 0.1,
-                "maximum": 16
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "screen"
+                  },
+                  "screen": {
+                    "enum": [
+                      "none",
+                      "container",
+                      "inventory",
+                      "chat"
+                    ]
+                  }
+                },
+                "required": [
+                  "type",
+                  "screen"
+                ]
               }
-            },
-            "required": [
-              "x",
-              "y",
-              "z"
             ]
           }
         },

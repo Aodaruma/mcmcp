@@ -168,6 +168,28 @@ class McpPublicV2ToolsTest {
     }
 
     @Test
+    void priorityExtensionsAreDiscoveredWithStrictArguments() throws Exception {
+        var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();
+        var registry = registry(calls);
+        for (var entry : Map.of(
+                "agent_move", "{\"x\":1,\"y\":65,\"z\":2,\"clear_path\":true,\"bridge_block\":\"minecraft:stone\",\"stop_when\":{\"type\":\"item\",\"item\":\"minecraft:stone\",\"count\":3}}",
+                "agent_input_sequence", "{\"steps\":[{\"inputs\":[\"sneak\"],\"hold_ticks\":4}],\"stop_when\":{\"type\":\"block\",\"x\":1,\"y\":65,\"z\":2,\"block\":\"minecraft:stone\"}}",
+                "agent_interact", "{\"target\":\"menu\",\"x\":1,\"y\":65,\"z\":2,\"block\":\"minecraft:chest\",\"menu_type\":\"minecraft:generic_9x3\",\"clicks\":[{\"type\":\"quick_move\",\"slot\":0,\"item\":\"minecraft:stone\",\"count\":16}]}"
+        ).entrySet()) {
+            assertThat(registry.prepareCall(entry.getKey(), JsonParser.parseString(entry.getValue()).getAsJsonObject())
+                    .response().get("isError").getAsBoolean()).as(entry.getKey()).isFalse();
+        }
+        calls.clear();
+        assertThat(registry.prepareCall("agent_move", JsonParser.parseString(
+                "{\"x\":1,\"y\":65,\"z\":2,\"bridge_block\":\"minecraft:stone\"}").getAsJsonObject())
+                .response().get("isError").getAsBoolean()).isTrue();
+        assertThat(registry.prepareCall("agent_input_sequence", JsonParser.parseString(
+                "{\"steps\":[{\"inputs\":[\"sneak\"],\"hold_ticks\":4}],\"stop_when\":{\"type\":\"screen\",\"screen\":\"arbitrary\"}}").getAsJsonObject())
+                .response().get("isError").getAsBoolean()).isTrue();
+        assertThat(calls).isEmpty();
+    }
+
+    @Test
     void incompleteOrUnsupportedRequestsAreRejectedBeforeRuntimeDispatch()
             throws Exception {
         var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();

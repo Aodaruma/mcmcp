@@ -24,6 +24,9 @@ import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.block.BedBlock;
+import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.DoublePlantBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -64,6 +67,9 @@ final class MinecraftV2PlaceDriver
     private MinecraftActionPrimitiveExecutor facing;
     private BoundedInputLease sneak;
     private ClientPredictionSignals.PredictionAttempt prediction;
+    private ClientPredictionSignals.PredictionAttempt companionPrediction;
+    private V2PlacementFootprint.Cell companion;
+    private BlockStateFingerprint companionBefore;
     private V2InventorySwap staging;
     private NavCell target;
     private V2PlaceArguments request;
@@ -157,6 +163,15 @@ final class MinecraftV2PlaceDriver
         var desired = new BlockStateFingerprint(request.blockId(), request.properties());
         BlockState before = level.getBlockState(position);
         if (desired.matches(fingerprint(before))) {
+            if (!V2LocalConditions.visible(minecraft, position, 5.5D)) return V2BlockJobExecution.BeginResult.WAITING;
+            var other = V2PlacementFootprint.companion(next, fingerprint(before), footprintKind(before));
+            if (other != null && (!V2LocalConditions.visible(minecraft, blockPos(other.position()), 5.5D)
+                    || !other.state().matches(fingerprint(level.getBlockState(blockPos(other.position())))))) {
+                return V2BlockJobExecution.BeginResult.FAILED;
+            }
+            confirmedChange = new V2BlockJobExecution.ConfirmedChange(fingerprint(before), fingerprint(before),
+                    other == null ? List.of() : List.of(new V2BlockJobExecution.CompanionChange(
+                            other.position(), other.state(), other.state())));
             return V2BlockJobExecution.BeginResult.SKIPPED;
         }
         if (!request.acceptsTarget(blockId(before))) {
@@ -179,9 +194,7 @@ final class MinecraftV2PlaceDriver
             return V2BlockJobExecution.BeginResult.STARTED;
         }
         var stack = player.getInventory().getItem(slot);
-        if (!(stack.getItem() instanceof BlockItem item)
-                || item instanceof BedItem || item instanceof DoubleHighBlockItem) {
-            // Multi-cell placement needs companion-cell ownership and confirmation.
+        if (!(stack.getItem() instanceof BlockItem item)) {
             return V2BlockJobExecution.BeginResult.FAILED;
         }
         int previousSlot = player.getInventory().getSelectedSlot();
@@ -195,7 +208,8 @@ final class MinecraftV2PlaceDriver
                         support.face(), support.support(), false);
                 if (!matchesTarget(item, hit, position)) continue;
                 BlockState predicted = predictedState(item, hit);
-                if (predicted != null && desired.matches(fingerprint(predicted))) {
+                if (predicted != null && desired.matches(fingerprint(predicted))
+                        && companionAvailable(next, predicted, request)) {
                     found = support;
                     break;
                 }
@@ -321,7 +335,20 @@ final class MinecraftV2PlaceDriver
         if (confirmation.serverConfirmed()) {
             var after = fingerprint(minecraft.level.getBlockState(blockPos(target)));
             if (!desired.matches(after)) return V2BlockJobExecution.StepResult.FAILED;
-            confirmedChange = new V2BlockJobExecution.ConfirmedChange(before, after);
+            if (companionPrediction != null) {
+                var other = companionPrediction.confirmation(state -> companion.state().matches(fingerprint(state)));
+                if (!other.serverConfirmed()) {
+                    if (other.status() == ClientPredictionSignals.ConfirmationStatus.SERVER_STATE_MISMATCH
+                            || other.status() == ClientPredictionSignals.ConfirmationStatus.INCOMPATIBLE
+                            || other.status() == ClientPredictionSignals.ConfirmationStatus.CLOSED
+                            || clientTick - dispatchedTick > MAX_CONFIRM_WAIT_TICKS) return V2BlockJobExecution.StepResult.FAILED;
+                    return V2BlockJobExecution.StepResult.RUNNING;
+                }
+                var otherAfter = fingerprint(minecraft.level.getBlockState(blockPos(companion.position())));
+                if (!companion.state().matches(otherAfter)) return V2BlockJobExecution.StepResult.FAILED;
+                confirmedChange = new V2BlockJobExecution.ConfirmedChange(before, after,
+                        List.of(new V2BlockJobExecution.CompanionChange(companion.position(), companionBefore, otherAfter)));
+            } else confirmedChange = new V2BlockJobExecution.ConfirmedChange(before, after);
             return V2BlockJobExecution.StepResult.CONFIRMED;
         }
         if (confirmation.status() == ClientPredictionSignals.ConfirmationStatus.SERVER_STATE_MISMATCH
@@ -418,11 +445,19 @@ final class MinecraftV2PlaceDriver
                 || before.hasBlockEntity() || level.getBlockEntity(position) != null) return false;
         BlockState predicted = predictedState(item, hit);
         var desired = new BlockStateFingerprint(request.blockId(), request.properties());
-        if (predicted == null || !desired.matches(fingerprint(predicted))) return false;
+        if (predicted == null || !desired.matches(fingerprint(predicted))
+                || !companionAvailable(target, predicted, request)) return false;
+        companion = V2PlacementFootprint.companion(target, fingerprint(predicted), footprintKind(predicted));
+        if (companion != null) {
+            var companionPos = blockPos(companion.position());
+            companionBefore = fingerprint(level.getBlockState(companionPos));
+            companionPrediction = predictions.begin(level, companionPos, clientTick);
+        }
         prediction = predictions.begin(level, position, clientTick);
         int beforeSequence = prediction.sequenceBeforePrediction();
         var result = minecraft.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
         int afterSequence = prediction.captureIssuedPredictions();
+        if (companionPrediction != null && companionPrediction.captureIssuedPredictions() != afterSequence) return false;
         if (afterSequence != beforeSequence + 1 || !result.consumesAction()) return false;
         this.before = fingerprint(before);
         dispatchedTick = clientTick;
@@ -453,9 +488,7 @@ final class MinecraftV2PlaceDriver
             var stack = inventory.getItem(slot);
             if (!stack.isEmpty() && itemId.equals(
                     BuiltInRegistries.ITEM.getKey(stack.getItem()).toString())
-                    && stack.getItem() instanceof BlockItem item
-                    && !(item instanceof BedItem)
-                    && !(item instanceof DoubleHighBlockItem)) return slot;
+                    && stack.getItem() instanceof BlockItem) return slot;
         }
         return -1;
     }
@@ -476,9 +509,31 @@ final class MinecraftV2PlaceDriver
                         .mcmcp$invokeGetPlacementState(context);
     }
 
+    private static V2PlacementFootprint.Kind footprintKind(BlockState state) {
+        if (state.getBlock() instanceof BedBlock) return V2PlacementFootprint.Kind.BED;
+        if (state.getBlock() instanceof DoorBlock || state.getBlock() instanceof DoublePlantBlock) return V2PlacementFootprint.Kind.DOUBLE;
+        return V2PlacementFootprint.Kind.SINGLE;
+    }
+
+    private boolean companionAvailable(NavCell anchor, BlockState predicted, V2PlaceArguments request) {
+        var other = V2PlacementFootprint.companion(anchor, fingerprint(predicted), footprintKind(predicted));
+        if (other == null) return true;
+        var position = blockPos(other.position());
+        if (!V2LocalConditions.visible(minecraft, position, 5.5D)
+                || !minecraft.level.getWorldBorder().isWithinBounds(position)
+                || minecraft.player.blockActionRestricted(minecraft.level, position, minecraft.gameMode.getPlayerMode())) return false;
+        var state = minecraft.level.getBlockState(position);
+        return request.acceptsTarget(blockId(state)) && !state.hasBlockEntity()
+                && minecraft.level.getBlockEntity(position) == null && state.getFluidState().isEmpty();
+    }
+
     @Override
     public void close() {
         Throwable failure = null;
+        if (companionPrediction != null) {
+            try { companionPrediction.close(); companionPrediction = null; }
+            catch (RuntimeException | LinkageError closeFailure) { failure = closeFailure; }
+        }
         if (prediction != null) {
             try {
                 prediction.close();
@@ -539,6 +594,8 @@ final class MinecraftV2PlaceDriver
         stagedObservationWaitTicks = 0;
         candidate = null;
         before = null;
+        companion = null;
+        companionBefore = null;
         confirmedChange = null;
         crosshairWaitTicks = 0;
         dispatchedTick = 0L;

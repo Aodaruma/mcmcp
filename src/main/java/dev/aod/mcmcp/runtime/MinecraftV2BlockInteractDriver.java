@@ -37,6 +37,7 @@ final class MinecraftV2BlockInteractDriver
     private final ClientReconciliationSignals reconciliationSignals;
     private final ClientPredictionSignals predictions;
     private final DoubleSupplier remainingDistance;
+    private final MinecraftV2MenuDriver menu;
     private MinecraftActionPrimitiveExecutor navigation;
     private CoordinateGoalPlanner planner;
     private Map<TraversabilityEdge.Key, TraversabilityEdge> waitingEvidence;
@@ -59,12 +60,20 @@ final class MinecraftV2BlockInteractDriver
             AgentObservations observations,
             ClientReconciliationSignals reconciliationSignals,
             ClientPredictionSignals predictions, DoubleSupplier remainingDistance) {
+        this(minecraft, sessions, observations, reconciliationSignals, predictions, remainingDistance, null);
+    }
+
+    MinecraftV2BlockInteractDriver(Minecraft minecraft,
+            Supplier<WorldSessionTracker.Snapshot> sessions, AgentObservations observations,
+            ClientReconciliationSignals reconciliationSignals, ClientPredictionSignals predictions,
+            DoubleSupplier remainingDistance, MinecraftV2MenuDriver menu) {
         this.minecraft = Objects.requireNonNull(minecraft, "minecraft");
         this.sessions = Objects.requireNonNull(sessions, "sessions");
         this.observations = Objects.requireNonNull(observations, "observations");
         this.reconciliationSignals = Objects.requireNonNull(reconciliationSignals);
         this.predictions = Objects.requireNonNull(predictions);
         this.remainingDistance = Objects.requireNonNull(remainingDistance);
+        this.menu = menu;
     }
 
     @Override
@@ -179,6 +188,7 @@ final class MinecraftV2BlockInteractDriver
             stage = Stage.CONFIRMING;
             return V2BlockJobExecution.StepResult.RUNNING;
         }
+        if (menu != null) return menu.tickMenu(clientTick, outputAllowed);
         var confirmation = prediction.confirmation(
                 state -> matchesExpected(request, before, fingerprint(state)));
         if (confirmation.serverConfirmed()) {
@@ -220,6 +230,7 @@ final class MinecraftV2BlockInteractDriver
             return false;
         }
         var hit = (BlockHitResult) minecraft.hitResult;
+        if (menu != null && !menu.beforeUse(target, before, clientTick)) return false;
         prediction = predictions.begin(level, position, clientTick);
         int sequence = prediction.sequenceBeforePrediction();
         var result = minecraft.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, hit);
@@ -301,6 +312,8 @@ final class MinecraftV2BlockInteractDriver
 
     @Override
     public void close() {
+        // Retain the prediction until any delayed OpenScreen has crossed its causal ACK barrier.
+        if (menu != null) menu.releaseMenu(prediction);
         Throwable failure = null;
         if (prediction != null) {
             try {

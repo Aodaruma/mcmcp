@@ -66,7 +66,7 @@ record V2PlaceArguments(BlockWorkRegion region, String blockId, String itemId,
         return arguments.containsKey(key) ? RuntimeArguments.intArgument(arguments, key) : fallback;
     }
 
-    private static Map<String, String> properties(Map<String, Object> arguments) {
+    static Map<String, String> properties(Map<String, Object> arguments) {
         if (!arguments.containsKey("properties")) return Map.of();
         var raw = RuntimeArguments.objectArgument(arguments, "properties");
         if (raw.size() > 32) {

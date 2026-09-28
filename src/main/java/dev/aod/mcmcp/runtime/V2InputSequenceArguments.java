@@ -60,34 +60,12 @@ final class V2InputSequenceArguments {
                     ? RuntimeArguments.intArgument(step, "repeat") : 1;
             steps.add(new FiniteInputSequence.Step(parsedInputs, holdTicks, gapTicks, repeat));
         }
-        StopWhen stopWhen = null;
+        V2StopCondition stopWhen = null;
         if (arguments.containsKey("stop_when")) {
-            var condition = RuntimeArguments.objectArgument(arguments, "stop_when");
-            RuntimeArguments.requireAllowedKeys(condition, "stop_when",
-                    Set.of("x", "y", "z", "radius"));
-            if (!condition.keySet().containsAll(Set.of("x", "y", "z"))) {
-                throw new IllegalArgumentException("stop_when requires x/y/z");
-            }
-            double radius = condition.containsKey("radius")
-                    ? RuntimeArguments.doubleArgument(condition, "radius") : 0.75D;
-            if (!Double.isFinite(radius) || radius < 0.1D || radius > 16.0D) {
-                throw new IllegalArgumentException("stop_when radius must be in 0.1..16");
-            }
-            stopWhen = new StopWhen(RuntimeArguments.intArgument(condition, "x"),
-                    RuntimeArguments.intArgument(condition, "y"),
-                    RuntimeArguments.intArgument(condition, "z"), radius);
+            stopWhen = V2StopCondition.parse(RuntimeArguments.objectArgument(arguments, "stop_when"));
         }
         return new Request(new FiniteInputSequence(steps), stopWhen);
     }
 
-    record Request(FiniteInputSequence sequence, StopWhen stopWhen) { }
-
-    record StopWhen(int x, int y, int z, double radius) {
-        boolean reached(Vec3 playerPosition) {
-            double dx = playerPosition.x - (x + 0.5D);
-            double dy = playerPosition.y - y;
-            double dz = playerPosition.z - (z + 0.5D);
-            return dx * dx + dy * dy + dz * dz <= radius * radius;
-        }
-    }
+    record Request(FiniteInputSequence sequence, V2StopCondition stopWhen) { }
 }

@@ -26,6 +26,8 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
     private final Driver<R> driver;
     private final BooleanSupplier releaseAndVerify;
     private final ArrayDeque<Map<String, Object>> confirmedCells = new ArrayDeque<>();
+    private final ArrayDeque<Map<String, Object>> observedCells = new ArrayDeque<>();
+    private int observedCount;
     private int index;
     private int completed;
     private int observationWaitTicks;
@@ -108,6 +110,8 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
                         observationWaitTicks = 0;
                     }
                     case SKIPPED -> {
+                        recordObservedCell(cells.get(index), driver.confirmedChange());
+                        driver.close();
                         index++;
                         jobs.recordBlockProgress(actionId, index, completed);
                         observationWaitTicks = 0;
@@ -133,6 +137,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
             return switch (step) {
                 case RUNNING -> jobs.get(actionId);
                 case SKIPPED -> {
+                    recordObservedCell(cells.get(index), driver.confirmedChange());
                     driver.close();
                     targetActive = false;
                     index++;
@@ -196,17 +201,39 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
         if (confirmedCells.size() == MAX_RETAINED_CONFIRMED_CELLS) {
             confirmedCells.removeFirst();
         }
-        confirmedCells.addLast(change == null
-                ? Map.of("x", cell.x(), "y", cell.y(), "z", cell.z())
-                : Map.of("x", cell.x(), "y", cell.y(), "z", cell.z(),
-                        "before", compactState(change.before()),
-                        "after", compactState(change.after())));
+        confirmedCells.addLast(cellEntry(cell, change));
+        publishCells(cell.dimension());
+    }
+
+    private void recordObservedCell(NavCell cell, ConfirmedChange change) {
+        if (change == null) return;
+        observedCount++;
+        if (observedCells.size() == MAX_RETAINED_CONFIRMED_CELLS) observedCells.removeFirst();
+        observedCells.addLast(cellEntry(cell, change));
+        publishCells(cell.dimension());
+    }
+
+    private static Map<String, Object> cellEntry(NavCell cell, ConfirmedChange change) {
+        var entry = new java.util.LinkedHashMap<String, Object>();
+        entry.put("x", cell.x()); entry.put("y", cell.y()); entry.put("z", cell.z());
+        if (change != null) {
+            entry.put("before", compactState(change.before())); entry.put("after", compactState(change.after()));
+            if (!change.companions().isEmpty()) entry.put("companions", change.companions().stream().map(other -> Map.of(
+                    "x", other.cell().x(), "y", other.cell().y(), "z", other.cell().z(),
+                    "before", compactState(other.before()), "after", compactState(other.after()))).toList());
+        }
+        return Map.copyOf(entry);
+    }
+
+    private void publishCells(String dimension) {
         jobs.recordResult(actionId, Map.of(
-                "dimension", cell.dimension(),
+                "dimension", dimension,
                 "confirmed_count", completed,
+                "observed_count", observedCount,
+                "observed_cells", List.copyOf(observedCells),
                 "retained_from", completed - confirmedCells.size() + 1,
                 "confirmed_cells", List.copyOf(confirmedCells),
-                "truncated", completed > confirmedCells.size()));
+                "truncated", completed > confirmedCells.size() || observedCount > observedCells.size()));
     }
 
     private static String compactState(BlockStateFingerprint state) {
@@ -245,10 +272,14 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
     enum BeginResult { STARTED, SKIPPED, WAITING, FAILED }
     enum StepResult { RUNNING, SKIPPED, CONFIRMED, FAILED }
 
-    record ConfirmedChange(BlockStateFingerprint before, BlockStateFingerprint after) {
+    record CompanionChange(NavCell cell, BlockStateFingerprint before, BlockStateFingerprint after) { }
+
+    record ConfirmedChange(BlockStateFingerprint before, BlockStateFingerprint after, List<CompanionChange> companions) {
+        ConfirmedChange(BlockStateFingerprint before, BlockStateFingerprint after) { this(before, after, List.of()); }
         ConfirmedChange {
             Objects.requireNonNull(before, "before");
             Objects.requireNonNull(after, "after");
+            companions = List.copyOf(companions);
         }
     }
 

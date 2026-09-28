@@ -29,9 +29,10 @@ class V2InputSequenceArgumentsTest {
                         "hold_ticks", 20)),
                 "stop_when", Map.of("x", 3, "y", 64, "z", -2,
                         "radius", 0.8D)));
-        assertThat(request.stopWhen().reached(new Vec3(3.5D, 64.0D, -1.5D)))
+        var condition = (V2StopCondition.Position) request.stopWhen();
+        assertThat(condition.reached(new Vec3(3.5D, 64.0D, -1.5D)))
                 .isTrue();
-        assertThat(request.stopWhen().reached(new Vec3(1.5D, 64.0D, -1.5D)))
+        assertThat(condition.reached(new Vec3(1.5D, 64.0D, -1.5D)))
                 .isFalse();
         assertThatThrownBy(() -> V2InputSequenceArguments.parse(Map.of(
                 "steps", List.of(Map.of("inputs", List.of("forward"),

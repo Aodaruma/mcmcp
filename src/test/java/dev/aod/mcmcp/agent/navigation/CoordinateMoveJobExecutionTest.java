@@ -180,6 +180,122 @@ class CoordinateMoveJobExecutionTest {
         assertThat(driver.routes).hasSize(1);
     }
 
+    @Test
+    void optionalPathWorkReplansOnlyAfterFreshEvidenceAndStillObeysTickLimit() {
+        var map = map(edge(cell(0), cell(1)));
+        var store = new AgentJobStore();
+        var id = store.reserve(MOVE, SESSION, 10, 100);
+        var driver = new FakeDriver(new MinecraftActionPrimitiveExecutor.TickResult(
+                MinecraftActionPrimitiveExecutor.Status.REPLAN_REQUIRED,
+                MinecraftActionPrimitiveExecutor.Reason.DESTINATION_SAFETY_UNVERIFIED), RUNNING_STEP);
+        var execution = execution(store, id, cell(1), driver, () -> true);
+        execution.clearPathWith(new FakeObstacles());
+        store.confirm(id, 1);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION,
+                0, 1, 1, true, 0, () -> true).state()).isEqualTo(RUNNING);
+        execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0, 2, 2, true, 0, () -> true);
+        assertThat(driver.routes).hasSize(1);
+        map.observe(edge(cell(1), cell(2)));
+        execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0, 3, 3, true, 0, () -> true);
+        assertThat(driver.routes).hasSize(2);
+        assertThat(store.get(id).result()).containsEntry("path_replans", 1);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION,
+                0, 11, 11, true, 0, () -> true).state()).isEqualTo(AgentJobStore.State.FAILED);
+        assertThat(store.get(id).failure()).isEqualTo("tick_limit");
+    }
+
+    @Test
+    void obstacleWorkIsDeliveryGatedAndCancellationWaitsForItsRelease() {
+        var map = map();
+        var store = new AgentJobStore();
+        var id = store.reserve(MOVE, SESSION, 10, 100);
+        var driver = new FakeDriver();
+        var released = new AtomicBoolean(false);
+        var execution = execution(store, id, cell(2), driver, released::get);
+        var edits = new FakeObstacles();
+        execution.clearPathWith(edits);
+        execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0, 1, 1, true, 0, () -> true);
+        assertThat(edits.ticks).isZero();
+        store.confirm(id, 2);
+        execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0, 2, 2, true, 0, () -> true);
+        assertThat(edits.ticks).isEqualTo(1);
+        assertThat(execution.cancel().state()).isEqualTo(RUNNING);
+        released.set(true);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0, 3, 3, true, 0, () -> true).state()).isEqualTo(CANCELLED);
+        assertThat(edits.ticks).isEqualTo(1);
+        assertThat(edits.closed).isTrue();
+        assertThat(store.get(id).result()).containsEntry("path_changed_count", 1);
+        assertThat(driver.routes).isEmpty();
+    }
+
+    @Test
+    void confirmedPathEditStillRequiresFreshNavigationEvidence() {
+        var map = map();
+        var store = new AgentJobStore();
+        var id = store.reserve(MOVE, SESSION, 10, 100);
+        var driver = new FakeDriver(SUCCESS_STEP);
+        var execution = execution(store, id, cell(1), driver, () -> true);
+        var edits = new FakeObstacles();
+        edits.step = CoordinateMoveJobExecution.ObstacleStep.CHANGED;
+        execution.clearPathWith(edits);
+        store.confirm(id, 1);
+        execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0, 1, 1, true, 0, () -> true);
+        execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0, 2, 2, true, 0, () -> true);
+        assertThat(driver.routes).isEmpty();
+        assertThat(edits.ticks).isEqualTo(1);
+        map.observe(edge(cell(0), cell(1)));
+        execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0, 3, 3, true, 0, () -> true);
+        assertThat(driver.routes).hasSize(1);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(1), SESSION, 0, 4, 4, true, 1, () -> true).state()).isEqualTo(SUCCEEDED);
+    }
+
+    @Test
+    void metConditionStopsWithoutMovementButCannotBypassSafetyOrDelivery() {
+        var map = map();
+        var store = new AgentJobStore();
+        var id = store.reserve(MOVE, SESSION, 10, 100);
+        var driver = new FakeDriver();
+        var execution = execution(store, id, cell(2), driver, () -> true);
+        execution.stopWhen(() -> true);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0, 1, 1, true, 0, () -> true).state()).isEqualTo(UNCONFIRMED);
+        store.confirm(id, 1);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0, 2, 2, true, 0, () -> true).state()).isEqualTo(SUCCEEDED);
+        assertThat(store.get(id).result()).containsEntry("stop_condition_met", true);
+        assertThat(driver.routes).isEmpty();
+        var next = store.reserve(MOVE, SESSION, 10, 100);
+        var unsafe = execution(store, next, cell(2), driver, () -> true);
+        unsafe.stopWhen(() -> true);
+        store.confirm(next, 3);
+        assertThat(unsafe.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0, 4, 4, false, 0, () -> true).state()).isEqualTo(AgentJobStore.State.FAILED);
+    }
+
+    @Test
+    void observationWaitAlsoConsumesTheElapsedTickBudget() {
+        var map = map();
+        var store = new AgentJobStore();
+        var id = store.reserve(MOVE, SESSION, 10, 100);
+        var driver = new FakeDriver();
+        var execution = execution(store, id, cell(2), driver, () -> true);
+        store.confirm(id, 1);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0,
+                1, 1, true, 0, () -> true).state()).isEqualTo(AgentJobStore.State.RUNNING);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0,
+                11, 11, true, 0, () -> true).state()).isEqualTo(AgentJobStore.State.FAILED);
+        assertThat(store.get(id).failure()).isEqualTo("tick_limit");
+        assertThat(driver.routes).isEmpty();
+    }
+
+    private static class FakeObstacles implements CoordinateMoveJobExecution.ObstacleDriver {
+        int ticks;
+        boolean closed;
+        CoordinateMoveJobExecution.ObstacleStep step = CoordinateMoveJobExecution.ObstacleStep.WORKING;
+        public CoordinateMoveJobExecution.ObstacleStep tick(NavCell current, long tick, BooleanSupplier allowed) {
+            assertThat(allowed.getAsBoolean()).isTrue(); ticks++; return step;
+        }
+        public java.util.Map<String, Object> result() { return java.util.Map.of("path_changed_count", 1); }
+        public void close() { closed = true; }
+    }
+
     private static CoordinateMoveJobExecution execution(AgentJobStore store, UUID id,
             NavCell goal, FakeDriver driver, BooleanSupplier release) {
         return new CoordinateMoveJobExecution(

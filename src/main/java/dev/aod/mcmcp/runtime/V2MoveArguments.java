@@ -8,9 +8,13 @@ import java.util.Set;
 
 /** Coordinate goal accepted without requiring prior observation of the destination. */
 record V2MoveArguments(NavCell goal, double arrivalRadius,
-        double tolerance, int maxTicks, double maxDistance) {
+        double tolerance, int maxTicks, double maxDistance, V2StopCondition stopWhen,
+        boolean clearPath, String bridgeBlock) {
     V2MoveArguments {
         Objects.requireNonNull(goal, "goal");
+        if (bridgeBlock != null && (!clearPath || !bridgeBlock.matches("minecraft:[a-z0-9_./-]{1,112}"))) {
+            throw new IllegalArgumentException("bridge_block requires clear_path and a Vanilla block ID");
+        }
         if (!Double.isFinite(arrivalRadius) || arrivalRadius < 0.0D
                 || arrivalRadius > 16.0D
                 || !Double.isFinite(tolerance) || tolerance < 0.1D || tolerance > 0.49D
@@ -25,7 +29,8 @@ record V2MoveArguments(NavCell goal, double arrivalRadius,
         Objects.requireNonNull(origin, "origin");
         RuntimeArguments.requireAllowedKeys(arguments, "agent_move",
                 Set.of("x", "y", "z", "direction", "distance",
-                        "arrival_radius", "tolerance", "max_ticks", "max_distance"));
+                        "arrival_radius", "tolerance", "max_ticks", "max_distance",
+                        "stop_when", "clear_path", "bridge_block"));
         boolean coordinates = arguments.keySet().containsAll(Set.of("x", "y", "z"));
         boolean relative = arguments.keySet().containsAll(Set.of("direction", "distance"));
         if (coordinates == relative || arguments.containsKey("direction") != arguments.containsKey("distance")
@@ -49,7 +54,10 @@ record V2MoveArguments(NavCell goal, double arrivalRadius,
                 ? RuntimeArguments.intArgument(arguments, "max_ticks") : 1_200;
         double maxDistance = arguments.containsKey("max_distance")
                 ? RuntimeArguments.doubleArgument(arguments, "max_distance") : 256.0D;
-        return new V2MoveArguments(goal, arrivalRadius, tolerance, maxTicks, maxDistance);
+        return new V2MoveArguments(goal, arrivalRadius, tolerance, maxTicks, maxDistance,
+                arguments.containsKey("stop_when") ? V2StopCondition.parse(RuntimeArguments.objectArgument(arguments, "stop_when")) : null,
+                arguments.containsKey("clear_path") && RuntimeArguments.booleanArgument(arguments, "clear_path"),
+                arguments.containsKey("bridge_block") ? RuntimeArguments.stringArgument(arguments, "bridge_block") : null);
     }
 
     private static NavCell relativeGoal(NavCell origin, Map<String, Object> arguments) {

@@ -68,3 +68,29 @@ pwsh -File tools/eval/Test-McmcpV2StorageStopSmoke.ps1
 ```
 
 所持収納transferの応答待ち取消、通信遅延、他MOD収納、次元変更以外の切断・再接続は、この追加smokeとは別の検証です。終了時はgame/JVMを停止し、datapack・次元save・MODも含むprofile全体を元へ復元します。
+
+## 優先機能の追加smoke（2026-09-29）
+
+`Invoke-McmcpV2Trial.ps1`は同じMCP専用clientで9フェーズを検証します。これは決定的な機能smokeであり、fresh LLM評価ではありません。事前に専用profileを退避し、Minecraft 26.2のdatapackへ以下を配置してください。一般profileへfixtureを導入しないでください。
+
+| 元ファイル | 隔離datapackのfunction名 |
+|---|---|
+| `prepare-trial-ui.mcfunction` | `v2trial:prepare` |
+| `prepare-path-ui.mcfunction` | `v2trial:path` |
+| `prepare-bridge-ui.mcfunction` | `v2trial:bridge` |
+| `prepare-cancel-ui.mcfunction` | `v2trial:cancel` |
+
+これらはrestricted admin loaderの対象外で、T0前のゲームUIから実行します。`path`等は内部で`prepare`を呼び、専用範囲のworldと所持品を初期化します。制御ON後に最新sessionを取得し、フェーズごとに新しい出力先を指定します。
+
+1. `v2trial:path` → `PathDefault` → `PathClear`。既定で壁を壊さないことと、許可時だけ2cellを破壊して到着することを確認。
+2. `v2trial:bridge` → `Bridge`。明示材料で2cellの足場を補充し、到着と変更結果を確認。
+3. `v2trial:cancel` → `PathCancel`。障害物処理開始後の取消と入力所有終了を確認。
+4. `v2trial:prepare` → `Entity` → `Conditions` → `Menu` → `Construction`。遠方entity接近、成立／未観測条件、menu数量不一致の拒否と全stack移動、施工pause/resume。
+5. `v2trial:prepare` → `Special`。植物→ベッド→扉の順で配置し、各2cellのserver確認を照合。他の設置物で支持面を遮らないよう独立して実行。
+
+```powershell
+./tools/eval/Invoke-McmcpV2Trial.ps1 -TokenPath '対象のmcp-tokenへのpath' `
+  -ExpectedWorldSession '現在のsession ID' -ArtifactDirectory '新しい結果フォルダ' -Phase Bridge
+```
+
+試験終了後はゲームとlauncherを閉じ、専用profile全体を復旧して個数・全hashを照合します。失敗runは消さず、準備ミス・製品修正・残る制約を区別してください。[実施記録](../../../../docs/experiments/20260929_v2_trial_local.md)に成功・失敗と導入JARの対応を記載しています。

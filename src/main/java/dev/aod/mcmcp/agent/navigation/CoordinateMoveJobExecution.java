@@ -21,7 +21,7 @@ public final class CoordinateMoveJobExecution {
     private final double arrivalRadius;
     private final double tolerance;
     private final double maxDistance;
-    private final CoordinateGoalPlanner planner;
+    private CoordinateGoalPlanner planner;
     private final MovementDriver driver;
     private final BooleanSupplier releaseAndVerify;
     private boolean routeWasGoal;
@@ -29,8 +29,16 @@ public final class CoordinateMoveJobExecution {
     private Map<TraversabilityEdge.Key, TraversabilityEdge> waitingEvidence;
     private int evidenceWaitTicks;
     private long startedNanos = Long.MIN_VALUE;
+    private long startedClientTick;
     private AgentJobStore.State terminalIntent;
     private String terminalFailure;
+    private BooleanSupplier stopCondition = () -> false;
+    private ObstacleDriver obstacles;
+    private boolean clearing;
+    private int pathReplans;
+
+    public void stopWhen(BooleanSupplier condition) { stopCondition = Objects.requireNonNull(condition); }
+    public void clearPathWith(ObstacleDriver driver) { obstacles = Objects.requireNonNull(driver); }
 
     public CoordinateMoveJobExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
                                       NavCell goal, double tolerance, double maxDistance,
@@ -96,10 +104,16 @@ public final class CoordinateMoveJobExecution {
         if (job.state() == AgentJobStore.State.QUEUED) {
             jobs.start(actionId, currentWorldSessionId);
             startedNanos = nowNanos;
+            startedClientTick = clientTick;
             job = jobs.get(actionId);
         }
         if (nowNanos - startedNanos >= MAX_WALL_NANOS) {
             retainTerminal(AgentJobStore.State.FAILED, "duration_limit");
+            return publishAfterRelease();
+        }
+        if (stopCondition.getAsBoolean()) {
+            jobs.recordResult(actionId, Map.of("stop_condition_met", true));
+            retainTerminal(AgentJobStore.State.SUCCEEDED, null);
             return publishAfterRelease();
         }
         // The route driver can finish after currentCell was sampled for this tick. Confirm
@@ -115,7 +129,8 @@ public final class CoordinateMoveJobExecution {
             retainTerminal(AgentJobStore.State.SUCCEEDED, null);
             return publishAfterRelease();
         }
-        if (job.completedOperations() == job.maxOperations()) {
+        if (job.completedOperations() == job.maxOperations()
+                || clientTick - startedClientTick >= job.maxOperations()) {
             retainTerminal(AgentJobStore.State.FAILED, "tick_limit");
             return publishAfterRelease();
         }
@@ -124,6 +139,9 @@ public final class CoordinateMoveJobExecution {
             return publishAfterRelease();
         }
         try {
+            if (clearing) {
+                return clearObstacle(currentCell, clientTick, outputAllowed, map);
+            }
             if (!driver.active()) {
                 if (reached(currentCell)) {
                     retainTerminal(AgentJobStore.State.SUCCEEDED, null);
@@ -152,6 +170,7 @@ public final class CoordinateMoveJobExecution {
                         return publishAfterRelease();
                     }
                     case BLOCKED -> {
+                        if (obstacles != null) return clearObstacle(currentCell, clientTick, outputAllowed, map);
                         waitingEvidence = map.edges();
                         evidenceWaitTicks = 0;
                         return jobs.get(actionId);
@@ -183,9 +202,22 @@ public final class CoordinateMoveJobExecution {
                 }
                 case REPLAN_REQUIRED -> {
                     driver.close();
-                    if (routeWasGoal) {
+                    if (routeWasGoal && obstacles == null) {
                         retainTerminal(AgentJobStore.State.FAILED, "route_replan_required");
                         yield publishAfterRelease();
+                    }
+                    if (routeWasGoal) {
+                        var result = new java.util.LinkedHashMap<>(jobs.get(actionId).result());
+                        result.put("last_replan_reason", step.reason().name().toLowerCase(java.util.Locale.ROOT));
+                        result.put("path_replans", ++pathReplans);
+                        jobs.recordResult(actionId, result);
+                        if (pathReplans > 8) {
+                            retainTerminal(AgentJobStore.State.FAILED, "route_replan_limit");
+                            yield publishAfterRelease();
+                        }
+                        // The previous plan already marked its goal as issued. A bounded
+                        // recovery may reuse it, but only after the fresh-evidence gate below.
+                        planner = new CoordinateGoalPlanner(worldSessionId, goal, arrivalRadius);
                     }
                     waitingEvidence = map.edges();
                     evidenceWaitTicks = 0;
@@ -241,6 +273,10 @@ public final class CoordinateMoveJobExecution {
     private AgentJobStore.Snapshot publishAfterRelease() {
         try {
             driver.close();
+            if (obstacles != null) {
+                try { obstacles.close(); }
+                finally { captureObstacleResult(); }
+            }
             if (releaseAndVerify.getAsBoolean()) {
                 if (terminalIntent == AgentJobStore.State.SUCCEEDED
                         && jobs.get(actionId).cancelRequested()) {
@@ -253,6 +289,38 @@ public final class CoordinateMoveJobExecution {
             // Retain the first result and retry idempotent release on the next client tick.
         }
         return jobs.get(actionId);
+    }
+
+    private AgentJobStore.Snapshot clearObstacle(NavCell current, long tick,
+            BooleanSupplier allowed, KnownTraversabilitySnapshot map) {
+        var step = obstacles.tick(current, tick, () -> jobs.canDispatch(actionId, worldSessionId) && allowed.getAsBoolean());
+        captureObstacleResult();
+        jobs.recordOperation(actionId);
+        clearing = step == ObstacleStep.WORKING;
+        if (step == ObstacleStep.FAILED) {
+            retainTerminal(AgentJobStore.State.FAILED, "path_mutation_not_confirmed");
+            return publishAfterRelease();
+        }
+        if (!clearing) {
+            waitingEvidence = map.edges();
+            evidenceWaitTicks = 0;
+        }
+        return jobs.get(actionId);
+    }
+
+    private void captureObstacleResult() {
+        if (obstacles == null || jobs.get(actionId).state() != AgentJobStore.State.RUNNING) return;
+        var result = new java.util.LinkedHashMap<>(jobs.get(actionId).result());
+        result.remove("unconfirmed_path_target");
+        result.putAll(obstacles.result());
+        jobs.recordResult(actionId, result);
+    }
+
+    public enum ObstacleStep { UNAVAILABLE, WORKING, CHANGED, FAILED }
+    public interface ObstacleDriver {
+        ObstacleStep tick(NavCell current, long tick, BooleanSupplier allowed);
+        Map<String, Object> result();
+        void close();
     }
 
     public interface MovementDriver {

@@ -174,7 +174,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private Object v2InputPlayerIdentity;
     private Object v2InputLevelIdentity;
     private V2ClickArguments.Target v2ClickTarget;
-    private V2InputSequenceArguments.StopWhen v2InputStopWhen;
+    private V2StopCondition v2InputStopWhen;
     private long v2InputControlEpoch;
     private float v2InputHealthBaseline;
     private Vec3 v2InputLastPosition;
@@ -186,6 +186,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private Vec3 v2MoveLastPosition;
     private double v2MoveTravelled;
     private double v2MoveMaxDistance;
+    private V2StopCondition v2MoveStopWhen;
     private Object v2BreakPlayerIdentity;
     private Object v2BreakLevelIdentity;
     private long v2BreakControlEpoch;
@@ -1913,13 +1914,18 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 ? V2ItemUseArguments.parse(arguments) : null;
         var entityUse = "entity".equals(arguments.get("target"))
                 ? V2EntityInteractArguments.parse(arguments) : null;
+        var menuUse = "menu".equals(arguments.get("target"))
+                ? V2MenuArguments.parse(arguments, session.dimension()) : null;
         var entity = entityUse == null ? null : resolveV2VisibleEntity(minecraft, session,
-                new V2ClickArguments.EntityRefTarget(entityUse.ref(), entityUse.type()));
-        var request = itemUse == null && entityUse == null
+                new V2ClickArguments.EntityRefTarget(entityUse.ref(), entityUse.type()), entityUse.advance());
+        var request = itemUse == null && entityUse == null && menuUse == null
                 ? V2BlockInteractArguments.parse(arguments, session.dimension()) : null;
         int maxTicks = itemUse != null ? itemUse.maxTicks()
-                : entityUse != null ? entityUse.maxTicks() : request.maxTicks();
-        double maxDistance = request != null ? request.maxDistance() : 64.0D;
+                : entityUse != null ? entityUse.maxTicks()
+                : menuUse != null ? menuUse.block().maxTicks() : request.maxTicks();
+        double maxDistance = request != null ? request.maxDistance()
+                : entityUse != null ? entityUse.maxDistance()
+                : menuUse != null ? menuUse.block().maxDistance() : 64.0D;
         if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
                 || endpointFaultCode != null || !multiplayerPolicyAllows(minecraft)
                 || !v2InputWorldSafe(minecraft, session)) {
@@ -1953,14 +1959,20 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 if (!released) arming.lock("v2_interact_release_failed");
                 return released;
             };
-            if (itemUse != null) {
+            if (menuUse != null) {
+                v2InteractExecution = new V2OperationJobExecution(v2Jobs, actionId,
+                        session.worldSessionId(), new MinecraftV2MenuDriver(minecraft, sessions::snapshot,
+                                agentObservations, reconciliationSignals, menuUse,
+                                () -> v2InteractMaxDistance - v2InteractTravelled), release);
+            } else if (itemUse != null) {
                 v2InteractExecution = new V2OperationJobExecution(v2Jobs, actionId,
                         session.worldSessionId(), new MinecraftV2ItemUseDriver(
                                 minecraft, session.worldSessionId(), itemUse), release);
             } else if (entityUse != null) {
                 v2InteractExecution = new V2OperationJobExecution(v2Jobs, actionId,
                         session.worldSessionId(), new MinecraftV2EntityInteractDriver(
-                                minecraft, sessions::snapshot, agentObservations, entityUse, entity), release);
+                                minecraft, sessions::snapshot, agentObservations, entityUse, entity,
+                                () -> v2InteractMaxDistance - v2InteractTravelled), release);
             } else {
                 var driver = new MinecraftV2BlockInteractDriver(minecraft, sessions::snapshot,
                         agentObservations, reconciliationSignals, ClientPredictionSignals.global(),
@@ -2028,24 +2040,49 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             var executor = new MinecraftActionPrimitiveExecutor(
                     McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
             var driver = new CoordinateMoveJobExecution.MovementDriver() {
+                private dev.aod.mcmcp.agent.navigation.RoutePlan pendingRoute;
+                private double pendingTolerance;
+
                 @Override
                 public void begin(dev.aod.mcmcp.agent.navigation.RoutePlan route, double tolerance) {
-                    executor.beginNavigate(route, tolerance);
+                    if (request.clearPath() && !route.edges().isEmpty()) {
+                        // Breaking/placing changes the camera. Align with the admitted first
+                        // edge before steering, avoiding drift into a narrow corridor wall.
+                        var from = route.cells().getFirst();
+                        var next = route.cells().get(1);
+                        double aimX = minecraft.player.getX() + next.x() - from.x();
+                        double aimY = minecraft.player.getEyeY();
+                        double aimZ = minecraft.player.getZ() + next.z() - from.z();
+                        var aimCell = net.minecraft.core.BlockPos.containing(aimX, aimY, aimZ);
+                        pendingRoute = route;
+                        pendingTolerance = tolerance;
+                        executor.beginFace(new MinecraftActionPrimitiveExecutor.KnownFaceTarget(
+                                route.worldSessionId(), route.worldRevision(),
+                                new ActionDsl.Position(route.dimension(), aimCell.getX(), aimCell.getY(), aimCell.getZ()),
+                                aimX, aimY, aimZ), 60);
+                    } else executor.beginNavigate(route, tolerance);
                 }
 
                 @Override
                 public MinecraftActionPrimitiveExecutor.TickResult tick(
                         KnownTraversabilitySnapshot map, double remainingDistance,
                         long clientTick, BooleanSupplier outputAllowed) {
-                    return executor.tick(minecraft, map, LocalObservationVolume.global(),
+                    var step = executor.tick(minecraft, map, LocalObservationVolume.global(),
                             remainingDistance, 1_080.0D, clientTick, outputAllowed);
+                    if (pendingRoute != null && step.status() == MinecraftActionPrimitiveExecutor.Status.SUCCEEDED) {
+                        executor.beginNavigate(pendingRoute, pendingTolerance);
+                        pendingRoute = null;
+                        return new MinecraftActionPrimitiveExecutor.TickResult(
+                                MinecraftActionPrimitiveExecutor.Status.RUNNING, MinecraftActionPrimitiveExecutor.Reason.NONE);
+                    }
+                    return step;
                 }
 
                 @Override
                 public boolean active() { return executor.active(); }
 
                 @Override
-                public void close() { executor.close(); }
+                public void close() { executor.close(); pendingRoute = null; }
             };
             v2MoveExecution = new CoordinateMoveJobExecution(
                     v2Jobs, actionId, session.worldSessionId(), request.goal(),
@@ -2057,6 +2094,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         return released;
                     });
             v2MovePlayerIdentity = minecraft.player;
+            v2MoveStopWhen = request.stopWhen();
+            if (request.stopWhen() != null) v2MoveExecution.stopWhen(
+                    () -> request.stopWhen().matches(new V2LocalConditions(minecraft)));
+            if (request.clearPath()) v2MoveExecution.clearPathWith(new MinecraftV2PathDriver(
+                    minecraft, sessions::snapshot, agentObservations, reconciliationSignals, v2BreakPort, request));
             v2MoveLevelIdentity = minecraft.level;
             v2MoveControlEpoch = arming.snapshot(session.worldSessionId()).controlEpoch();
             v2MoveHealthBaseline = minecraft.player.getHealth()
@@ -2078,7 +2120,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private Map<String, Object> commitV2InputSequence(
             Minecraft minecraft, WorldSessionTracker.Snapshot session,
             FiniteInputSequence sequence, V2ClickArguments.Target target,
-            V2InputSequenceArguments.StopWhen stopWhen,
+            V2StopCondition stopWhen,
             AgentJobStore.Kind kind,
             String toolName, RuntimeCallContext context) {
         assertClientThread(minecraft);
@@ -2161,6 +2203,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private net.minecraft.world.entity.Entity resolveV2VisibleEntity(
             Minecraft minecraft, WorldSessionTracker.Snapshot session,
             V2ClickArguments.EntityRefTarget reference) {
+        return resolveV2VisibleEntity(minecraft, session, reference, false);
+    }
+
+    private net.minecraft.world.entity.Entity resolveV2VisibleEntity(
+            Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            V2ClickArguments.EntityRefTarget reference, boolean advance) {
         var player = minecraft.player;
         if (player == null) {
             throw new RuntimeInvocationException(
@@ -2169,8 +2217,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         var entity = observations.resolveCurrentlyVisibleEntity(
                 minecraft, session.clientTick(), session.worldSessionId(), session.dimension(),
-                reference.ref(), Math.min(McmcpClientConfig.visualRadiusBlocks(),
-                        player.entityInteractionRange() + 1.0D))
+                reference.ref(), advance ? McmcpClientConfig.visualRadiusBlocks()
+                        : Math.min(McmcpClientConfig.visualRadiusBlocks(), player.entityInteractionRange() + 1.0D))
                 .orElseThrow(() -> new RuntimeInvocationException(
                         "target_unavailable", "The entity reference is not currently visible.",
                         true, Map.of()));
@@ -3178,8 +3226,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             var result = v2InputExecution.tick(
                     session.worldSessionId(), session.clientTick(), System.nanoTime(),
                     safe, finalizationSafe,
-                    safe && v2InputStopWhen != null
-                            && v2InputStopWhen.reached(minecraft.player.position()));
+                    finalizationSafe && v2InputStopWhen != null
+                            && (safe || v2InputStopWhen instanceof V2StopCondition.Screen)
+                            && v2InputStopWhen.matches(new V2LocalConditions(minecraft)));
             finishV2InputIfTerminal(result);
         } catch (RuntimeException | LinkageError failure) {
             McmcpMod.LOGGER.error("MCMCP v2 input sequence failed", failure);
@@ -3196,7 +3245,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (v2MoveExecution == null) return;
         var session = sessions.snapshot();
         try {
-            boolean safe = v2InputWorldSafe(minecraft, session)
+            boolean screenStop = minecraft.player != null && v2MoveStopWhen instanceof V2StopCondition.Screen
+                    && v2MoveStopWhen.matches(new V2LocalConditions(minecraft));
+            boolean safe = v2InputWorldSafe(minecraft, session, screenStop)
                     && minecraft.player == v2MovePlayerIdentity
                     && minecraft.level == v2MoveLevelIdentity
                     && !paused && !minecraft.isPaused() && endpointFaultCode == null;
@@ -3345,7 +3396,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (v2InteractExecution == null) return;
         var session = sessions.snapshot();
         try {
-            boolean safe = v2InputWorldSafe(minecraft, session)
+            boolean safe = v2InputWorldSafe(minecraft, session,
+                    v2InteractExecution instanceof V2OperationJobExecution operation && operation.allowsScreenChange())
                     && minecraft.player == v2InteractPlayerIdentity
                     && minecraft.level == v2InteractLevelIdentity
                     && !paused && !minecraft.isPaused() && endpointFaultCode == null;
@@ -3489,6 +3541,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         v2MoveLastPosition = null;
         v2MoveTravelled = 0.0D;
         v2MoveMaxDistance = 0.0D;
+        v2MoveStopWhen = null;
         v2MoveHealthBaseline = 0.0F;
         v2MoveControlEpoch = 0L;
     }

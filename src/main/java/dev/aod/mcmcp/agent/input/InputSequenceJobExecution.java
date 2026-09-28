@@ -78,6 +78,12 @@ public final class InputSequenceJobExecution {
             retainTerminal(AgentJobStore.State.FAILED, "world_session_changed");
             return publishAfterRelease();
         }
+        if (stopConditionMet && safeToFinalize) {
+            if (job.state() == AgentJobStore.State.QUEUED) jobs.start(actionId, currentWorldSessionId);
+            jobs.recordResult(actionId, java.util.Map.of("stop_condition_met", true));
+            retainTerminal(AgentJobStore.State.SUCCEEDED, null);
+            return publishAfterRelease();
+        }
         // After the final input, a resulting menu may already be open. No more input is sent;
         // release the owned lease before the ordinary screen-safety gate runs again.
         if (job.completedOperations() == job.maxOperations()) {

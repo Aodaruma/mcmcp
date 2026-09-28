@@ -193,6 +193,35 @@ class InputSequenceJobExecutionTest {
         assertThat(control.events).containsExactly("publish", "release");
     }
 
+    @Test
+    void screenConditionCanCompleteAfterOpeningButNeverAfterLosingWorldSafety() {
+        for (boolean safeToFinalize : List.of(true, false)) {
+            var store = new AgentJobStore();
+            var session = UUID.randomUUID();
+            var id = store.reserve(INPUT_SEQUENCE, session, 20, 100);
+            var control = new RecordingControl();
+            var execution = execution(store, id, session, control, () -> true, 20);
+            store.confirm(id, 1);
+            execution.tick(session, 1, 1, true, false);
+            var stopped = execution.tick(session, 2, 2, false, safeToFinalize, true);
+            assertThat(stopped.state()).isEqualTo(safeToFinalize ? SUCCEEDED : FAILED);
+            assertThat(control.events).containsExactly("publish", "release");
+        }
+    }
+
+    @Test
+    void conditionAlreadyTrueCompletesAfterDeliveryWithoutPublishingInput() {
+        var store = new AgentJobStore();
+        var session = UUID.randomUUID();
+        var id = store.reserve(INPUT_SEQUENCE, session, 20, 100);
+        var control = new RecordingControl();
+        var execution = execution(store, id, session, control, () -> true, 20);
+        store.confirm(id, 1);
+        assertThat(execution.tick(session, 1, 1, true, true).state()).isEqualTo(SUCCEEDED);
+        assertThat(control.events).isEmpty();
+        assertThat(store.get(id).result()).containsEntry("stop_condition_met", true);
+    }
+
     private static InputSequenceJobExecution execution(AgentJobStore store, UUID id,
                                                         UUID session, RecordingControl control,
                                                         java.util.function.BooleanSupplier release,
