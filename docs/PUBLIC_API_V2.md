@@ -1,5 +1,7 @@
 # MCMCP公開API v2：改訂案
 
+2026-09-28の実装状況・未確認事項・再開順序は[進捗と再開メモ](PUBLIC_API_V2_STATUS_20260928.md)を参照。利用者の依頼により開発を一時停止し、この設計案の完成目標と実装済みの範囲を区別する。
+
 2026-09-27。利用者の追加フィードバックを反映した実装用の設計案。基準は`main`の`f7d4bf4`。2026-09-28のDraft PRでは基本行動8ツールを一組で公開catalogへ接続した。旧JSON Action DSLの開始ツールは公開catalog・受付から削除し、13ツールになった。旧DSLの入力schemaは内部実行器の回帰試験用resourceにだけ残し、本体JARには同梱しない。実ゲーム確認と不足する行動範囲が残るため、v2完成・配布済みとは扱わない。
 
 実ゲームの主要成功・取消・危険停止は[隔離smoke test](../tools/eval/fixtures/public-api-v2/README.md)で検証する。runner／fixtureの単体検査と実ゲーム合格を区別し、対象JAR・action ID・readback・復旧を実験記録へ残す。
