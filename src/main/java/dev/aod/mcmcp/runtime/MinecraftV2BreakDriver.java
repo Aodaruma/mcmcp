@@ -18,9 +18,11 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.Map;
 import java.util.Objects;
@@ -106,6 +108,7 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
         if (!player.isWithinBlockInteractionRange(position, 0.0D)) {
             return V2BreakJobExecution.BeginResult.WAITING;
         }
+        if (visiblyAir(position)) return V2BreakJobExecution.BeginResult.SKIPPED;
         var frame = observations.latestInternalFrame();
         if (frame.isEmpty()) return V2BreakJobExecution.BeginResult.WAITING;
         var reconciliation = reconciliationSignals.bindAndSnapshot(level, session.worldSessionId());
@@ -299,6 +302,24 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
         return minecraft.hitResult instanceof BlockHitResult hit
                 && hit.getType() == HitResult.Type.BLOCK
                 && hit.getBlockPos().equals(new BlockPos(target.x(), target.y(), target.z()));
+    }
+
+    /** A clear current ray proves air; the target state is read only after both ray checks. */
+    private boolean visiblyAir(BlockPos position) {
+        var player = minecraft.player;
+        var level = minecraft.level;
+        Vec3 eye = player.getEyePosition();
+        Vec3 center = Vec3.atCenterOf(position);
+        for (BlockPos traversed : BlockPos.betweenClosed(BlockPos.containing(eye), position)) {
+            if (!level.isLoaded(traversed)) return false;
+        }
+        var visual = level.clip(new ClipContext(eye, center,
+                ClipContext.Block.VISUAL, ClipContext.Fluid.ANY, player));
+        if (visual.getType() != HitResult.Type.MISS) return false;
+        var collision = level.clip(new ClipContext(eye, center,
+                ClipContext.Block.COLLIDER, ClipContext.Fluid.ANY, player));
+        return collision.getType() == HitResult.Type.MISS
+                && level.getBlockState(position).isAir();
     }
 
     private enum Stage { IDLE, APPROACH, FACING, WAIT_CROSSHAIR, BREAKING }
