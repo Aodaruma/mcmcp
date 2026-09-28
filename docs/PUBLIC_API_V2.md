@@ -55,14 +55,14 @@ move＋breakを利用側で毎ブロック交互に呼ぶ必要はない。`agen
 
 ```js
 function advance(x, count) {
-    repeat(count) { move(x=x, y=64, z=120); x=x+1; }
+    repeat(count) { breakBlocks(x=x, y=64, z=120, dy=1, advance=true); x=x+1; }
 }
 advance(count=2, x=119);
-move(x=116, y=64, z=120, clearPath=true, maxBreaks=32);
+move(x=116, y=64, z=120);
 let count = 3;
 for (let i=0; i<count; i++) {
     if (i < 2) { move(x=116+i, y=64, z=120); }
-    else { repeat(2) { interact(target="lever"); } }
+    else { interact(target="block", x=116, y=64, z=120, block="minecraft:lever"); }
 }
 ```
 

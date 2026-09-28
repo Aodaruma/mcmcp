@@ -8,7 +8,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
 
-/** Internal synchronous language prototype; deliberately not registered as an MCP tool. */
+/** Restricted synchronous language used by the public script job. */
 final class ActionScript {
     static final int MAX_SOURCE = 32_768;
     static final int MAX_NODES = 4_096;
