@@ -102,6 +102,26 @@ class McpPublicV2ToolsTest {
     }
 
     @Test
+    void entityInteractionUsesTheCommonJobAndRejectsMixedTargets() throws Exception {
+        var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();
+        var registry = registry(calls);
+        var input = JsonParser.parseString("""
+                {"target":"entity","entity_ref":"abcdefghijklmnopqrstuvwx",
+                 "entity_type":"example:animal","item":"example:flask",
+                 "result_item":"example:milk","max_ticks":200}
+                """).getAsJsonObject();
+        var prepared = registry.prepareCall("agent_interact", input);
+        assertThat(prepared.response().get("isError").getAsBoolean()).isFalse();
+        assertThat(calls.getFirst()).isInstanceOf(McpRuntimePort.StartInteract.class);
+        assertThat(prepared.deliveryReceipt()).isInstanceOf(McpRuntimePort.ActionDeliveryReceipt.class);
+        calls.clear();
+        input.addProperty("x", 1);
+        assertThat(registry.prepareCall("agent_interact", input).response().get("isError").getAsBoolean())
+                .isTrue();
+        assertThat(calls).isEmpty();
+    }
+
+    @Test
     void inventorySwapIsPublicAndUsesTheSharedActionReceipt() throws Exception {
         var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();
         var registry = registry(calls);

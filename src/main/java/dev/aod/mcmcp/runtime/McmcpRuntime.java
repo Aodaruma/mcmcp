@@ -1911,10 +1911,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         RuntimeFailures.requireReady(session);
         var itemUse = "item".equals(arguments.get("target"))
                 ? V2ItemUseArguments.parse(arguments) : null;
-        var request = itemUse == null
+        var entityUse = "entity".equals(arguments.get("target"))
+                ? V2EntityInteractArguments.parse(arguments) : null;
+        var entity = entityUse == null ? null : resolveV2VisibleEntity(minecraft, session,
+                new V2ClickArguments.EntityRefTarget(entityUse.ref(), entityUse.type()));
+        var request = itemUse == null && entityUse == null
                 ? V2BlockInteractArguments.parse(arguments, session.dimension()) : null;
-        int maxTicks = itemUse == null ? request.maxTicks() : itemUse.maxTicks();
-        double maxDistance = itemUse == null ? request.maxDistance() : 64.0D;
+        int maxTicks = itemUse != null ? itemUse.maxTicks()
+                : entityUse != null ? entityUse.maxTicks() : request.maxTicks();
+        double maxDistance = request != null ? request.maxDistance() : 64.0D;
         if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
                 || endpointFaultCode != null || !multiplayerPolicyAllows(minecraft)
                 || !v2InputWorldSafe(minecraft, session)) {
@@ -1952,6 +1957,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 v2InteractExecution = new V2OperationJobExecution(v2Jobs, actionId,
                         session.worldSessionId(), new MinecraftV2ItemUseDriver(
                                 minecraft, session.worldSessionId(), itemUse), release);
+            } else if (entityUse != null) {
+                v2InteractExecution = new V2OperationJobExecution(v2Jobs, actionId,
+                        session.worldSessionId(), new MinecraftV2EntityInteractDriver(
+                                minecraft, sessions::snapshot, agentObservations, entityUse, entity), release);
             } else {
                 var driver = new MinecraftV2BlockInteractDriver(minecraft, sessions::snapshot,
                         agentObservations, reconciliationSignals, ClientPredictionSignals.global(),
@@ -2144,6 +2153,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             Minecraft minecraft, WorldSessionTracker.Snapshot session,
             V2ClickArguments.Target target) {
         if (!(target instanceof V2ClickArguments.EntityRefTarget reference)) return target;
+        var entity = resolveV2VisibleEntity(minecraft, session, reference);
+        return new V2ClickArguments.EntityTarget(entity.getUUID(),
+                BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString());
+    }
+
+    private net.minecraft.world.entity.Entity resolveV2VisibleEntity(
+            Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            V2ClickArguments.EntityRefTarget reference) {
         var player = minecraft.player;
         if (player == null) {
             throw new RuntimeInvocationException(
@@ -2162,7 +2179,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             throw new RuntimeInvocationException(
                     "target_unavailable", "The entity type changed.", true, Map.of());
         }
-        return new V2ClickArguments.EntityTarget(entity.getUUID(), actualType);
+        return entity;
     }
 
     private Map<String, Object> executeOnClientThread(
@@ -2701,7 +2718,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         progress.put("max_operations", snapshot.maxOperations());
         if (snapshot.kind() == AgentJobStore.Kind.BREAK_BLOCK
                 || snapshot.kind() == AgentJobStore.Kind.PLACE_BLOCK
-                || snapshot.kind() == AgentJobStore.Kind.INTERACT) {
+                || snapshot.kind() == AgentJobStore.Kind.INTERACT && snapshot.scannedCells() > 0) {
             progress.put("scanned_cells", snapshot.scannedCells());
             progress.put(switch (snapshot.kind()) {
                 case BREAK_BLOCK -> "broken_blocks";

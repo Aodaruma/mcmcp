@@ -1701,8 +1701,8 @@
     },
     {
       "name": "agent_interact",
-      "title": "Interact with Block",
-      "description": "Uses a block or held item. Block use confirms a server-side state change, with optional range and approach. Item use selects the requested inventory item (or current hand), holds once, and waits for server processing; result_item optionally requires a selected-slot postcondition. Item-specific world effects are only reported as confirmed when observed. Entity and menu handlers remain pending.",
+      "title": "Interact",
+      "description": "Uses a block, held item, or visible entity. Block use confirms a server state change. Item use waits for server processing. Entity use aims within reach and dispatches once; success alone does not prove its world effect. Optional result_item requires a fresh server-confirmed held item. item selects from inventory; entity/item defaults to the current hand. Menu interactions remain pending.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
@@ -1818,6 +1818,46 @@
             },
             "required": [
               "target"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "target": {
+                "const": "entity"
+              },
+              "entity_ref": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{24}$"
+              },
+              "entity_type": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128,
+                "description": "Optional inventory item; minecraft:air selects an empty slot."
+              },
+              "result_item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128,
+                "description": "Optional postcondition: require a fresh server-confirmed item ID in the selected slot after use."
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1200,
+                "default": 200
+              }
+            },
+            "required": [
+              "target",
+              "entity_ref"
             ]
           }
         ]

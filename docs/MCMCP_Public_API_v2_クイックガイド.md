@@ -12,7 +12,7 @@
 | `agent_move` | 座標または方向へ移動。未観測の目的地も指定でき、MODが局所観測しながら進む |
 | `agent_break_block` | Vanillaの指定座標・直方体を破壊。条件は任意、`advance:true`で接近しながら続ける |
 | `agent_place_block` | Vanillaの指定blockを座標・直方体へ設置。向きなどの`properties`は任意 |
-| `agent_interact` | blockのstate変更、または手持ちitemの単発使用。entity・menu操作はこの段階では未対応 |
+| `agent_interact` | blockのstate変更、手持ちitemの使用、観測したentityへの通常操作。menu操作は未対応 |
 | `agent_inventory` | 所持品の確認・hotbarとの交換・投棄、対応収納の確認・数量移送 |
 | `agent_click` | 左・右・中クリックを有限回実行。意味的な作業成功までは保証しない |
 | `agent_input_sequence` | 論理キー／マウスを同時・順番に入力。時間・間隔・反復・到達停止条件を指定 |
@@ -31,6 +31,8 @@
 これは`agent_move`への引数です。停止するには`agent_cancel_action({action_id:"返されたID"})`、結果を読むには`agent_get_action({action_id:"返されたID",include_result:true})`を使います。通信が途切れた行動を自動で再送しないでください。取消は既に確定した設置・破壊・数量移送を巻き戻しません。Esc、MCP OFF、world変更、危険などでも停止します。
 
 `agent_interact({target:"item",item:"minecraft:milk_bucket",result_item:"minecraft:bucket"})`はミルクを使い、手持ちが空のバケツになったserver更新を待ちます。`item`省略時は現在の手持ちを使います。`result_item`省略時の成功は使用受付・server処理・長押し終了までの確認です。固有のworld効果とは区別し、詳細結果の`effect_confirmed`を確認してください。
+
+`agent_interact({target:"entity",entity_ref:"観測で得た参照",item:"minecraft:bucket",result_item:"minecraft:milk_bucket"})`は、手の届く対象へ照準を合わせて操作し、手持ちのserver更新を待ちます。`item`省略時は現在の手持ち、`item:"minecraft:air"`なら空手です。entity操作で`result_item`を省略した成功は操作受付までの場合があります。`confirmation:"client_dispatch"`と`"server_held_item"`を区別してください。遠方への接近・menu操作は未対応で、確認できない操作は再送しません。
 
 ## 範囲・収納・合成
 

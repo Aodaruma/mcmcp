@@ -35,7 +35,7 @@ LLMは行き先、作業範囲、条件、反復の意図を伝える。MODは�
 | `agent_input_sequence` | 同時・順次のsteps、押下tick、間隔、反復数、停止条件 | 複数入力の単一所有、有限実行と解放 |
 | `agent_run_script` | 下記の制限言語のsourceと総予算 | 関数・変数・分岐・反復で複数の基本行動を組み立てて進める |
 
-Draft PRで公開した範囲は、moveの座標／方向、Vanillaのbreak/place、block state変更と手持ちitem使用のinteract、プレイヤーinventoryのinspect/swap/drop、座標指定のVanilla収納と対応providerの所持収納のinspect/transfer、world内の有限click、9種類の論理入力、制限付きscriptである。swapはmain inventoryの1 stackとhotbarの指定枠を交換し、両slotのserver更新を確認する。moveの障害物自動破壊・設置、entity/menuのinteract、任意MOD収納やmenu内clickはまだ対応しない。v2の`get_action`は進行数を既定で返す。`include_result:true`を指定すると、block作業では確定セル座標と確認済みの変更前後block stateを直近最大128件、総数・保持開始番号・打切り有無とともに返す。block破壊のdrop・消費item等を含む詳細effectは未実装。実ゲームでの成功・取消・危険停止を確認するまでDraftを維持する。
+Draft PRで公開した範囲は、moveの座標／方向、Vanillaのbreak/place、block state変更・手持ちitem使用・観測したentityへの通常使用のinteract、プレイヤーinventoryのinspect/swap/drop、座標指定のVanilla収納と対応providerの所持収納のinspect/transfer、world内の有限click、9種類の論理入力、制限付きscriptである。swapはmain inventoryの1 stackとhotbarの指定枠を交換し、両slotのserver更新を確認する。moveの障害物自動破壊・設置、menuのinteract、任意MOD収納やmenu内clickはまだ対応しない。v2の`get_action`は進行数を既定で返す。`include_result:true`を指定すると、block作業では確定セル座標と確認済みの変更前後block stateを直近最大128件、総数・保持開始番号・打切り有無とともに返す。block破壊のdrop・消費item等を含む詳細effectは未実装。実ゲームでの成功・取消・危険停止を確認するまでDraftを維持する。
 
 これらの一呼出しは共通の`action_id`を返す。現在の開始応答は`queued`と`action_id`を返す。完了までは同じIDを照会する。`agent_get_action({action_id})`は**その一件**の進行、成功／失敗を短く返す。確定した変更と途中までの結果は`include_result:true`で明示要求する。`agent_cancel_action({action_id})`は**その一件**の停止を要求する。たとえば範囲指定の`agent_break_block(advance:true)`が坑道を掘り進めている間も、同じIDで進行を見て中止できる。中止は既に壊したblockを戻さない。名前は既存互換のため残し、v2では共通の「作業結果・中止」ツールとして説明する。
 
@@ -57,7 +57,11 @@ move＋breakを利用側で毎ブロック交互に呼ぶ必要はない。`agen
 
 `agent_interact({target:"item"})`は選択中の手持ちitemを一度使用する。`item`でVanilla／MODのitem IDを指定すると所持品から選び、main inventoryにしかない場合は選択hotbar枠へ一度SWAPしてserver確認後に使う。`hold_ticks`は既定40・最大1000、`max_ticks`は既定max(200, hold_ticks+80)・最大1200。通常のuseItemと有限のUSE入力を使用し、終了・取消で長押しを解放し、元の選択枠へ戻す。SWAPした所持品配置そのものは戻さず、結果に記録する。単発使用では、使い終わったitemを自動で再使用しない。取消も通常の使用キー解放を行うため、弓など解放時に発動するitemの効果を巻き戻すものではない。
 
-item使用の既定完了は、クライアント側で使用を受け付けたこと（または確認済み所持品変化）、長押し終了、該当prediction sequenceのserver ACKを条件とする。これはitem固有のworld効果の保証ではない。結果の`server_processed`と、selected slotの新しいserver payloadから確認できた`effect_confirmed`を分ける。`result_item`を任意指定した場合は、そのitem IDになった新しいserver payloadとローカル手持ちの一致も待つ。確認できないまま期限に達した操作を再送しない。menuを開くitemとentityの操作は後続対応で、現段階では画面境界で停止する。クライアントの長押し保持hookと実ゲームでの飲食・取消は未確認。
+item使用の既定完了は、クライアント側で使用を受け付けたこと（または確認済み所持品変化）、長押し終了、該当prediction sequenceのserver ACKを条件とする。これはitem固有のworld効果の保証ではない。結果の`server_processed`と、selected slotの新しいserver payloadから確認できた`effect_confirmed`を分ける。`result_item`を任意指定した場合は、そのitem IDになった新しいserver payloadとローカル手持ちの一致も待つ。確認できないまま期限に達した操作を再送しない。menuを開く操作は後続対応で、現段階では画面境界で停止する。クライアントの長押し保持hookと実ゲームでの飲食・取消は未確認。
+
+`agent_interact({target:"entity",entity_ref:"観測の参照",item:"minecraft:bucket",result_item:"minecraft:milk_bucket"})`は手の届く観測済みentityへ照準を合わせ、MAIN_HANDで通常のentity操作を一度だけ行う。`entity_type`は任意の種類条件。`item`省略時は現在の手持ち、`minecraft:air`なら空枠を選ぶ。itemと同じ持ち替え／server確認処理を共有し、main inventoryからの交換後は配置を元に戻さない。entityの種類やitemにVanilla専用allowlistを設けず、登録MODの通常操作へ渡す。別entityへの置換、遮蔽、reach外、画面・session変更では停止する。遠方entityへの自動接近とmenu操作は未対応。
+
+entity packetにはitem使用のprediction ACKがないため、`result_item`省略時の成功はclientの操作受付、または新しいserver所持品更新までの確認とする。結果の`confirmation`は`client_dispatch`／`server_held_item`を区別し、`effect_confirmed`は確認済み手持ちstackの変化だけを示す。繁殖・騎乗・entity状態変化など固有の効果を保証しない。`result_item`指定時は新しいserver payloadと現在の手持ちの一致を必須にする。clientがPASSを返すMODでも、このpostconditionが確認できれば完了できる。古いpayloadやclient予測だけでは完了せず、期限までに確認できなければ再送せず停止する。単体・公開schema検査と実ゲームのentity操作確認は分けて扱う。
 
 ## 制限付きスクリプト
 
@@ -108,7 +112,7 @@ loop・関数呼出しを事前展開せず、ASTを直接評価する。関数�
 
 内部の`StartScript`は配送確認後に専用workerでこの言語を実行する。`move`／`breakBlocks`／`place`／`interact`／`inventory`／`click`／`input`を既存の内部v2 jobへ1命令ずつ渡し、各命令のterminalを待って次へ進む。親scriptは別の共通job IDを持ち、命令の確定数を保持する。取消・緊急停止時は実行中の子jobに取消を要求し、その入力解放が終わるまで親をterminalにしない。source・work・反復・呼出し数・実行時間は有限にする。workerはMinecraft stateを直接読まない。
 
-**未完了:** `interact`のentity・menu handler、命令ごとの失敗詳細、screenをまたぐ操作、観測量予算、実ゲームでの成功／取消／危険停止の確認。`agent_run_script`は公開catalogへ接続済み。基本行動handlerと停止契約を実ゲームで検証するまではDraft PRの試験実装とする。
+**未完了:** `interact`のmenu handler、命令ごとの失敗詳細、screenをまたぐ操作、観測量予算、実ゲームでの成功／取消／危険停止の確認。`agent_run_script`は公開catalogへ接続済み。基本行動handlerと停止契約を実ゲームで検証するまではDraft PRの試験実装とする。
 
 ## このブランチで実装済みの内部座標ナビゲーション
 
@@ -129,7 +133,7 @@ snapshotの既知の安全な停止候補を目標への直線距離、同距離
 
 ## このブランチで実装済みの内部ブロック作業基盤
 
-内部の`StartInteract`は現時点でblock対象の状態変更だけを扱う。単一座標またはblock ID条件付きの範囲を受け、必要なら既知の安全経路で近づく。MODのblock IDも照準対象にできる。手持ちは空hotbar枠、または明示したitem IDのhotbar枠を使い、通常の右クリック後に予測sequence・サーバーACK・変更後のblock stateを確認する。`expected_after_block`／`expected_after_properties`を指定した場合はその条件にも一致させる。stateが変わらないmenu開閉、entity／item使用、main inventoryからのitem移送は未実装で、公開catalogでは現時点の対応範囲を明示している。
+内部の`StartInteract`のblock分岐はstate変更を扱う。単一座標またはblock ID条件付きの範囲を受け、必要なら既知の安全経路で近づく。MODのblock IDも照準対象にできる。手持ちは空hotbar枠、または明示したitem IDのhotbar枠を使い、通常の右クリック後に予測sequence・サーバーACK・変更後のblock stateを確認する。`expected_after_block`／`expected_after_properties`を指定した場合はその条件にも一致させる。stateが変わらないmenu開閉は未実装で、公開catalogでは現時点の対応範囲を明示している。entity／item分岐は上記の共通operation jobへ接続し、main inventoryからの持ち替えも扱う。block分岐の使用item選択はこの段階ではhotbarのみ。
 
 `BlockWorkRegion`は破壊・設置で共用する座標範囲を保持する。`x/y/z`は始点、`dx/dy/dz`は符号付きの**終点差分**で、両端を含む。差分0は単一座標。X、Z、Yの順で安定して列挙し、最大4,096 cellと整数overflowを検査する。将来の楕円・path形状は現時点の契約に含めない。
 
