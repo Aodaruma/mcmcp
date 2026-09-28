@@ -24,6 +24,6 @@
 
 - 変更はIssue単位の専用branch/worktreeで進め、共有`main`を直接編集・pushしない。他担当のworktreeや現場ゲームへ割り込まない。subagentは使用しない。
 - [CONTRIBUTING](CONTRIBUTING.md)と[保守手順](docs/MAINTENANCE.md)を参照し、Issueの担当・範囲とPRの差分・試験・未確認事項を記録する。既存の未統合PRと同じファイルを触るときは重複実装を避ける。
-- 仕様変更ではcatalog、runtime、schema test、利用ガイドを同期する。まず単体・ハーネス・隔離fixtureで重要な成功と停止を確認する。長時間の旧方式との成功率比較を着手条件にはしない。実機が必要なら許可済みSSH `aod-mimoid`の隔離Dockerを使い、元world・設定を復旧する。
+- 仕様変更ではcatalog、runtime、schema test、利用ガイドを同期する。まず単体・ハーネス・隔離fixtureで重要な成功と停止を確認する。長時間の旧方式との成功率比較を着手条件にはしない。検証は12:00～23:00 JSTにはこのPCだけを優先し、23:00～12:00 JSTには許可済みSSH `aod-mimoid`の隔離Dockerも使える。実機試験後は元world・設定を復旧する。
 - 認証情報、private log、元の「くらふとぶ！-v01.2」profileを作業資料や試験へ流用しない。外部PRの未確認コードを認証情報のある環境で実行しない。
 - 現在の利用者指示により、mainへの統合、タグ作成、Release公開は追加の明示指示があるまで行わない。PR作成まで進める。admin bypass、force push、必須check解除をしない。
