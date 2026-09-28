@@ -5,6 +5,7 @@ import dev.aod.mcmcp.agent.action.AgentJobStore;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
 /** Client-tick owner for one v2 input job. No terminal result is published before full release. */
 public final class InputSequenceJobExecution {
@@ -13,17 +14,26 @@ public final class InputSequenceJobExecution {
     private final UUID worldSessionId;
     private final InputSequenceLeaseDriver driver;
     private final BooleanSupplier releaseAndVerify;
+    private final Consumer<FiniteInputSequence.Frame> afterInputPublished;
     private AgentJobStore.State terminalIntent;
     private String terminalFailure;
 
     public InputSequenceJobExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
                                      InputSequenceLeaseDriver driver,
                                      BooleanSupplier releaseAndVerify) {
+        this(jobs, actionId, worldSessionId, driver, releaseAndVerify, ignored -> { });
+    }
+
+    public InputSequenceJobExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
+                                     InputSequenceLeaseDriver driver,
+                                     BooleanSupplier releaseAndVerify,
+                                     Consumer<FiniteInputSequence.Frame> afterInputPublished) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.actionId = Objects.requireNonNull(actionId, "actionId");
         this.worldSessionId = Objects.requireNonNull(worldSessionId, "worldSessionId");
         this.driver = Objects.requireNonNull(driver, "driver");
         this.releaseAndVerify = Objects.requireNonNull(releaseAndVerify, "releaseAndVerify");
+        this.afterInputPublished = Objects.requireNonNull(afterInputPublished, "afterInputPublished");
         var job = jobs.get(actionId);
         if (job.kind() != AgentJobStore.Kind.INPUT_SEQUENCE
                 || !job.worldSessionId().equals(worldSessionId)
@@ -68,6 +78,7 @@ public final class InputSequenceJobExecution {
         }
         try {
             var frame = driver.tick(clientTick, nowNanos, stopConditionMet, false);
+            afterInputPublished.accept(frame);
             if (frame.state() == FiniteInputSequence.State.RUNNING) {
                 jobs.recordOperation(actionId);
             } else if (frame.state() == FiniteInputSequence.State.COMPLETED) {
@@ -97,6 +108,18 @@ public final class InputSequenceJobExecution {
             return jobs.get(actionId);
         }
         retainTerminal(AgentJobStore.State.FAILED, reason);
+        return publishAfterRelease();
+    }
+
+    /** Explicit client cancellation wins over a pending success until the release fence passes. */
+    public AgentJobStore.Snapshot cancel() {
+        var job = jobs.get(actionId);
+        if (job.state().terminal()) return job;
+        jobs.requestCancel(actionId);
+        if (terminalIntent == null || terminalIntent == AgentJobStore.State.SUCCEEDED) {
+            terminalIntent = AgentJobStore.State.CANCELLED;
+            terminalFailure = "client_request";
+        }
         return publishAfterRelease();
     }
 

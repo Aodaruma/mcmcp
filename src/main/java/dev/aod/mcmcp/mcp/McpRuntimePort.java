@@ -19,7 +19,8 @@ import java.util.UUID;
 public interface McpRuntimePort {
     CompletionStage<RuntimeReply> submit(RuntimeCommand command, RuntimeCallContext context);
 
-    sealed interface RuntimeCommand permits GetState, GetMcpStatus, GetObservation, StartAction, GetAction,
+    sealed interface RuntimeCommand permits GetState, GetMcpStatus, GetObservation, StartAction,
+            StartInputSequence, GetAction,
             CancelAction, ConfirmActionDelivery, AbandonActionDelivery,
             ConfirmObservationDelivery, AbandonObservationDelivery, GetSnapshot, CompareBlockPlan,
             GetRecipes, ListRoutines, GetRoutine, StartRoutine, CancelRoutine, EmergencyStop {
@@ -67,6 +68,18 @@ public interface McpRuntimePort {
         @Override
         public String toolName() {
             return "agent_start_action";
+        }
+    }
+
+    /** Internal v2 dispatch path; not discoverable until the whole tool set is ready. */
+    record StartInputSequence(Map<String, Object> arguments) implements RuntimeCommand {
+        public StartInputSequence {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "agent_input_sequence";
         }
     }
 

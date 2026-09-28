@@ -106,7 +106,8 @@ public final class AgentJobStore {
     public synchronized void finish(UUID actionId, State outcome, String failure,
                                     boolean inputsReleased) {
         Job job = current(actionId);
-        if (job.state != State.RUNNING && job.state != State.QUEUED) {
+        if (job.state != State.RUNNING && job.state != State.QUEUED
+                && !(job.state == State.UNCONFIRMED && outcome == State.CANCELLED)) {
             throw new IllegalStateException("job cannot finish from this state");
         }
         if (!inputsReleased) throw new IllegalStateException("job inputs are not released");

@@ -97,6 +97,54 @@ class InputSequenceJobExecutionTest {
         assertThat(control.events).containsExactly("publish", "release");
     }
 
+    @Test
+    void cancelBeforeDeliveryNeverPublishesInput() {
+        var store = new AgentJobStore();
+        var session = UUID.randomUUID();
+        var id = store.reserve(INPUT_SEQUENCE, session, 1, 100);
+        var control = new RecordingControl();
+        var execution = execution(store, id, session, control, () -> true, 1);
+        assertThat(execution.cancel().state()).isEqualTo(CANCELLED);
+        assertThat(control.events).isEmpty();
+        assertThat(store.confirm(id, 1)).isEqualTo(AgentJobStore.Confirmation.STALE);
+    }
+
+    @Test
+    void movementWitnessFailureReleasesPublishedInputBeforeFailure() {
+        var store = new AgentJobStore();
+        var session = UUID.randomUUID();
+        var id = store.reserve(INPUT_SEQUENCE, session, 1, 100);
+        var control = new RecordingControl();
+        var sequence = new FiniteInputSequence(List.of(
+                new FiniteInputSequence.Step(Set.of(BoundedInputLease.Input.FORWARD), 1, 0, 1)));
+        var driver = new InputSequenceLeaseDriver(sequence, (inputs, nowNanos) ->
+                BoundedInputLease.acquire(control, inputs, nowNanos, Duration.ofSeconds(1)));
+        var execution = new InputSequenceJobExecution(
+                store, id, session, driver, () -> true,
+                frame -> { throw new IllegalStateException("movement proof unavailable"); });
+        store.confirm(id, 1);
+        assertThat(execution.tick(session, 1, 1, true, false).state()).isEqualTo(FAILED);
+        assertThat(control.events).containsExactly("publish", "release");
+        assertThat(store.get(id).completedOperations()).isZero();
+    }
+
+    @Test
+    void cancellationDoesNotOverwriteEarlierSafetyFailureWaitingForRelease() {
+        var store = new AgentJobStore();
+        var session = UUID.randomUUID();
+        var id = store.reserve(INPUT_SEQUENCE, session, 2, 100);
+        var control = new RecordingControl();
+        var released = new AtomicBoolean(false);
+        var execution = execution(store, id, session, control, released::get, 2);
+        store.confirm(id, 1);
+        execution.tick(session, 1, 1, true, false);
+        assertThat(execution.tick(session, 2, 2, false, false).state()).isEqualTo(RUNNING);
+        released.set(true);
+        assertThat(execution.cancel().state()).isEqualTo(FAILED);
+        assertThat(store.get(id).failure()).isEqualTo("safety_interrupted");
+        assertThat(control.events).containsExactly("publish", "release");
+    }
+
     private static InputSequenceJobExecution execution(AgentJobStore store, UUID id,
                                                         UUID session, RecordingControl control,
                                                         java.util.function.BooleanSupplier release,

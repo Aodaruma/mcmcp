@@ -456,7 +456,8 @@ public final class ClientCommandInbox {
         controlQueue.drainTo(pending);
         int discardedStarts = Math.toIntExact(pending.stream()
                 .filter(command -> command.name().equals("start_routine")
-                        || command.name().equals("agent_start_action"))
+                        || command.name().equals("agent_start_action")
+                        || command.name().equals("agent_input_sequence"))
                 .count());
         pending.forEach(command -> command.completeFailure(failure));
         return discardedStarts;
