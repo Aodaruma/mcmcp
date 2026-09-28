@@ -15,6 +15,18 @@ class StationaryBreakOperationTest {
             new BlockStateFingerprint("minecraft:air", Map.of());
 
     @Test
+    void v2LeaseCanCoverHardVanillaBlocksButRemainsFinite() {
+        var extended = new StationaryBreakRequest(
+                new BlockTarget("minecraft:overworld", 1, 64, 2), COBBLESTONE,
+                new StationaryBreakGoal("minecraft:air", 1), 700,
+                StationaryBreakRequest.MAX_V2_ATTACK_LEASE_TICKS, 1);
+        assertThat(extended.attackLeaseTicks()).isEqualTo(600);
+        assertThatThrownBy(() -> new StationaryBreakRequest(
+                extended.target(), COBBLESTONE, extended.goal(), 700, 601, 1))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void completesThroughTheExistingAckVerifiedStationaryRoutine() {
         var port = new FakePort();
         var operation = new StationaryBreakOperation(port, request(36_010), 1, 10);

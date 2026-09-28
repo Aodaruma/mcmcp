@@ -38,6 +38,7 @@ import java.util.function.Supplier;
 final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
     private static final int MAX_APPROACH_EVIDENCE_WAIT_TICKS = 80;
     private static final double APPROACH_TOLERANCE = 0.35D;
+    private static final int BREAK_ACK_GRACE_TICKS = 20;
     private final Minecraft minecraft;
     private final Supplier<WorldSessionTracker.Snapshot> sessions;
     private final AgentObservations observations;
@@ -182,8 +183,10 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
             var source = port.captureExpectedSource(block, Set.of(blockId));
             attackRequest = new StationaryBreakRequest(block, source,
                     new StationaryBreakGoal("minecraft:air", 1),
-                    Math.addExact(clientTick, 60L),
-                    StationaryBreakRequest.MAX_ATTACK_LEASE_TICKS, 1);
+                    Math.addExact(clientTick,
+                            StationaryBreakRequest.MAX_V2_ATTACK_LEASE_TICKS
+                                    + BREAK_ACK_GRACE_TICKS),
+                    StationaryBreakRequest.MAX_V2_ATTACK_LEASE_TICKS, 1);
             attack = new KnownBlockBreakAttempt(port, attackRequest, clientTick,
                     KnownBlockBreakAttempt.Completion.AUTHORITATIVE_AIR);
             stage = Stage.BREAKING;

@@ -177,6 +177,10 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
             StationaryBreakRequest request,
             long leaseExpiresAtClientTick,
             boolean requireLegacyRoutineSafety) {
+        if (sourcePolicy == SourcePolicy.V1_CLOSED
+                && request.attackLeaseTicks() > StationaryBreakRequest.MAX_ATTACK_LEASE_TICKS) {
+            throw new IllegalArgumentException("v1 attack lease exceeds 40 ticks");
+        }
         var minecraft = assertClientThread();
         var frame = observe(request);
         if (!frame.worldReady() || !frame.playerAlive()
