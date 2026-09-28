@@ -3939,7 +3939,7 @@
     {
       "name": "agent_inventory",
       "title": "Inspect and Move Inventory",
-      "description": "Inspects player inventory, swaps a main-inventory stack with a hotbar slot, or drops a quantity. With target=container and x/y/z, approaches and inspects a chest, barrel or copper chest; transfer takes or stores an exact count. Mutations require server confirmation; cancellation retains confirmed partial quantities. MOD storage is not yet supported in this draft.",
+      "description": "Inspects, swaps or drops player inventory. With target=container and x/y/z, approaches a chest, barrel or copper chest. With target=storage and storage_slot, opens a carried storage item through its supported provider. Inspect reads contents; transfer takes or stores an exact count. Mutations require server confirmation and retain partial results on cancellation. Current transfers require a plan within 14 pickup clicks.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
@@ -4146,6 +4146,96 @@
               "x",
               "y",
               "z",
+              "direction",
+              "item",
+              "count"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "const": "inspect"
+              },
+              "target": {
+                "const": "storage"
+              },
+              "storage_slot": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 40
+              },
+              "storage_item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1200,
+                "default": 1200
+              }
+            },
+            "required": [
+              "operation",
+              "target",
+              "storage_slot"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "const": "transfer"
+              },
+              "target": {
+                "const": "storage"
+              },
+              "storage_slot": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 40
+              },
+              "storage_item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1200,
+                "default": 1200
+              },
+              "direction": {
+                "enum": [
+                  "take",
+                  "store"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 896
+              }
+            },
+            "required": [
+              "operation",
+              "target",
+              "storage_slot",
               "direction",
               "item",
               "count"

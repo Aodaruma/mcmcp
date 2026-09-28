@@ -132,6 +132,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final ClientRecipeCatalog recipeCatalog = new ClientRecipeCatalog();
     private final ScreenOwnershipSignals screenOwnership = ScreenOwnershipSignals.global();
     private final KnownMenuOperationRefs knownMenuOperationRefs = new KnownMenuOperationRefs();
+    private final KnownStorageRefs knownStorageRefs = new KnownStorageRefs();
     private final FishingSessionRefs fishingSessionRefs = new FishingSessionRefs();
     private final ScopedEntityAttackConsentStore entityAttackConsent =
             new ScopedEntityAttackConsentStore();
@@ -285,7 +286,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 Minecraft::getInstance,
                 sessions::snapshot,
                 ContainerSyncSignals.global(),
-                knownMenuOperationRefs);
+                knownMenuOperationRefs, knownStorageRefs);
         phaseFiveInventoryPort = new MinecraftPhaseFiveInventoryPort(
                 Minecraft::getInstance,
                 sessions::snapshot,
@@ -944,6 +945,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         clearAutomationPortSession("known_furnace", knownFurnacePort::clearSession);
         clearAutomationPortSession("known_menu", knownMenuPort::clearSession);
         clearAutomationPortSession("known_menu_refs", knownMenuOperationRefs::clear);
+        clearAutomationPortSession("known_storage_refs", knownStorageRefs::clear);
         clearAutomationPortSession("phase_five_inventory", phaseFiveInventoryPort::clearSession);
         clearAutomationPortSession("phase_five_world", phaseFiveWorldPort::clearSession);
         clearAutomationPortSession("phase_five_router", phaseFivePort::clearSession);
@@ -1720,6 +1722,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 case V2InventoryContainerArguments container -> new MinecraftV2ContainerDriver(
                         minecraft, sessions::snapshot, agentObservations, reconciliationSignals,
                         phaseFiveInventoryPort, container, session.dimension());
+                case V2InventoryStorageArguments storage -> new MinecraftV2StorageDriver(
+                        minecraft, sessions::snapshot, knownStorageRefs, knownMenuPort, storage);
             };
             v2InventoryExecution = new V2InventoryJobExecution(v2Jobs, actionId,
                     session.worldSessionId(), driver, () -> {

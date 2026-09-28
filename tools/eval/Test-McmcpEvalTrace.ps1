@@ -62,8 +62,8 @@ $AuditPromptProfile = if ($PSCmdlet.ParameterSetName -eq 'Audit') {
 }
 $AuditProfile = $EvaluationProfiles[$AuditPromptProfile]
 $ProductionPrompt = [string]$AuditProfile['prompt']
-$ExpectedCatalogFileSha256 = 'ffba1287f9d5f8d8a81153ee2c0d74fc67756381172b03454198d41e1b123a04'
-$ExpectedToolSurfaceSha256 = '6c7e0348e95ec35b73b7aa201849f329a8dc32ffcd38557cabf2d84a084bd054'
+$ExpectedCatalogFileSha256 = '36544488f1ca9fd8e1225c9cc06b3794d40b80af4bd7c7d325cfc60b2af97d3f'
+$ExpectedToolSurfaceSha256 = '9a74b6b329ae7057a70bf85bce8766be02e76e0bd59203b8c355e5d6d597ba81'
 $ExpectedEvaluatorTimeoutSeconds = [int]$AuditProfile['timeout_minutes'] * 60
 $TurnCompletionReserveSeconds = 15
 $MaximumMcpForwardSeconds = 35

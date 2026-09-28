@@ -35,7 +35,7 @@ LLMは行き先、作業範囲、条件、反復の意図を伝える。MODは�
 | `agent_input_sequence` | 同時・順次のsteps、押下tick、間隔、反復数、停止条件 | 複数入力の単一所有、有限実行と解放 |
 | `agent_run_script` | 下記の制限言語のsourceと総予算 | 関数・変数・分岐・反復で複数の基本行動を組み立てて進める |
 
-Draft PRで公開した範囲は、moveの座標／方向、Vanillaのbreak/place、block state変更のinteract、プレイヤーinventoryのinspect/swap/drop、座標指定のVanilla収納inspect/transfer、world内の有限click、9種類の論理入力、制限付きscriptである。swapはmain inventoryの1 stackとhotbarの指定枠を交換し、両slotのserver更新を確認する。moveの障害物自動破壊・設置、entity/item/menuのinteract、MOD収納の汎用transfer、menu内clickはまだ対応しない。v2の`get_action`は進行数を既定で返す。`include_result:true`を指定すると、block作業では確定セル座標と確認済みの変更前後block stateを直近最大128件、総数・保持開始番号・打切り有無とともに返す。block破壊のdrop・消費item等を含む詳細effectは未実装。実ゲームでの成功・取消・危険停止を確認するまでDraftを維持する。
+Draft PRで公開した範囲は、moveの座標／方向、Vanillaのbreak/place、block state変更のinteract、プレイヤーinventoryのinspect/swap/drop、座標指定のVanilla収納と対応providerの所持収納のinspect/transfer、world内の有限click、9種類の論理入力、制限付きscriptである。swapはmain inventoryの1 stackとhotbarの指定枠を交換し、両slotのserver更新を確認する。moveの障害物自動破壊・設置、entity/item/menuのinteract、任意MOD収納やmenu内clickはまだ対応しない。v2の`get_action`は進行数を既定で返す。`include_result:true`を指定すると、block作業では確定セル座標と確認済みの変更前後block stateを直近最大128件、総数・保持開始番号・打切り有無とともに返す。block破壊のdrop・消費item等を含む詳細effectは未実装。実ゲームでの成功・取消・危険停止を確認するまでDraftを維持する。
 
 これらの一呼出しは共通の`action_id`を返す。現在の開始応答は`queued`と`action_id`を返す。完了までは同じIDを照会する。`agent_get_action({action_id})`は**その一件**の進行、成功／失敗を短く返す。確定した変更と途中までの結果は`include_result:true`で明示要求する。`agent_cancel_action({action_id})`は**その一件**の停止を要求する。たとえば範囲指定の`agent_break_block(advance:true)`が坑道を掘り進めている間も、同じIDで進行を見て中止できる。中止は既に壊したblockを戻さない。名前は既存互換のため残し、v2では共通の「作業結果・中止」ツールとして説明する。
 
@@ -46,6 +46,10 @@ Draft PRで公開した範囲は、moveの座標／方向、Vanillaのbreak/plac
 収納の確認は`agent_inventory({operation:"inspect",target:"container",x:4,y:65,z:8})`、取り出し／収納は`{operation:"transfer",target:"container",x:4,y:65,z:8,direction:"take",item:"minecraft:stone",count:13}`（収納は`direction:"store"`）で行う。`block`条件とinspectの`item`絞込みは任意。未観測座標も受け付け、既定の`advance:true`で局所観測した経路を通り、操作距離内の見える面から開ける。総移動距離は既定64 block・最大256、総時間は既定／最大1200 tick。`advance:false`で移動を禁止できる。現段階ではチェスト、樽、8種の銅チェストに対応する。内部の所有menu・slot確認処理を共有し、transferは1～896個の指定数を移し、再開封して照合する。取消・失敗時も`confirmed_count`、`unconfirmed`、確認済み／不確実な数量変化を残し、menuと入力を解放するまでterminalにしない。inspectは確認済みの内容をitem ID別に集約し、絞込み指定時だけ該当IDを返す。公開catalogとscriptの`inventory(...)`へ接続済みだが、MOD収納の汎用接続とこれらのv2経路の実機確認は残る。
 
 収納transferは現在、既存処理が検証できる通常item・slotに限り、最大14個のsource stackと14回のPICKUP入力で事前計画できる数量を扱う。`count`の上限内でもこの条件や容量に収まらない場合は入力前に拒否する。この制限を任意MOD収納への汎用対応が完了したものとは扱わない。
+
+所持する収納itemは`agent_inventory({operation:"inspect",target:"storage",storage_slot:2})`で確認する。数量移送は同じtargetへ`operation:"transfer",direction:"take"|"store",item:"minecraft:stone",count:3`を指定する。`storage_slot`はプレイヤー所持枠番号（0～40）であり、任意の`storage_item`で収納itemの種類も照合できる。開封参照・profile hash・DSLは利用側へ要求しない。MOD側でその枠の収納を一度だけ選び、providerによる個体照合と通常開封、server同期済みslotの数量移送、再開封の照合へ接続する。inspect結果の`slots`番号は収納menu内の番号であり、プレイヤーの`storage_slot`とは区別する。itemでの絞込みは開封して全内容を確認した後に行う。
+
+この所持収納経路はPR #82の共通実行部分（`99d5ada`）を再利用する。`StorageAccess`は発見・開封・個体確認、`KnownMenuProfileSupport`は同期方式・slotの役割と容量を担当し、PICKUP計画・数量確認・部分結果・終了処理は共有する。組込みproviderは現在Sophisticated Backpacks 3.25.90／Core 1.4.99の検証済みJARに限る。他MODにはprovider／同期profileの追加が必要であり、未知の仕様を同じものと仮定しない。取消時に送信済みPICKUPがある場合はその応答を待ち、確認済みcursorの残数を元のslotへ一度だけ戻す。その入力と空cursorがserverで確認できるまで閉じず、不確実な入力を再送しない。移送中の一部が未確定の場合は結果に残す。このv2接続と取消経路の実ゲーム確認は未実施。
 
 move＋breakを利用側で毎ブロック交互に呼ぶ必要はない。`agent_move`に`clear_path`を指定する、または`agent_break_block`に`advance:true`を指定して坑道を連続施工できる。範囲内で新たに露出したblockはMODが局所的に観測し、液体、落下、危険な敵、inventory満杯等で停止・報告する。既存PR #26の坑道専用DSLは参考にするが、公開上の専用命令増殖は避ける。
 

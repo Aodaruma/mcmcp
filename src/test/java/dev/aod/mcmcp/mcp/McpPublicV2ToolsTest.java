@@ -104,6 +104,21 @@ class McpPublicV2ToolsTest {
     }
 
     @Test
+    void portableStorageHasNoPublicProviderSpecificArguments() throws Exception {
+        var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();
+        var registry = registry(calls);
+        for (String payload : List.of(
+                "{\"operation\":\"inspect\",\"target\":\"storage\",\"storage_slot\":38}",
+                "{\"operation\":\"transfer\",\"target\":\"storage\",\"storage_slot\":0,\"direction\":\"take\",\"item\":\"example:ore\",\"count\":3}",
+                "{\"operation\":\"transfer\",\"target\":\"storage\",\"storage_slot\":40,\"direction\":\"store\",\"item\":\"example:ore\",\"count\":3}")) {
+            var prepared = registry.prepareCall("agent_inventory", JsonParser.parseString(payload).getAsJsonObject());
+            assertThat(prepared.response().get("isError").getAsBoolean()).isFalse();
+            assertThat(calls.getLast()).isInstanceOf(McpRuntimePort.StartInventory.class);
+            assertThat(prepared.deliveryReceipt()).isInstanceOf(McpRuntimePort.ActionDeliveryReceipt.class);
+        }
+    }
+
+    @Test
     void incompleteOrUnsupportedRequestsAreRejectedBeforeRuntimeDispatch()
             throws Exception {
         var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();

@@ -31,7 +31,7 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 | --- | --- | --- |
 | Toolの必須field・公開説明・診断 | [`mcp/`](../src/main/java/dev/aod/mcmcp/mcp/)、Tool Catalog | schema・固定catalog hash・transport test |
 | DSLの構文・分岐・有限予算 | [`agent/dsl/`](../src/main/java/dev/aod/mcmcp/agent/dsl/) | parser / validator / compiler / cursor test、Action DSLガイド |
-| v2内部scriptの構文・逐次sink・有限予算 | [`agent/script/`](../src/main/java/dev/aod/mcmcp/agent/script/)（package-private） | ActionScriptTest、[実装済み範囲と未接続runtime](PUBLIC_API_V2.md#このブランチで実装済みの内部言語処理)。公開toolではない |
+| v2 scriptの構文・逐次sink・有限予算 | [`agent/script/`](../src/main/java/dev/aod/mcmcp/agent/script/) | ActionScriptTest、ScriptJobExecutionTest、[公開API v2](PUBLIC_API_V2.md)。`agent_run_script`から基本行動の共通jobへ接続 |
 | 行動の経路・照準・計画コスト | [`AgentPrimitivePlanner`](../src/main/java/dev/aod/mcmcp/agent/action/AgentPrimitivePlanner.java) と同packageのplanner | AgentPrimitivePlannerTest、該当operation test |
 | HTTPからclient tickへ渡す処理 | [`runtime/`](../src/main/java/dev/aod/mcmcp/runtime/) のMcmcpRuntime、ClientCommandInbox | deadline・world session・cancel・evaluation lease test |
 | 観測・配送TTL・再観測 | [`agent/observation/`](../src/main/java/dev/aod/mcmcp/agent/observation/)、runtime/ActionEvidence | frame/delivery/revision/fog recovery test |
@@ -117,7 +117,7 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 
 Batchは確認済み状態だけを更新し、click自体はportが発行します。ACK前に次のsourceを選び直したり、未知結果のclickを再送したりしません。公開結果へのeffect回収、readback後の成功判定、cleanup完了までの画面所有はportの責務です。policyクラスへMinecraft操作やattempt状態を追加しないでください。
 
-現在開いている対応収納は `runtime/KnownMenuProfileSupport` が画面・slot構成とserver同期の一致を確認し、`KnownMenuOperationRefs` が操作参照を発行します。`routine/MinecraftKnownMenuPort` は参照を再検証して通常QUICK_MOVEと結果・解放確認を行います。MODを限定しない開閉・両方向の数量移送へ拡張する際は、この共通基盤を再利用し、MOD固有の開閉・収納契約と転送本体を分けます。計画と未実装の範囲は[設計仕様書](Minecraft_MCP_NeoForge_設計仕様書.md)の9.7.1を参照してください。
+現在開いている対応収納は `runtime/KnownMenuProfileSupport` が画面・slot構成とserver同期の一致を確認し、`KnownMenuOperationRefs` が操作参照を発行します。`routine/MinecraftKnownMenuPort` は通常QUICK_MOVEに加え、`StorageAccess`／`KnownStorageRefs`による所持収納の発見・個体照合・開封と、`ExactInventoryTransfer`の両方向数量移送・再開封・終了確認を担当します。MOD固有の開封・同期契約はprovider／profileへ分け、転送本体を共有します。v2の`agent_inventory(target:"storage")`は`MinecraftV2StorageDriver`、座標収納は`MinecraftV2ContainerDriver`が既存の共通処理へ接続し、`V2InventoryJobExecution`が配送確認・進行・取消・解放後の結果を保持します。現在の対応範囲と未検証事項は[公開API v2](PUBLIC_API_V2.md)を参照してください。
 
 `MinecraftPhaseFiveInventoryPortTest`はportと各方針の接続・順序を検査し、独立したslot/batch試験は対応する小さなテストファイルで実行します。`./gradlew test --tests '*Inventory*Test'`でまとめて確認できます。照準の共通解析を変える場合は、呼出元のBrewing/Furnaceの契約試験も実行してください。
 
