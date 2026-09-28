@@ -320,8 +320,6 @@ final class MinecraftV2BlockInteractDriver
                 else failure.addSuppressed(closeFailure);
             }
         }
-        if (failure instanceof RuntimeException runtime) throw runtime;
-        if (failure instanceof LinkageError linkage) throw linkage;
         if (originalSlot >= 0 && minecraft.player == selectedPlayer
                 && minecraft.player.getInventory().getSelectedSlot() == selectedSlot) {
             minecraft.player.getInventory().setSelectedSlot(originalSlot);
@@ -338,6 +336,8 @@ final class MinecraftV2BlockInteractDriver
         crosshairWaitTicks = 0;
         dispatchedTick = 0L;
         stage = Stage.IDLE;
+        if (failure instanceof RuntimeException runtime) throw runtime;
+        if (failure instanceof LinkageError linkage) throw linkage;
     }
 
     static boolean matchesExpected(V2BlockInteractArguments request,

@@ -71,6 +71,7 @@ final class MinecraftV2PlaceDriver
     private Stage stage = Stage.IDLE;
     private int originalSlot = -1;
     private int selectedSlot = -1;
+    private Object selectedPlayer;
     private int crosshairWaitTicks;
     private long dispatchedTick;
 
@@ -204,6 +205,7 @@ final class MinecraftV2PlaceDriver
             this.candidate = found;
             originalSlot = previousSlot;
             selectedSlot = slot;
+            selectedPlayer = player;
             facing = new MinecraftActionPrimitiveExecutor(
                     McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
             facing.beginFace(found.aim(), 60L);
@@ -513,15 +515,14 @@ final class MinecraftV2PlaceDriver
                 else failure.addSuppressed(closeFailure);
             }
         }
-        if (failure instanceof RuntimeException runtime) throw runtime;
-        if (failure instanceof LinkageError linkage) throw linkage;
         var player = minecraft.player;
-        if (player != null && originalSlot >= 0
+        if (player == selectedPlayer && originalSlot >= 0
                 && player.getInventory().getSelectedSlot() == selectedSlot) {
             player.getInventory().setSelectedSlot(originalSlot);
         }
         originalSlot = -1;
         selectedSlot = -1;
+        selectedPlayer = null;
         target = null;
         request = null;
         planner = null;
@@ -532,6 +533,8 @@ final class MinecraftV2PlaceDriver
         crosshairWaitTicks = 0;
         dispatchedTick = 0L;
         stage = Stage.IDLE;
+        if (failure instanceof RuntimeException runtime) throw runtime;
+        if (failure instanceof LinkageError linkage) throw linkage;
     }
 
     private static BlockPos blockPos(NavCell cell) {
