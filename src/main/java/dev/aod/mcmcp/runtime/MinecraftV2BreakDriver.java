@@ -59,6 +59,7 @@ final class MinecraftV2BreakDriver
     private Stage stage = Stage.IDLE;
     private int originalSlot = -1;
     private int selectedToolSlot = -1;
+    private Object selectedPlayer;
     private int crosshairWaitTicks;
 
     MinecraftV2BreakDriver(Minecraft minecraft,
@@ -141,6 +142,7 @@ final class MinecraftV2BreakDriver
         blockId = currentBlockId;
         originalSlot = player.getInventory().getSelectedSlot();
         selectedToolSlot = bestHotbarTool(state);
+        selectedPlayer = player;
         player.getInventory().setSelectedSlot(selectedToolSlot);
         facing = new MinecraftActionPrimitiveExecutor(
                 McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
@@ -260,26 +262,42 @@ final class MinecraftV2BreakDriver
 
     @Override
     public void close() {
+        Throwable failure = null;
         if (attack != null) {
-            attack.close();
-            attack = null;
-            attackRequest = null;
+            try {
+                attack.close();
+                attack = null;
+                attackRequest = null;
+            } catch (RuntimeException | LinkageError closeFailure) {
+                failure = closeFailure;
+            }
         }
         if (facing != null) {
-            facing.close();
-            facing = null;
+            try {
+                facing.close();
+                facing = null;
+            } catch (RuntimeException | LinkageError closeFailure) {
+                if (failure == null) failure = closeFailure;
+                else failure.addSuppressed(closeFailure);
+            }
         }
         if (navigation != null) {
-            navigation.close();
-            navigation = null;
+            try {
+                navigation.close();
+                navigation = null;
+            } catch (RuntimeException | LinkageError closeFailure) {
+                if (failure == null) failure = closeFailure;
+                else failure.addSuppressed(closeFailure);
+            }
         }
         var player = minecraft.player;
-        if (player != null && originalSlot >= 0
+        if (player == selectedPlayer && originalSlot >= 0
                 && player.getInventory().getSelectedSlot() == selectedToolSlot) {
             player.getInventory().setSelectedSlot(originalSlot);
         }
         originalSlot = -1;
         selectedToolSlot = -1;
+        selectedPlayer = null;
         target = null;
         request = null;
         planner = null;
@@ -288,6 +306,8 @@ final class MinecraftV2BreakDriver
         blockId = null;
         crosshairWaitTicks = 0;
         stage = Stage.IDLE;
+        if (failure instanceof RuntimeException runtime) throw runtime;
+        if (failure instanceof LinkageError linkage) throw linkage;
     }
 
     private int bestHotbarTool(BlockState state) {
