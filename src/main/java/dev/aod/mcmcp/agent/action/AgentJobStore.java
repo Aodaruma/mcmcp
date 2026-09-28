@@ -7,7 +7,7 @@ import java.util.concurrent.TimeUnit;
 
 /** One active v2 job with delivery-gated admission and release-gated terminal state. */
 public final class AgentJobStore {
-    public static final int MAX_OPERATIONS = 1_000;
+    public static final int MAX_OPERATIONS = 1_200;
     public static final int MAX_TERMINAL_WAIT_MILLIS = 25_000;
 
     private Job latest;
@@ -18,7 +18,7 @@ public final class AgentJobStore {
         Objects.requireNonNull(kind, "kind");
         Objects.requireNonNull(worldSessionId, "worldSessionId");
         if (maxOperations < 1 || maxOperations > MAX_OPERATIONS) {
-            throw new IllegalArgumentException("job operation bound must be in 1..1000");
+            throw new IllegalArgumentException("job operation bound must be in 1..1200");
         }
         if (latest != null && !latest.state.terminal()) {
             throw new IllegalStateException("another job is active");
@@ -74,7 +74,7 @@ public final class AgentJobStore {
         notifyAll();
     }
 
-    /** Check again immediately before a game side effect; recording its ACK can follow a cancel. */
+    /** Check again immediately before a game side effect; recording its result can follow a cancel. */
     public synchronized boolean canDispatch(UUID actionId, UUID currentWorldSessionId) {
         Job job = current(actionId);
         return job.state == State.RUNNING && !job.cancelRequested

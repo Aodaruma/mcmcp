@@ -11,6 +11,7 @@ import java.util.Set;
 public final class InputSequenceLeaseDriver implements AutoCloseable {
     private static final Duration LEASE_HORIZON = Duration.ofSeconds(1);
 
+    private final int totalTicks;
     private final FiniteInputSequence.Cursor cursor;
     private final LeaseFactory factory;
     private BoundedInputLease lease;
@@ -23,8 +24,13 @@ public final class InputSequenceLeaseDriver implements AutoCloseable {
     }
 
     InputSequenceLeaseDriver(FiniteInputSequence sequence, LeaseFactory factory) {
-        cursor = Objects.requireNonNull(sequence, "sequence").cursor();
+        totalTicks = Objects.requireNonNull(sequence, "sequence").totalTicks();
+        cursor = sequence.cursor();
         this.factory = Objects.requireNonNull(factory, "factory");
+    }
+
+    public int totalTicks() {
+        return totalTicks;
     }
 
     public FiniteInputSequence.Frame tick(long clientTick, long nowNanos, boolean stopConditionMet,
