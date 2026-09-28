@@ -2066,7 +2066,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             throw new RuntimeInvocationException(
                     "task_busy", "Another action is already queued or running.", true, Map.of());
         }
-        if (!V2ClickArguments.targetMatches(minecraft, target)) {
+        var resolvedTarget = resolveV2ClickTarget(minecraft, session, target);
+        if (!V2ClickArguments.targetMatches(minecraft, resolvedTarget)) {
             throw new RuntimeInvocationException(
                     "target_unavailable", "The requested click target is not under the crosshair.",
                     true, Map.of());
@@ -2094,7 +2095,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     }, this::witnessV2Input);
             v2InputPlayerIdentity = minecraft.player;
             v2InputLevelIdentity = minecraft.level;
-            v2ClickTarget = target;
+            v2ClickTarget = resolvedTarget;
             v2InputStopWhen = stopWhen;
             v2InputControlEpoch = arming.snapshot(session.worldSessionId()).controlEpoch();
             v2InputHealthBaseline = minecraft.player.getHealth()
@@ -2113,6 +2114,31 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 "schema_version", 2,
                 "action_id", actionId.toString(),
                 "state", "queued");
+    }
+
+    private V2ClickArguments.Target resolveV2ClickTarget(
+            Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            V2ClickArguments.Target target) {
+        if (!(target instanceof V2ClickArguments.EntityRefTarget reference)) return target;
+        var player = minecraft.player;
+        if (player == null) {
+            throw new RuntimeInvocationException(
+                    "target_unavailable", "The entity reference is not currently visible.",
+                    true, Map.of());
+        }
+        var entity = observations.resolveCurrentlyVisibleEntity(
+                minecraft, session.clientTick(), session.worldSessionId(), session.dimension(),
+                reference.ref(), Math.min(McmcpClientConfig.visualRadiusBlocks(),
+                        player.entityInteractionRange() + 1.0D))
+                .orElseThrow(() -> new RuntimeInvocationException(
+                        "target_unavailable", "The entity reference is not currently visible.",
+                        true, Map.of()));
+        String actualType = BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString();
+        if (reference.typeId() != null && !reference.typeId().equals(actualType)) {
+            throw new RuntimeInvocationException(
+                    "target_unavailable", "The entity type changed.", true, Map.of());
+        }
+        return new V2ClickArguments.EntityTarget(entity.getUUID(), actualType);
     }
 
     private Map<String, Object> executeOnClientThread(

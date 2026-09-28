@@ -46,17 +46,22 @@ class V2ClickArgumentsTest {
         assertThat(V2ClickArguments.parse(Map.of("button", "right",
                 "x", 12, "y", 64, "z", -3, "block", "minecraft:lever")).target())
                 .isEqualTo(new V2ClickArguments.BlockTarget(12, 64, -3, "minecraft:lever"));
-        String uuid = "9a7f26c8-6872-4e8b-a6f9-a6404e9afab9";
+        String entityRef = "AbCdef0123456789_-ABCDEF";
         assertThat(V2ClickArguments.parse(Map.of("button", "right",
-                "entity_uuid", uuid, "entity_type", "minecraft:cow")).target())
-                .isEqualTo(new V2ClickArguments.EntityTarget(
-                        java.util.UUID.fromString(uuid), "minecraft:cow"));
+                "entity_ref", entityRef, "entity_type", "minecraft:cow")).target())
+                .isEqualTo(new V2ClickArguments.EntityRefTarget(entityRef, "minecraft:cow"));
         assertThatThrownBy(() -> V2ClickArguments.parse(Map.of(
                 "button", "right", "x", 12, "y", 64)))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> V2ClickArguments.parse(Map.of(
                 "button", "right", "x", 12, "y", 64, "z", -3,
-                "entity_uuid", uuid)))
+                "entity_ref", entityRef)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> V2ClickArguments.parse(Map.of(
+                "button", "right", "entity_ref", "not-a-valid-ref")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> V2ClickArguments.parse(Map.of(
+                "button", "right", "entity_uuid", "9a7f26c8-6872-4e8b-a6f9-a6404e9afab9")))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> V2ClickArguments.parse(Map.of(
                 "button", "right", "entity_type", "minecraft:cow")))

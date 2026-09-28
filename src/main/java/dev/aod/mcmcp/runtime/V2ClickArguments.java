@@ -18,7 +18,7 @@ record V2ClickArguments(FiniteInputSequence sequence, Target target) {
     static V2ClickArguments parse(Map<String, Object> arguments) {
         RuntimeArguments.requireAllowedKeys(arguments, "agent_click",
                 Set.of("button", "count", "hold_ticks", "gap_ticks",
-                        "x", "y", "z", "block", "entity_uuid", "entity_type"));
+                        "x", "y", "z", "block", "entity_ref", "entity_type"));
         String button = RuntimeArguments.stringArgument(arguments, "button");
         BoundedInputLease.Input input = switch (button) {
             case "left" -> BoundedInputLease.Input.ATTACK;
@@ -45,11 +45,11 @@ record V2ClickArguments(FiniteInputSequence sequence, Target target) {
         int coordinates = (arguments.containsKey("x") ? 1 : 0)
                 + (arguments.containsKey("y") ? 1 : 0)
                 + (arguments.containsKey("z") ? 1 : 0);
-        boolean entity = arguments.containsKey("entity_uuid");
+        boolean entity = arguments.containsKey("entity_ref");
         if ((coordinates != 0 && coordinates != 3) || (entity && coordinates != 0)
                 || (arguments.containsKey("block") && coordinates != 3)
                 || (arguments.containsKey("entity_type") && !entity)) {
-            throw new IllegalArgumentException("click target requires exact block coordinates or entity UUID");
+            throw new IllegalArgumentException("click target requires exact block coordinates or entity_ref");
         }
         if (coordinates == 3) {
             String block = arguments.containsKey("block")
@@ -59,12 +59,13 @@ record V2ClickArguments(FiniteInputSequence sequence, Target target) {
                     RuntimeArguments.intArgument(arguments, "z"), block);
         }
         if (entity) {
-            String raw = RuntimeArguments.stringArgument(arguments, "entity_uuid");
-            UUID id = UUID.fromString(raw);
-            if (!id.toString().equals(raw)) throw new IllegalArgumentException("invalid entity UUID");
+            String ref = RuntimeArguments.stringArgument(arguments, "entity_ref");
+            if (!ref.matches("[A-Za-z0-9_-]{24}")) {
+                throw new IllegalArgumentException("invalid entity_ref");
+            }
             String type = arguments.containsKey("entity_type")
                     ? resourceId(RuntimeArguments.stringArgument(arguments, "entity_type")) : null;
-            return new EntityTarget(id, type);
+            return new EntityRefTarget(ref, type);
         }
         return null;
     }
@@ -82,6 +83,7 @@ record V2ClickArguments(FiniteInputSequence sequence, Target target) {
                     BuiltInRegistries.BLOCK.getKey(
                             minecraft.level.getBlockState(position).getBlock()).toString());
         }
+        if (target instanceof EntityRefTarget) return false;
         var entityTarget = (EntityTarget) target;
         if (!(minecraft.hitResult instanceof EntityHitResult hit)) return false;
         var entity = hit.getEntity();
@@ -99,7 +101,9 @@ record V2ClickArguments(FiniteInputSequence sequence, Target target) {
         return value;
     }
 
-    sealed interface Target permits BlockTarget, EntityTarget { }
+    sealed interface Target permits BlockTarget, EntityRefTarget, EntityTarget { }
     record BlockTarget(int x, int y, int z, String blockId) implements Target { }
+    record EntityRefTarget(String ref, String typeId) implements Target { }
+    /** Client-only identity resolved from a currently visible opaque reference. */
     record EntityTarget(UUID uuid, String typeId) implements Target { }
 }
