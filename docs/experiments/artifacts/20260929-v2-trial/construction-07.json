@@ -1,0 +1,185 @@
+{
+  "world_session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+  "passed": true,
+  "phase": "Construction",
+  "events": [
+    {
+      "first": {
+        "receipts": [
+          {
+            "result": {
+              "confirmed_cells": [
+                {
+                  "y": 201,
+                  "z": 204,
+                  "before": "minecraft:air",
+                  "after": "minecraft:black_wool",
+                  "x": 202
+                }
+              ],
+              "retained_from": 1,
+              "dimension": "minecraft:overworld",
+              "observed_count": 0,
+              "confirmed_count": 1,
+              "truncated": false,
+              "observed_cells": []
+            },
+            "index": 0,
+            "action_id": "3bb84b64-7ed8-4b1c-beca-6acf4ff207e5"
+          }
+        ],
+        "pending": null,
+        "version": 2,
+        "resolutions": [],
+        "status": "paused",
+        "next": 1,
+        "session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+        "plan_sha256": "7bd7aaa2b58938d5550c877ee8e7eb04c516a454998c2f4158aa918d37eae6da"
+      },
+      "resumed": {
+        "receipts": [
+          {
+            "result": {
+              "confirmed_cells": [
+                {
+                  "y": 201,
+                  "z": 204,
+                  "before": "minecraft:air",
+                  "after": "minecraft:black_wool",
+                  "x": 202
+                }
+              ],
+              "retained_from": 1,
+              "dimension": "minecraft:overworld",
+              "observed_count": 0,
+              "confirmed_count": 1,
+              "truncated": false,
+              "observed_cells": []
+            },
+            "index": 0,
+            "action_id": "3bb84b64-7ed8-4b1c-beca-6acf4ff207e5"
+          },
+          {
+            "result": {
+              "confirmed_cells": [
+                {
+                  "y": 201,
+                  "z": 204,
+                  "before": "minecraft:air",
+                  "after": "minecraft:black_wool",
+                  "x": 203
+                }
+              ],
+              "retained_from": 1,
+              "dimension": "minecraft:overworld",
+              "observed_count": 0,
+              "confirmed_count": 1,
+              "truncated": false,
+              "observed_cells": []
+            },
+            "index": 1,
+            "action_id": "f9d0a9ff-77d6-4764-bd0a-7ac0f89229f8"
+          }
+        ],
+        "pending": null,
+        "version": 2,
+        "resolutions": [],
+        "status": "complete",
+        "next": 2,
+        "session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+        "plan_sha256": "7bd7aaa2b58938d5550c877ee8e7eb04c516a454998c2f4158aa918d37eae6da"
+      }
+    },
+    {
+      "control": {
+        "schema_version": 2,
+        "control_mode": "ready",
+        "game_paused": false,
+        "ready_expires_at": null,
+        "world_session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+        "latest_frame_id": "obs-e5293d68c8aad443",
+        "running_action_id": null
+      },
+      "after": {
+        "schema_version": 2,
+        "player": {
+          "hunger": 20,
+          "submerged": false,
+          "on_fire": false,
+          "yaw": -18.633423,
+          "pitch": 20.978716,
+          "position": {
+            "y": 201.0,
+            "z": 201.62881389985944,
+            "x": 202.54143090823223
+          },
+          "air": 300,
+          "status_effects": [],
+          "dimension": "minecraft:overworld",
+          "absorption": 0.0,
+          "max_air": 300,
+          "health": 20.0
+        },
+        "hotbar": {
+          "slots": [
+            {
+              "slot": 0,
+              "selected": true,
+              "item": "minecraft:black_wool",
+              "count": 14
+            },
+            {
+              "slot": 1,
+              "selected": false,
+              "item": "minecraft:netherite_pickaxe",
+              "count": 1
+            },
+            {
+              "slot": 2,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 3,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 4,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 5,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 6,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 7,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 8,
+              "selected": false,
+              "item": "minecraft:snow_block",
+              "count": 16
+            }
+          ],
+          "selected_slot": 0
+        }
+      }
+    }
+  ]
+}

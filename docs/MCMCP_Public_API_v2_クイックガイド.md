@@ -12,7 +12,7 @@
 | `agent_move` | 座標または方向へ移動。未観測の目的地も指定でき、MODが局所観測しながら進む |
 | `agent_break_block` | Vanillaの指定座標・直方体を破壊。条件は任意、`advance:true`で接近しながら続ける |
 | `agent_place_block` | Vanillaの指定blockを座標・直方体へ設置。向きなどの`properties`は任意 |
-| `agent_interact` | blockのstate変更、手持ちitemの使用、観測したentityへの通常操作。menu操作は未対応 |
+| `agent_interact` | block・item・観測したentityへの操作と、menuの開封・内容取得・Vanillaのスタック移動 |
 | `agent_inventory` | 所持品の確認・hotbarとの交換・投棄、対応収納の確認・数量移送 |
 | `agent_click` | 左・右・中クリックを有限回実行。意味的な作業成功までは保証しない |
 | `agent_input_sequence` | 論理キー／マウスを同時・順番に入力。時間・間隔・反復・到達停止条件を指定 |
@@ -32,7 +32,7 @@
 
 `agent_interact({target:"item",item:"minecraft:milk_bucket",result_item:"minecraft:bucket"})`はミルクを使い、手持ちが空のバケツになったserver更新を待ちます。`item`省略時は現在の手持ちを使います。`result_item`省略時の成功は使用受付・server処理・長押し終了までの確認です。固有のworld効果とは区別し、詳細結果の`effect_confirmed`を確認してください。
 
-`agent_interact({target:"entity",entity_ref:"観測で得た参照",item:"minecraft:bucket",result_item:"minecraft:milk_bucket"})`は、手の届く対象へ照準を合わせて操作し、手持ちのserver更新を待ちます。`item`省略時は現在の手持ち、`item:"minecraft:air"`なら空手です。entity操作で`result_item`を省略した成功はclientの操作受付を条件とします。PASSだけを返す操作は`result_item`を明示してserver更新を確認します。`confirmation:"client_dispatch"`と`"server_held_item"`を区別してください。遠方への接近・menu操作は未対応で、確認できない操作は再送しません。
+`agent_interact({target:"entity",entity_ref:"観測で得た参照",item:"minecraft:bucket",result_item:"minecraft:milk_bucket"})`は、観測した対象へ安全な経路で接近し、手の届く位置から操作して手持ちのserver更新を待ちます。`advance:false`なら移動しません。対象を見失った場合やworld・個体が変わった場合は停止します。`item`省略時は現在の手持ち、`item:"minecraft:air"`なら空手です。entity操作で`result_item`を省略した成功はclientの操作受付を条件とします。PASSだけを返す操作は`result_item`を明示してserver更新を確認します。`confirmation:"client_dispatch"`と`"server_held_item"`を区別してください。
 
 ## 範囲・収納・合成
 
@@ -63,4 +63,22 @@ move(x=4, y=65, z=8);
 
 行動関数は前の行動の終了を待ち、失敗・取消で停止します。ファイル、network、Java、module、`async/await`にはアクセスできません。raw入力もscriptも共通の入力所有・実行上限・停止処理を通ります。
 
-正確な引数・上限は公開Tool Catalog、未実装範囲と設計はrepositoryの`docs/PUBLIC_API_V2.md`を参照してください。v1用の施工runner、capability gate、`container-inspect-recovery`評価は対応するv1 checkoutとJARでのみ使用します。
+## 追加機能（2026-09-29）
+
+`agent_move`の`clear_path`は省略時`false`です。`true`では通常の安全な経路が途切れた際、同じ高さで目的地へ近づく方向の、見通せる手の届く障害物を処理します。収納・液体・落下block・TNT・複数cellのblockは自動破壊しません。足場補充はさらに`bridge_block:"minecraft:cobblestone"`等を明示した場合だけです。変更は最大64か所で、サーバー確認と新しい通行情報を待ちます。階段・縦穴を自動施工する機能ではありません。
+
+`agent_move`と`agent_input_sequence`には`stop_when`を指定できます。座標条件のほか、`{type:"block",x:4,y:65,z:8,block:"minecraft:stone",properties:{}}`、`{type:"item",item:"minecraft:stone",count:16,comparison:"at_least"}`、`{type:"screen",screen:"container"}`に対応します。item比較は`at_least`／`at_most`／`equals`、画面は`none`／`container`／`inventory`／`chat`です。未知のblockは条件を満たしません。条件は通常終了に加える早期終了条件で、危険停止等を解除しません。
+
+ベッドは足元、扉・二段植物は下段を`agent_place_block`の座標に指定します。相方のcellも置換条件・視認・サーバー反映を確認し、結果の`confirmed_cells[].companions`に残します。相方は指定したアンカー範囲の外に出る場合があります。既存の一致した配置は`observed_cells`に分け、今回の設置数に加算しません。
+
+menuは次の操作全体で開封から閉鎖までを行います。`clicks`省略なら内容取得だけです。
+
+```json
+{"target":"menu","x":4,"y":65,"z":8,"block":"minecraft:chest","menu_type":"minecraft:generic_9x3","clicks":[{"type":"quick_move","slot":0,"item":"minecraft:stone","count":16}]}
+```
+
+`clicks`は最大16回。slot番号はmenu内の番号で、空手のhotbar枠が必要です。Vanillaのgeneric chest/dispenser・hopper・shulkerの通常slotの全スタック移動のみを確認し、部分移動・カーソルへの持ち上げ・クラフト出力・独自ボタンは未対応です。部分同期や予期しない変更は未確定として停止し、同じクリックを再送しません。指定数量のtake/storeは引き続き`agent_inventory`を使います。
+
+施工の永続保存・再開は[試用ガイド](PUBLIC_API_V2_TRIAL_20260929.md)のPC側runnerで行います。制限付きscript自体にはファイル操作を追加していません。
+
+正確な引数・上限は公開Tool Catalog、設計は`docs/PUBLIC_API_V2.md`を参照してください。v1用の施工runner、capability gate、`container-inspect-recovery`評価は対応するv1 checkoutとJARでのみ使用します。

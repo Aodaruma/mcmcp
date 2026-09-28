@@ -1,6 +1,25 @@
 # 公開API v2：進捗と再開メモ（2026-09-28）
 
-## 最新更新（2026-09-29）
+## 最新更新：優先6項目と試用JAR（2026-09-29）
+
+指定された優先機能を実装し、このPCの隔離Minecraftで9フェーズを確認した。「くらふとぶ！-v01.2」のMCMCP JARは旧版を退避して置き換え済み。[試用メモ](PUBLIC_API_V2_TRIAL_20260929.md)と[実験記録](experiments/20260929_v2_trial_local.md)を参照。
+
+| 機能 | 現在使える範囲 |
+|---|---|
+| 移動中の障害物処理 | `clear_path`は任意・既定false。水平の局所破壊と、`bridge_block`で明示した材料による足場補充。server確認後に再観測して進む |
+| 遠方の対象への操作 | block・収納に加えて、観測済みentityにも既定`advance:true`で接近。見失った対象や到達不能では停止 |
+| 条件の拡張 | move／input_sequenceの`stop_when`に座標・見えるblock state・所持item数・画面種類 |
+| 特殊な設置 | ベッド・扉・二段植物。相方cellも事前確認し、両cellのserver更新を照合 |
+| メニュー操作 | 開封・内容取得・限定されたVanilla収納の全stack Shiftクリック・閉鎖。slot/item/count条件とserver確認を要求 |
+| 施工の保存・再開 | PC側のv2専用runner。1アンカーごとに操作IDと結果を保存し、確定済みの作業を飛ばして再開。応答不明は自動再送しない |
+
+Java 1,595件、harness 13件、admin bridge 28件とbuild、PowerShell/Pythonのsource checksが成功。実機JARと通常profileへ導入したJARのSHA-256は`03c7943f7fcd78f06021db2224a5df5b47fd77a2bc98bd99c32c5a930fadece1`。隔離profileは元の12ファイル・全hash一致で復旧した。
+
+残る主な機能は、任意MODのmenu／収納provider、クラフト・取引・独自ボタン、複合条件・任意entity状態条件、縦方向の障害物施工、高度な道具選択、詳細effect台帳、menuを開いたままのscript合成。新品backpackの自動初期化は未対応。収納の遅延同期・応答待ち取消、全MOD組合せ、PR全体の独立レビューは追加検証として残る。PR #85はDraftを維持し、main統合・タグ・Release公開はしていない。
+
+以下は履歴。未実装一覧は当時の状態であり、現在の範囲は上の表を優先する。
+
+## 履歴：所持収納と追加停止経路（2026-09-29）
 
 利用者が指定した「所持収納」「追加停止経路」の実機確認を、このPCで完了した。[追加試験の記録・証拠](experiments/20260929_v2_storage_stop_local.md)を参照。製品の既存実装は今回の範囲で正常に動作し、再実行可能な試験runner・fixture・回帰mock 13件を追加した。製品Javaの変更はない。
 

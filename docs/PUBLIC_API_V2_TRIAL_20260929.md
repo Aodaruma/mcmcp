@@ -1,0 +1,63 @@
+# 公開API v2 試用メモ（2026-09-29）
+
+Minecraft 26.2 / NeoForge 26.2.0.59 / Java 25向けの試用版です。mainへの統合・Release公開はしていません。操作前にゲーム内のMCPをONにします。停止はEsc・MCP OFF・`agent_cancel_action`で行えます。
+
+## 導入済みJAR
+
+このPCのPrismLauncher **「くらふとぶ！-v01.2」**へ、2026-09-29に置き換えました。通常どおりこのprofileを起動して試せます。
+
+- 導入先: profile内の`minecraft/mods/mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar`
+- 旧版の退避先: profile内の`mcmcp-backups/20260929-public-api-v2/`（同じJAR名）
+- 新JARのSHA-256: `03c7943f7fcd78f06021db2224a5df5b47fd77a2bc98bd99c32c5a930fadece1`
+
+旧版バックアップ・導入後hash・他MOD不変を確認済みです。通常profileのworldや設定は変更していません。実機試験は同じPCの隔離profileで行い、「くらふとぶ！」の全MODを併用した起動はまだ確認していません。[導入記録](experiments/artifacts/20260929-v2-trial/installation.json)
+
+## 使える範囲
+
+| 機能 | 今回の範囲 |
+|---|---|
+| 観測・移動・施工 | 状態／見えるblock・entity、座標移動、直方体の破壊・設置、持ち替え、結果確認 |
+| 移動中の障害物処理 | `clear_path:true`で有効。既定はfalse。水平移動の局所的な破壊、材料を明示した足場補充 |
+| 遠方への操作 | block・収納・観測済みentityへ接近して通常操作。`advance:false`で接近を禁止 |
+| 停止条件 | 座標、見えるblockとstate、所持item数、画面種類。`move`／`input_sequence`で使用 |
+| 特殊な設置 | ベッド・扉・二段植物の両cellを確認 |
+| メニュー | 開封→内容取得→必要ならVanilla収納のShiftクリック→確認→閉鎖。slot・item・現在の数量を指定 |
+| 所持品・収納 | inspect、hotbar交換、数量投棄、座標収納take/store、対応版Sophisticated Backpacks |
+| 施工の保存・再開 | 以下のPC側runner。1アンカーずつ進捗・操作ID・確定結果を保存 |
+| 操作の合成 | 有限loop・条件分岐・小関数の制限付きscript、有限の論理入力列 |
+
+行動ツールが返す`queued`は受付です。返されたIDを`agent_get_action({action_id:"…",include_result:true})`で照会し、`succeeded`／`failed`／`cancelled`まで確認してください。失敗・取消は変更済みのworldを元に戻しません。接続設定は既存のまま使用し、ツール一覧が古い場合はMCPクライアントを再接続してください。旧`agent_start_action`は公開しません。
+
+## 保存・再開の例
+
+任意の作業フォルダに`plan.json`を保存します。`steps`は最大16,384件で、各項目は1アンカーの`agent_place_block`引数です。ベッド等は1アンカーで相方も含みます。記述順に施工します。
+
+```json
+{"version":2,"dimension":"minecraft:overworld","steps":[
+  {"x":4,"y":65,"z":8,"block":"minecraft:stone","advance":true},
+  {"x":5,"y":65,"z":8,"block":"minecraft:stone","advance":true}
+]}
+```
+
+repositoryのworktreeでPowerShell 7.4以上を使います。tokenの値は貼り付けず、対象profileの`minecraft/config/mcmcp/mcp-token`へのパスを指定します。
+
+```powershell
+./tools/building/Invoke-McmcpV2Construction.ps1 `
+  -PlanPath 'C:/作業/plan.json' -CheckpointPath 'C:/作業/progress.json' `
+  -TokenPath 'C:/対象profile/minecraft/config/mcmcp/mcp-token' -MaxSteps 32
+```
+
+同じ引数で再実行すると保存済みの次の場所から再開します。`-StatusOnly`は保存状況だけを読みます。既定は1回64アンカー・900秒。計画の書換えや同時実行は拒否します。完了済みblockが後から壊された場合の自動修復は別計画で行います。
+
+再ログイン後は、**同じworldであることを確認して**`-AcceptWorldSessionChange`を付けます。session IDだけでは再接続前後のworld同一性を証明できないため、自動で受け入れません。
+
+応答を失った操作・失敗・取消は保留して自動再送しません。保存ファイルの`pending`とworldを確認し、実行中jobを停止・終了させたうえで、必要に応じて`-ResolvePending Complete`（現物確認済み）または`-ResolvePending Retry`（再試行を明示）を指定します。runner終了時点でゲームのjobが残っている場合も、そのIDで照会・取消してください。
+
+## 残る制約
+
+- 任意MODのメニュー／収納、クラフトや独自ボタン、カーソル操作は未対応です。新品backpackは通常UIで一度開いて初期化してください。
+- 自動障害物処理は水平の局所処理です。液体処理、階段・縦穴、任意形状の自動施工は含みません。
+- 設置面が他のblockで遮られる配置では、安全に停止する場合があります。施工順や立ち位置を変えて対応してください。
+- 道具の耐久・Silk Touch／Fortune条件、破壊dropや消費材料の詳細台帳、全MOD組合せ・通信遅延の検証は残っています。
+
+引数の詳細は[クイックガイド](MCMCP_Public_API_v2_クイックガイド.md)と[Tool Catalog](MCMCP_MCP_Tool_Catalog.json)を参照してください。[実機試験記録](experiments/20260929_v2_trial_local.md)には9フェーズの結果、失敗からの修正、検証環境の復旧をまとめています。

@@ -1,0 +1,152 @@
+{
+  "world_session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+  "phase": "Special",
+  "events": [
+    {
+      "arguments": {
+        "advance": true,
+        "x": 202,
+        "y": 201,
+        "block": "minecraft:red_bed",
+        "z": 202
+      },
+      "receipt": {
+        "schema_version": 2,
+        "action_id": "5c165e35-10e5-4ad4-bac0-a064ea58faa1",
+        "state": "queued"
+      },
+      "tool": "agent_place_block"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "5c165e35-10e5-4ad4-bac0-a064ea58faa1",
+        "kind": "place_block",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 68,
+          "max_operations": 1200,
+          "scanned_cells": 1,
+          "placed_blocks": 1
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "confirmed_cells": [
+            {
+              "y": 201,
+              "z": 202,
+              "companions": [
+                {
+                  "y": 201,
+                  "z": 202,
+                  "before": "minecraft:air",
+                  "after": "minecraft:red_bed[facing=east,occupied=false,part=head]",
+                  "x": 203
+                }
+              ],
+              "after": "minecraft:red_bed[facing=east,occupied=false,part=foot]",
+              "before": "minecraft:air",
+              "x": 202
+            }
+          ],
+          "retained_from": 1,
+          "dimension": "minecraft:overworld",
+          "observed_count": 0,
+          "confirmed_count": 1,
+          "truncated": false,
+          "observed_cells": []
+        }
+      }
+    },
+    {
+      "arguments": {
+        "advance": true,
+        "x": 203,
+        "y": 201,
+        "block": "minecraft:oak_door",
+        "z": 200
+      },
+      "receipt": {
+        "schema_version": 2,
+        "action_id": "f2dc3699-40c9-436e-b898-b73d85be83ef",
+        "state": "queued"
+      },
+      "tool": "agent_place_block"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "f2dc3699-40c9-436e-b898-b73d85be83ef",
+        "kind": "place_block",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 76,
+          "max_operations": 1200,
+          "scanned_cells": 1,
+          "placed_blocks": 1
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "confirmed_cells": [
+            {
+              "y": 201,
+              "z": 200,
+              "companions": [
+                {
+                  "y": 202,
+                  "z": 200,
+                  "before": "minecraft:air",
+                  "after": "minecraft:oak_door[facing=south,half=upper,hinge=left,open=false,powered=false]",
+                  "x": 203
+                }
+              ],
+              "after": "minecraft:oak_door[facing=south,half=lower,hinge=left,open=false,powered=false]",
+              "before": "minecraft:air",
+              "x": 203
+            }
+          ],
+          "retained_from": 1,
+          "dimension": "minecraft:overworld",
+          "observed_count": 0,
+          "confirmed_count": 1,
+          "truncated": false,
+          "observed_cells": []
+        }
+      }
+    },
+    {
+      "arguments": {
+        "advance": true,
+        "x": 204,
+        "y": 201,
+        "block": "minecraft:sunflower",
+        "z": 202
+      },
+      "receipt": {
+        "schema_version": 2,
+        "action_id": "f45ebcb1-1ff8-494f-9b0a-161b22eae582",
+        "state": "queued"
+      },
+      "tool": "agent_place_block"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "f45ebcb1-1ff8-494f-9b0a-161b22eae582",
+        "kind": "place_block",
+        "state": "failed",
+        "progress": {
+          "completed_operations": 74,
+          "max_operations": 1200,
+          "scanned_cells": 0,
+          "placed_blocks": 0
+        },
+        "cancel_requested": false,
+        "failure": "block_not_confirmed"
+      }
+    }
+  ],
+  "passed": false
+}

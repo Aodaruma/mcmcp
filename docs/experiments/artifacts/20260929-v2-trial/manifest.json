@@ -1,0 +1,62 @@
+[
+  {
+    "path": "bridge-07.json",
+    "sha256": "729e3a13bde2d458e5f9679534b227a86cefea228d84c8929ff6306333128388"
+  },
+  {
+    "path": "candidate.json",
+    "sha256": "19a67ac0629a40dcc8d8213d679528c29bd8164163dc9b153ad6711ef0364690"
+  },
+  {
+    "path": "conditions-07.json",
+    "sha256": "b026b05bab27d520baf46f3a423619f38f5fa1fb8def50d098b9a7843d612759"
+  },
+  {
+    "path": "construction-07.json",
+    "sha256": "46dfcbeb20dd9920579fbcba2c676e14e49e817b51942addc3f228183841a9d6"
+  },
+  {
+    "path": "entity-07.json",
+    "sha256": "7186d2e1423f7fc7c62f7035b8e2eb0a835261c8d0eb9777f4d9913d9e57204b"
+  },
+  {
+    "path": "installation.json",
+    "sha256": "dded5ac527968fdc64977834745a60ff1aa4a7dc57bc7827f6407b973c4cc375"
+  },
+  {
+    "path": "menu-07.json",
+    "sha256": "b78ea934c612c5506258c8f35687bd4ffceb61179844c09999b07f3964e1f046"
+  },
+  {
+    "path": "path-cancel-08.json",
+    "sha256": "4a655be1ca6377474057940db92abeaec7d40748dd428eb31858cd45f9b49d1a"
+  },
+  {
+    "path": "path-clear-05-failed.json",
+    "sha256": "06f3786d75dfbdb9b9734a23dea73426329ece8e7ab7a2cdb37a087e92edbf57"
+  },
+  {
+    "path": "path-clear-06-failed.json",
+    "sha256": "dda145f4c3856356f6eb8590dc2132882ead1e037d9528ba86828d2214e7afc3"
+  },
+  {
+    "path": "path-clear-07.json",
+    "sha256": "68a36f12e2b4e157d7d5098e49e8c72688521203e903fc0043aa5b932bdbfa06"
+  },
+  {
+    "path": "path-default-07.json",
+    "sha256": "7762d125530bc568a551ddbc2b30fb893f0b4502f3be41b62ad4324cf842e178"
+  },
+  {
+    "path": "restoration.json",
+    "sha256": "2049d41fca4497a4b0a260a1afb2cd5e4ce5414d0275de6f46146d532e6a825e"
+  },
+  {
+    "path": "special-07-failed.json",
+    "sha256": "0700361e207a994fe0830af7eb09f9be1b515a91ee33f14a6620be4671d27755"
+  },
+  {
+    "path": "special-08.json",
+    "sha256": "eade26eeb110e33cf2bde9d12170b1904cc57a1012c4e409e96be7daf7d0a351"
+  }
+]
