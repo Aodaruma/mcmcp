@@ -17,6 +17,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.state.BlockState;
@@ -24,6 +25,8 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -283,20 +286,42 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
 
     private int bestHotbarTool(BlockState state) {
         var inventory = minecraft.player.getInventory();
-        int best = inventory.getSelectedSlot();
-        float speed = 1.0F;
+        var hotbar = new ArrayList<ToolCandidate>(Inventory.getSelectionSize());
         for (int slot = 0; slot < Inventory.getSelectionSize(); slot++) {
-            var stack = inventory.getItem(slot);
-            if (stack.isEmpty() || stack.isDamageableItem()
-                    && stack.getMaxDamage() - stack.getDamageValue() < 1) continue;
-            float candidate = stack.getDestroySpeed(state);
-            if (candidate > speed) {
+            ItemStack stack = inventory.getItem(slot);
+            boolean available = !stack.isDamageableItem()
+                    || stack.getMaxDamage() - stack.getDamageValue() >= 1;
+            boolean harvests = !state.requiresCorrectToolForDrops()
+                    || !stack.isEmpty() && stack.isCorrectToolForDrops(state);
+            float speed = stack.isEmpty() ? 1.0F : stack.getDestroySpeed(state);
+            hotbar.add(new ToolCandidate(available, harvests, speed));
+        }
+        return chooseHotbarTool(hotbar, inventory.getSelectedSlot());
+    }
+
+    static int chooseHotbarTool(List<ToolCandidate> hotbar, int selectedSlot) {
+        if (hotbar.size() != Inventory.getSelectionSize()
+                || selectedSlot < 0 || selectedSlot >= hotbar.size()) {
+            throw new IllegalArgumentException("invalid hotbar selection");
+        }
+        int best = -1;
+        boolean bestHarvests = false;
+        float bestSpeed = -1.0F;
+        for (int offset = 0; offset < hotbar.size(); offset++) {
+            int slot = (selectedSlot + offset) % hotbar.size();
+            var candidate = hotbar.get(slot);
+            if (!candidate.available()) continue;
+            if (best < 0 || candidate.harvests() && !bestHarvests
+                    || candidate.harvests() == bestHarvests && candidate.speed() > bestSpeed) {
                 best = slot;
-                speed = candidate;
+                bestHarvests = candidate.harvests();
+                bestSpeed = candidate.speed();
             }
         }
-        return best;
+        return best >= 0 ? best : selectedSlot;
     }
+
+    record ToolCandidate(boolean available, boolean harvests, float speed) { }
 
     private boolean crosshairOnTarget() {
         return minecraft.hitResult instanceof BlockHitResult hit
