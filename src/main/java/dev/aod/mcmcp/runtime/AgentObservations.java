@@ -194,6 +194,11 @@ final class AgentObservations {
         return agentPlanningFrame(null);
     }
 
+    /** v2 handlers use newly collected local rays without requiring an MCP observation round trip. */
+    Optional<ObservationFrame> latestInternalFrame() {
+        return agentObservationFrames.latestFrame();
+    }
+
     Optional<ObservationFrame> agentPlanningFrame(ActionDsl.Node primitive) {
         return agentPlanningFrame(primitive, null);
     }

@@ -39,6 +39,7 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
     private final WorldMemory memory;
     private final MinecraftObservationService observations;
     private final ClientPredictionSignals predictionSignals;
+    private final SourcePolicy sourcePolicy;
     private final Map<StationaryBreakRequest, Baseline> baselines = new IdentityHashMap<>();
     private final Map<AttackAttempt, ActiveAttempt> activeAttempts = new IdentityHashMap<>();
 
@@ -48,11 +49,23 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
             WorldMemory memory,
             MinecraftObservationService observations,
             ClientPredictionSignals predictionSignals) {
+        this(minecraftSupplier, sessionSupplier, memory, observations,
+                predictionSignals, SourcePolicy.V1_CLOSED);
+    }
+
+    public MinecraftStationaryBreakPort(
+            Supplier<Minecraft> minecraftSupplier,
+            Supplier<WorldSessionTracker.Snapshot> sessionSupplier,
+            WorldMemory memory,
+            MinecraftObservationService observations,
+            ClientPredictionSignals predictionSignals,
+            SourcePolicy sourcePolicy) {
         this.minecraftSupplier = Objects.requireNonNull(minecraftSupplier, "minecraftSupplier");
         this.sessionSupplier = Objects.requireNonNull(sessionSupplier, "sessionSupplier");
         this.memory = Objects.requireNonNull(memory, "memory");
         this.observations = Objects.requireNonNull(observations, "observations");
         this.predictionSignals = Objects.requireNonNull(predictionSignals, "predictionSignals");
+        this.sourcePolicy = Objects.requireNonNull(sourcePolicy, "sourcePolicy");
     }
 
     /** Captures the full visible source state used as the immutable action precondition. */
@@ -66,8 +79,7 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
             throw new IllegalArgumentException("target must be the current in-reach crosshair block");
         }
         var state = level.getBlockState(position);
-        SafeBreakSourcePolicy.requireLiveState(
-                state, level.getBlockEntity(position) != null);
+        requireSource(state, level.getBlockEntity(position) != null);
         var fingerprint = fingerprint(state);
         if (!allowedBlocks.contains(fingerprint.blockId())) {
             throw new IllegalArgumentException("current target block is not in allowed_blocks");
@@ -175,8 +187,7 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
         }
         var level = requireTargetLevel(request.target());
         var position = blockPos(request.target());
-        SafeBreakSourcePolicy.requireLiveState(
-                level.getBlockState(position), level.getBlockEntity(position) != null);
+        requireSource(level.getBlockState(position), level.getBlockEntity(position) != null);
         if (frame.liveTargetState().filter(request.expectedSourceState()::matches).isEmpty()) {
             throw new IllegalStateException("stationary_break preconditions changed before attack");
         }
@@ -229,8 +240,7 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
         }
         var level = requireTargetLevel(attempt.target());
         var position = blockPos(attempt.target());
-        SafeBreakSourcePolicy.requireLiveState(
-                level.getBlockState(position), level.getBlockEntity(position) != null);
+        requireSource(level.getBlockState(position), level.getBlockEntity(position) != null);
         active.lease().renew(
                 System.nanoTime(),
                 leaseHorizon(currentTick, attempt.leaseExpiresAtClientTick()));
@@ -387,6 +397,16 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
         assertClientThread();
         baselines.remove(Objects.requireNonNull(request, "request"));
     }
+
+    private void requireSource(BlockState state, boolean blockEntityPresent) {
+        if (sourcePolicy == SourcePolicy.V1_CLOSED) {
+            SafeBreakSourcePolicy.requireLiveState(state, blockEntityPresent);
+        } else {
+            V2BreakSourcePolicy.requireLiveState(state);
+        }
+    }
+
+    public enum SourcePolicy { V1_CLOSED, V2_VANILLA }
 
     private StationaryBreakFrame unavailableFrame(WorldSessionTracker.Snapshot session) {
         long tick = session == null ? 0 : Math.max(0, session.clientTick());
