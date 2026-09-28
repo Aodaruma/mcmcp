@@ -13,7 +13,7 @@ import java.util.UUID;
 import java.util.function.BooleanSupplier;
 
 /** Exchanges one exact main-inventory stack with a hotbar slot and waits for both server slots. */
-final class MinecraftV2InventorySwapDriver implements V2InventoryJobExecution.Driver {
+final class MinecraftV2InventorySwapDriver implements V2OperationJobExecution.Driver {
     private final Minecraft minecraft;
     private final UUID session;
     private final V2InventorySwapArguments request;
@@ -81,22 +81,22 @@ final class MinecraftV2InventorySwapDriver implements V2InventoryJobExecution.Dr
     }
 
     @Override
-    public V2InventoryJobExecution.Step tick(long clientTick,
+    public V2OperationJobExecution.Step tick(long clientTick,
             BooleanSupplier outputAllowed) {
-        if (failure != null || swap == null) return V2InventoryJobExecution.Step.FAILED;
+        if (failure != null || swap == null) return V2OperationJobExecution.Step.FAILED;
         if (!outputAllowed.getAsBoolean() || minecraft.player != player
                 || minecraft.level != level
                 || player.containerMenu != player.inventoryMenu
                 || !player.inventoryMenu.getCarried().isEmpty()
                 || player.getInventory().getSelectedSlot() != request.hotbarSlot()) {
             fail("inventory_context_changed");
-            return V2InventoryJobExecution.Step.FAILED;
+            return V2OperationJobExecution.Step.FAILED;
         }
         return switch (swap.poll(session, clientTick)) {
-            case WAITING -> V2InventoryJobExecution.Step.RUNNING;
+            case WAITING -> V2OperationJobExecution.Step.RUNNING;
             case FAILED -> {
                 fail("swap_not_confirmed");
-                yield V2InventoryJobExecution.Step.FAILED;
+                yield V2OperationJobExecution.Step.FAILED;
             }
             case CONFIRMED -> {
                 var inventory = player.getInventory();
@@ -106,7 +106,7 @@ final class MinecraftV2InventorySwapDriver implements V2InventoryJobExecution.Dr
                         inventory.getItem(request.hotbarSlot()));
                 confirmed = true;
                 layoutMayHaveChanged = false;
-                yield V2InventoryJobExecution.Step.CONFIRMED;
+                yield V2OperationJobExecution.Step.CONFIRMED;
             }
         };
     }

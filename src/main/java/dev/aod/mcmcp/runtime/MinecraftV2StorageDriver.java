@@ -16,7 +16,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 /** Resolves the carried item once, then delegates all menu work to the shared transfer port. */
-final class MinecraftV2StorageDriver implements V2InventoryJobExecution.Driver {
+final class MinecraftV2StorageDriver implements V2OperationJobExecution.Driver {
     private final Minecraft minecraft;
     private final Supplier<WorldSessionTracker.Snapshot> sessions;
     private final KnownStorageRefs storages;
@@ -63,8 +63,8 @@ final class MinecraftV2StorageDriver implements V2InventoryJobExecution.Driver {
     }
 
     @Override
-    public V2InventoryJobExecution.Step tick(long clientTick, BooleanSupplier outputAllowed) {
-        if (failure != null) return V2InventoryJobExecution.Step.FAILED;
+    public V2OperationJobExecution.Step tick(long clientTick, BooleanSupplier outputAllowed) {
+        if (failure != null) return V2OperationJobExecution.Step.FAILED;
         if (!outputAllowed.getAsBoolean() || !sessionId.equals(sessions.get().worldSessionId())) {
             return fail("storage_context_changed");
         }
@@ -81,9 +81,9 @@ final class MinecraftV2StorageDriver implements V2InventoryJobExecution.Driver {
             } else if (confirmedCount != request.count() || uncertain) {
                 return fail("storage_quantity_not_confirmed");
             }
-            return V2InventoryJobExecution.Step.CONFIRMED;
+            return V2OperationJobExecution.Step.CONFIRMED;
         }
-        return V2InventoryJobExecution.Step.RUNNING;
+        return V2OperationJobExecution.Step.RUNNING;
     }
 
     static List<Map<String, Object>> filteredContents(Map<String, Object> inspection, String item) {
@@ -138,9 +138,9 @@ final class MinecraftV2StorageDriver implements V2InventoryJobExecution.Driver {
         }
     }
 
-    private V2InventoryJobExecution.Step fail(String reason) {
+    private V2OperationJobExecution.Step fail(String reason) {
         failure = reason;
-        return V2InventoryJobExecution.Step.FAILED;
+        return V2OperationJobExecution.Step.FAILED;
     }
 
     @Override

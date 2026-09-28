@@ -13,7 +13,7 @@ import java.util.UUID;
 import java.util.function.BooleanSupplier;
 
 /** One delivery-gated block job over a bounded box, with one input owner. */
-final class V2BlockJobExecution<R extends V2BlockWorkRequest> {
+final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobExecution {
     private static final int MAX_OBSERVATION_WAIT_TICKS = 80;
     private static final long MAX_WALL_NANOS = Duration.ofMinutes(2).toNanos();
     private static final int MAX_RETAINED_CONFIRMED_CELLS = 128;
@@ -57,7 +57,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> {
         }
     }
 
-    AgentJobStore.Snapshot tick(UUID currentWorldSessionId, long clientTick,
+    public AgentJobStore.Snapshot tick(UUID currentWorldSessionId, long clientTick,
             long nowNanos, boolean safe, BooleanSupplier outputAllowed) {
         var job = jobs.get(actionId);
         if (job.state().terminal()) return job;
@@ -164,7 +164,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> {
         }
     }
 
-    AgentJobStore.Snapshot cancel() {
+    public AgentJobStore.Snapshot cancel() {
         var job = jobs.get(actionId);
         if (job.state().terminal()) return job;
         jobs.requestCancel(actionId);
@@ -175,7 +175,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> {
         return publishAfterRelease();
     }
 
-    AgentJobStore.Snapshot stop(String reason) {
+    public AgentJobStore.Snapshot stop(String reason) {
         if (!Objects.requireNonNull(reason, "reason").matches("[a-z0-9_]{1,128}")) {
             throw new IllegalArgumentException("invalid stop reason");
         }

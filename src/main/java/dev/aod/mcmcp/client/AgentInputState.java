@@ -40,6 +40,7 @@ public final class AgentInputState {
     private long attackValidUntilNanos;
     private boolean useOwned;
     private boolean useSuppressed;
+    private boolean useRestartSuppressed;
     private boolean useExpiryRequired;
     private long useValidUntilNanos;
     private boolean pickOwned;
@@ -385,6 +386,7 @@ public final class AgentInputState {
     }
 
     public synchronized void publishUse(long validUntilNanos) {
+        if (!useOwned) useRestartSuppressed = false;
         useOwned = true;
         useSuppressed = false;
         useExpiryRequired = true;
@@ -394,6 +396,7 @@ public final class AgentInputState {
     public synchronized void releaseUse() {
         useOwned = false;
         useSuppressed = false;
+        useRestartSuppressed = false;
         useExpiryRequired = false;
         useValidUntilNanos = 0L;
     }
@@ -475,6 +478,16 @@ public final class AgentInputState {
     public synchronized boolean useActive() {
         expireButtonsIfNeeded(System.nanoTime());
         return useOwned && !useSuppressed && !paused;
+    }
+
+    /** Keep an already-started item held without triggering another use when it finishes. */
+    public synchronized void suppressUseRestart() {
+        if (!useOwned) throw new IllegalStateException("single use requires an owned lease");
+        useRestartSuppressed = true;
+    }
+
+    public synchronized boolean useMayStart() {
+        return useActive() && !useRestartSuppressed;
     }
 
     public synchronized boolean pickActive() {

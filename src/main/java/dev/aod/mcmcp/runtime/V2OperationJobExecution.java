@@ -8,21 +8,22 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 
-/** One delivery-gated inventory job, retaining partial effects through cancellation. */
-final class V2InventoryJobExecution {
+/** One delivery-gated inventory or interaction job, retaining partial effects through cancellation. */
+final class V2OperationJobExecution implements V2JobExecution {
     private static final long MAX_WALL_NANOS = Duration.ofMinutes(2).toNanos();
 
     private final AgentJobStore jobs;
     private final UUID actionId;
     private final UUID worldSessionId;
     private final Driver driver;
+    private final String operation;
     private final BooleanSupplier releaseAndVerify;
     private boolean begun;
     private long startedNanos = Long.MIN_VALUE;
     private AgentJobStore.State terminalIntent;
     private String terminalFailure;
 
-    V2InventoryJobExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
+    V2OperationJobExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
             Driver driver, BooleanSupplier releaseAndVerify) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.actionId = Objects.requireNonNull(actionId, "actionId");
@@ -30,13 +31,15 @@ final class V2InventoryJobExecution {
         this.driver = Objects.requireNonNull(driver, "driver");
         this.releaseAndVerify = Objects.requireNonNull(releaseAndVerify, "releaseAndVerify");
         var job = jobs.get(actionId);
-        if (job.kind() != AgentJobStore.Kind.INVENTORY
+        operation = job.kind() == AgentJobStore.Kind.INVENTORY ? "inventory" : "interaction";
+        if ((job.kind() != AgentJobStore.Kind.INVENTORY
+                && job.kind() != AgentJobStore.Kind.INTERACT)
                 || !job.worldSessionId().equals(worldSessionId)) {
-            throw new IllegalArgumentException("inventory job does not match its session");
+            throw new IllegalArgumentException("operation job does not match its session");
         }
     }
 
-    AgentJobStore.Snapshot tick(UUID currentSession, long clientTick, long nowNanos,
+    public AgentJobStore.Snapshot tick(UUID currentSession, long clientTick, long nowNanos,
             boolean safe, BooleanSupplier outputAllowed) {
         var job = jobs.get(actionId);
         if (job.state().terminal()) return job;
@@ -79,16 +82,16 @@ final class V2InventoryJobExecution {
             if (step == Step.CONFIRMED) {
                 retainTerminal(AgentJobStore.State.SUCCEEDED, null);
             } else if (step == Step.FAILED) {
-                retainTerminal(AgentJobStore.State.FAILED, "inventory_not_confirmed");
+                retainTerminal(AgentJobStore.State.FAILED, operation + "_not_confirmed");
             }
         } catch (RuntimeException | LinkageError failure) {
             try { captureResult(); } catch (RuntimeException | LinkageError ignored) { }
-            retainTerminal(AgentJobStore.State.FAILED, "inventory_runtime_failed");
+            retainTerminal(AgentJobStore.State.FAILED, operation + "_runtime_failed");
         }
         return terminalIntent == null ? jobs.get(actionId) : publishAfterRelease();
     }
 
-    AgentJobStore.Snapshot cancel() {
+    public AgentJobStore.Snapshot cancel() {
         var job = jobs.get(actionId);
         if (job.state().terminal()) return job;
         jobs.requestCancel(actionId);
@@ -97,7 +100,7 @@ final class V2InventoryJobExecution {
         return publishAfterRelease();
     }
 
-    AgentJobStore.Snapshot stop(String reason) {
+    public AgentJobStore.Snapshot stop(String reason) {
         if (!Objects.requireNonNull(reason, "reason").matches("[a-z0-9_]{1,128}")) {
             throw new IllegalArgumentException("invalid stop reason");
         }
@@ -147,7 +150,7 @@ final class V2InventoryJobExecution {
 
     enum Step { RUNNING, CONFIRMED, FAILED }
 
-    boolean allowsScreenChange() { return begun && driver.allowsScreenChange(); }
+    public boolean allowsScreenChange() { return begun && driver.allowsScreenChange(); }
 
     interface Driver {
         void begin(long clientTick, BooleanSupplier outputAllowed);

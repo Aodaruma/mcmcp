@@ -27,7 +27,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 /** Local approach followed by the shared owned-menu open/transfer/readback/release cycle. */
-final class MinecraftV2ContainerDriver implements V2InventoryJobExecution.Driver {
+final class MinecraftV2ContainerDriver implements V2OperationJobExecution.Driver {
     private static final int MAX_EVIDENCE_WAIT_TICKS = 80;
     private final Minecraft minecraft;
     private final Supplier<WorldSessionTracker.Snapshot> sessions;
@@ -81,8 +81,8 @@ final class MinecraftV2ContainerDriver implements V2InventoryJobExecution.Driver
     }
 
     @Override
-    public V2InventoryJobExecution.Step tick(long clientTick, BooleanSupplier outputAllowed) {
-        if (failure != null) return V2InventoryJobExecution.Step.FAILED;
+    public V2OperationJobExecution.Step tick(long clientTick, BooleanSupplier outputAllowed) {
+        if (failure != null) return V2OperationJobExecution.Step.FAILED;
         var session = sessions.get();
         if (!outputAllowed.getAsBoolean() || !session.worldReady()
                 || !target.dimension().equals(session.dimension())
@@ -112,9 +112,9 @@ final class MinecraftV2ContainerDriver implements V2InventoryJobExecution.Driver
                 } else if (confirmedCount != request.count() || uncertain) {
                     return fail("container_quantity_not_confirmed");
                 }
-                return V2InventoryJobExecution.Step.CONFIRMED;
+                return V2OperationJobExecution.Step.CONFIRMED;
             }
-            return V2InventoryJobExecution.Step.RUNNING;
+            return V2OperationJobExecution.Step.RUNNING;
         }
         var map = observations.requireAgentMap(session);
         if (navigation.active()) {
@@ -129,14 +129,14 @@ final class MinecraftV2ContainerDriver implements V2InventoryJobExecution.Driver
                 waitingEvidence = map.edges();
                 evidenceWaitTicks = 0;
             }
-            return V2InventoryJobExecution.Step.RUNNING;
+            return V2OperationJobExecution.Step.RUNNING;
         }
-        if (prepare(session, clientTick)) return V2InventoryJobExecution.Step.RUNNING;
-        if (failure != null) return V2InventoryJobExecution.Step.FAILED;
+        if (prepare(session, clientTick)) return V2OperationJobExecution.Step.RUNNING;
+        if (failure != null) return V2OperationJobExecution.Step.FAILED;
         if (!request.advance() || request.maxDistance() == 0
                 || waitingEvidence != null && waitingEvidence.equals(map.edges())) {
             return ++evidenceWaitTicks <= MAX_EVIDENCE_WAIT_TICKS
-                    ? V2InventoryJobExecution.Step.RUNNING : fail("container_target_not_observed");
+                    ? V2OperationJobExecution.Step.RUNNING : fail("container_target_not_observed");
         }
         var plan = planner.plan(map, ActionPlanning.playerCell(player, session.dimension()),
                 session.worldSessionId(), map.worldRevision(), CoordinateGoalPlanner.Budget.DEFAULT,
@@ -145,12 +145,12 @@ final class MinecraftV2ContainerDriver implements V2InventoryJobExecution.Driver
             case KNOWN_GOAL_ROUTE, PARTIAL_WAYPOINT -> {
                 navigation.beginNavigate(plan.route().orElseThrow(), 0.35D);
                 waitingEvidence = null;
-                yield V2InventoryJobExecution.Step.RUNNING;
+                yield V2OperationJobExecution.Step.RUNNING;
             }
             case BLOCKED, REACHED_KNOWN_GOAL -> {
                 waitingEvidence = map.edges();
                 evidenceWaitTicks = 0;
-                yield V2InventoryJobExecution.Step.RUNNING;
+                yield V2OperationJobExecution.Step.RUNNING;
             }
             case LIMIT, CANCELLED, STALE_MAP, WORLD_MISMATCH -> fail("container_approach_unavailable");
         };
@@ -241,8 +241,8 @@ final class MinecraftV2ContainerDriver implements V2InventoryJobExecution.Driver
         }
     }
 
-    private V2InventoryJobExecution.Step fail(String reason) {
+    private V2OperationJobExecution.Step fail(String reason) {
         failure = reason;
-        return V2InventoryJobExecution.Step.FAILED;
+        return V2OperationJobExecution.Step.FAILED;
     }
 }

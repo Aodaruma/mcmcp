@@ -1702,85 +1702,124 @@
     {
       "name": "agent_interact",
       "title": "Interact with Block",
-      "description": "Uses a block once or over a filtered signed inclusive box, then confirms a server-side block-state change. Menu, entity, and item interactions are not yet supported in this draft.",
+      "description": "Uses a block or held item. Block use confirms a server-side state change, with optional range and approach. Item use selects the requested inventory item (or current hand), holds once, and waits for server processing; result_item optionally requires a selected-slot postcondition. Item-specific world effects are only reported as confirmed when observed. Entity and menu handlers remain pending.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "target": {
-            "const": "block"
-          },
-          "x": {
-            "type": "integer"
-          },
-          "y": {
-            "type": "integer"
-          },
-          "z": {
-            "type": "integer"
-          },
-          "dx": {
-            "type": "integer"
-          },
-          "dy": {
-            "type": "integer"
-          },
-          "dz": {
-            "type": "integer"
-          },
-          "block": {
-            "type": "string",
-            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
-            "maxLength": 128
-          },
-          "item": {
-            "type": "string",
-            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
-            "maxLength": 128
-          },
-          "expected_after_block": {
-            "type": "string",
-            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
-            "maxLength": 128
-          },
-          "expected_after_properties": {
+        "oneOf": [
+          {
             "type": "object",
-            "maxProperties": 32,
-            "propertyNames": {
-              "pattern": "^[a-z0-9_]{1,64}$"
+            "additionalProperties": false,
+            "properties": {
+              "target": {
+                "const": "block"
+              },
+              "x": {
+                "type": "integer"
+              },
+              "y": {
+                "type": "integer"
+              },
+              "z": {
+                "type": "integer"
+              },
+              "dx": {
+                "type": "integer"
+              },
+              "dy": {
+                "type": "integer"
+              },
+              "dz": {
+                "type": "integer"
+              },
+              "block": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "expected_after_block": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "expected_after_properties": {
+                "type": "object",
+                "maxProperties": 32,
+                "propertyNames": {
+                  "pattern": "^[a-z0-9_]{1,64}$"
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9_./-]+$"
+                }
+              },
+              "max_interactions": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4096
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1200
+              },
+              "max_distance": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 256
+              },
+              "advance": {
+                "type": "boolean"
+              }
             },
-            "additionalProperties": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 64,
-              "pattern": "^[a-z0-9_./-]+$"
-            }
+            "required": [
+              "target",
+              "x",
+              "y",
+              "z"
+            ]
           },
-          "max_interactions": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 4096
-          },
-          "max_ticks": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 1200
-          },
-          "max_distance": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 256
-          },
-          "advance": {
-            "type": "boolean"
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "target": {
+                "const": "item"
+              },
+              "item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "result_item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128,
+                "description": "Optional postcondition: require a fresh server-confirmed item ID in the selected slot after use."
+              },
+              "hold_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000,
+                "default": 40
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 1200,
+                "description": "Must exceed hold_ticks. Default is max(200, hold_ticks+80)."
+              }
+            },
+            "required": [
+              "target"
+            ]
           }
-        },
-        "required": [
-          "target",
-          "x",
-          "y",
-          "z"
         ]
       },
       "outputSchema": {

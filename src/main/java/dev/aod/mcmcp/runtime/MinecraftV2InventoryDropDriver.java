@@ -16,7 +16,7 @@ import java.util.UUID;
 import java.util.function.BooleanSupplier;
 
 /** Drops one confirmed stack quantity, never retrying an uncertain packet. */
-final class MinecraftV2InventoryDropDriver implements V2InventoryJobExecution.Driver {
+final class MinecraftV2InventoryDropDriver implements V2OperationJobExecution.Driver {
     private static final int ACK_TIMEOUT_TICKS = 80;
 
     private final Minecraft minecraft;
@@ -101,24 +101,24 @@ final class MinecraftV2InventoryDropDriver implements V2InventoryJobExecution.Dr
     }
 
     @Override
-    public V2InventoryJobExecution.Step tick(long clientTick, BooleanSupplier outputAllowed) {
-        if (stage == Stage.FAILED || stage == Stage.NEW) return V2InventoryJobExecution.Step.FAILED;
-        if (stage == Stage.DONE) return V2InventoryJobExecution.Step.CONFIRMED;
+    public V2OperationJobExecution.Step tick(long clientTick, BooleanSupplier outputAllowed) {
+        if (stage == Stage.FAILED || stage == Stage.NEW) return V2OperationJobExecution.Step.FAILED;
+        if (stage == Stage.DONE) return V2OperationJobExecution.Step.CONFIRMED;
         if (!outputAllowed.getAsBoolean() || minecraft.player != player || minecraft.level != level
                 || player.containerMenu != player.inventoryMenu
                 || !player.inventoryMenu.getCarried().isEmpty()
                 || player.getInventory().getSelectedSlot() != selectedSlot) {
             fail("inventory_context_changed");
-            return V2InventoryJobExecution.Step.FAILED;
+            return V2OperationJobExecution.Step.FAILED;
         }
         if (stage == Stage.STAGING) {
             var result = staging.poll(session, clientTick);
-            if (result == V2InventorySwap.Result.WAITING) return V2InventoryJobExecution.Step.RUNNING;
+            if (result == V2InventorySwap.Result.WAITING) return V2OperationJobExecution.Step.RUNNING;
             staging.close();
             staging = null;
             if (result != V2InventorySwap.Result.CONFIRMED) {
                 fail("swap_not_confirmed");
-                return V2InventoryJobExecution.Step.FAILED;
+                return V2OperationJobExecution.Step.FAILED;
             }
             stage = Stage.READY;
         }
@@ -129,27 +129,27 @@ final class MinecraftV2InventoryDropDriver implements V2InventoryJobExecution.Dr
                 if (!StackFingerprint.fromServerPacket(
                         player.getInventory().getItem(selectedSlot)).equals(expected)) {
                     fail("drop_local_server_mismatch");
-                    return V2InventoryJobExecution.Step.FAILED;
+                    return V2OperationJobExecution.Step.FAILED;
                 }
                 confirmedCount += inFlightCount;
                 inFlightCount = 0;
                 expected = null;
                 if (confirmedCount == request.count()) {
                     stage = Stage.DONE;
-                    return V2InventoryJobExecution.Step.CONFIRMED;
+                    return V2OperationJobExecution.Step.CONFIRMED;
                 }
                 stage = Stage.READY;
             } else if (clientTick - dispatchedTick > ACK_TIMEOUT_TICKS) {
                 fail("drop_ack_timeout");
-                return V2InventoryJobExecution.Step.FAILED;
+                return V2OperationJobExecution.Step.FAILED;
             } else {
-                return V2InventoryJobExecution.Step.RUNNING;
+                return V2OperationJobExecution.Step.RUNNING;
             }
         }
         return dispatch(clientTick, outputAllowed);
     }
 
-    private V2InventoryJobExecution.Step dispatch(long clientTick,
+    private V2OperationJobExecution.Step dispatch(long clientTick,
             BooleanSupplier outputAllowed) {
         var before = StackFingerprint.fromServerPacket(
                 player.getInventory().getItem(selectedSlot));
@@ -157,7 +157,7 @@ final class MinecraftV2InventoryDropDriver implements V2InventoryJobExecution.Dr
         if (!request.itemId().equals(before.itemId()) || before.count() < remaining
                 || !outputAllowed.getAsBoolean()) {
             fail("drop_source_changed");
-            return V2InventoryJobExecution.Step.FAILED;
+            return V2OperationJobExecution.Step.FAILED;
         }
         boolean entireStack = before.count() == remaining;
         inFlightCount = entireStack ? remaining : 1;
@@ -170,13 +170,13 @@ final class MinecraftV2InventoryDropDriver implements V2InventoryJobExecution.Dr
         try {
             if (!player.drop(entireStack)) {
                 fail("drop_send_uncertain");
-                return V2InventoryJobExecution.Step.FAILED;
+                return V2OperationJobExecution.Step.FAILED;
             }
         } catch (RuntimeException | LinkageError sendFailure) {
             fail("drop_send_uncertain");
-            return V2InventoryJobExecution.Step.FAILED;
+            return V2OperationJobExecution.Step.FAILED;
         }
-        return V2InventoryJobExecution.Step.RUNNING;
+        return V2OperationJobExecution.Step.RUNNING;
     }
 
     @Override

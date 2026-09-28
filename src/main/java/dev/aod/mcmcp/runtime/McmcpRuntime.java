@@ -165,8 +165,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private CoordinateMoveJobExecution v2MoveExecution;
     private V2BlockJobExecution<V2BreakArguments> v2BreakExecution;
     private V2BlockJobExecution<V2PlaceArguments> v2PlaceExecution;
-    private V2BlockJobExecution<V2BlockInteractArguments> v2InteractExecution;
-    private V2InventoryJobExecution v2InventoryExecution;
+    private V2JobExecution v2InteractExecution;
+    private V2OperationJobExecution v2InventoryExecution;
     private ScriptJobExecution scriptExecution;
     private Object v2InventoryPlayerIdentity;
     private Object v2InventoryLevelIdentity;
@@ -1712,7 +1712,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             actionId = v2Jobs.reserve(AgentJobStore.Kind.INVENTORY,
                     session.worldSessionId(), request.maxTicks(),
                     System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS);
-            V2InventoryJobExecution.Driver driver = switch (request) {
+            V2OperationJobExecution.Driver driver = switch (request) {
                 case V2InventoryDropArguments drop -> new MinecraftV2InventoryDropDriver(
                         minecraft, session.worldSessionId(), drop);
                 case V2InventorySwapArguments swap -> new MinecraftV2InventorySwapDriver(
@@ -1725,7 +1725,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 case V2InventoryStorageArguments storage -> new MinecraftV2StorageDriver(
                         minecraft, sessions::snapshot, knownStorageRefs, knownMenuPort, storage);
             };
-            v2InventoryExecution = new V2InventoryJobExecution(v2Jobs, actionId,
+            v2InventoryExecution = new V2OperationJobExecution(v2Jobs, actionId,
                     session.worldSessionId(), driver, () -> {
                         boolean released = boundedActionInputRelease(
                                 () -> releaseAllAndConfirmNoInputOwner(minecraft));
@@ -1747,16 +1747,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 "state", "queued");
     }
 
-    private static V2InventoryJobExecution.Driver inventoryInspectDriver(
+    private static V2OperationJobExecution.Driver inventoryInspectDriver(
             Minecraft minecraft, V2InventoryInspectArguments request) {
-        return new V2InventoryJobExecution.Driver() {
+        return new V2OperationJobExecution.Driver() {
                 private Map<String, Object> result = Map.of();
 
                 @Override
                 public void begin(long clientTick, BooleanSupplier outputAllowed) { }
 
                 @Override
-                public V2InventoryJobExecution.Step tick(
+                public V2OperationJobExecution.Step tick(
                         long clientTick, BooleanSupplier outputAllowed) {
                     var inventory = minecraft.player.getInventory();
                     var stacks = new ArrayList<ContainerSyncSignals.StackFingerprint>(
@@ -1767,7 +1767,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     }
                     result = V2InventoryReadback.capture(
                             stacks, inventory.getSelectedSlot(), request);
-                    return V2InventoryJobExecution.Step.CONFIRMED;
+                    return V2OperationJobExecution.Step.CONFIRMED;
                 }
 
                 @Override
@@ -1909,7 +1909,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             Map<String, Object> arguments, RuntimeCallContext context) {
         assertClientThread(minecraft);
         RuntimeFailures.requireReady(session);
-        var request = V2BlockInteractArguments.parse(arguments, session.dimension());
+        var itemUse = "item".equals(arguments.get("target"))
+                ? V2ItemUseArguments.parse(arguments) : null;
+        var request = itemUse == null
+                ? V2BlockInteractArguments.parse(arguments, session.dimension()) : null;
+        int maxTicks = itemUse == null ? request.maxTicks() : itemUse.maxTicks();
+        double maxDistance = itemUse == null ? request.maxDistance() : 64.0D;
         if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
                 || endpointFaultCode != null || !multiplayerPolicyAllows(minecraft)
                 || !v2InputWorldSafe(minecraft, session)) {
@@ -1936,18 +1941,24 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         try {
             requireLiveCall(context, "agent_interact");
             actionId = v2Jobs.reserve(AgentJobStore.Kind.INTERACT, session.worldSessionId(),
-                    request.maxTicks(), System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS);
-            var driver = new MinecraftV2BlockInteractDriver(minecraft, sessions::snapshot,
-                    agentObservations, reconciliationSignals, ClientPredictionSignals.global(),
-                    () -> v2InteractMaxDistance - v2InteractTravelled);
-            v2InteractExecution = new V2BlockJobExecution<>(v2Jobs, actionId,
-                    session.worldSessionId(), AgentJobStore.Kind.INTERACT,
-                    request, driver, () -> {
-                        boolean released = boundedActionInputRelease(
-                                () -> releaseAllAndConfirmNoInputOwner(minecraft));
-                        if (!released) arming.lock("v2_interact_release_failed");
-                        return released;
-                    });
+                    maxTicks, System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS);
+            BooleanSupplier release = () -> {
+                boolean released = boundedActionInputRelease(
+                        () -> releaseAllAndConfirmNoInputOwner(minecraft));
+                if (!released) arming.lock("v2_interact_release_failed");
+                return released;
+            };
+            if (itemUse != null) {
+                v2InteractExecution = new V2OperationJobExecution(v2Jobs, actionId,
+                        session.worldSessionId(), new MinecraftV2ItemUseDriver(
+                                minecraft, session.worldSessionId(), itemUse), release);
+            } else {
+                var driver = new MinecraftV2BlockInteractDriver(minecraft, sessions::snapshot,
+                        agentObservations, reconciliationSignals, ClientPredictionSignals.global(),
+                        () -> v2InteractMaxDistance - v2InteractTravelled);
+                v2InteractExecution = new V2BlockJobExecution<>(v2Jobs, actionId,
+                        session.worldSessionId(), AgentJobStore.Kind.INTERACT, request, driver, release);
+            }
             v2InteractPlayerIdentity = minecraft.player;
             v2InteractLevelIdentity = minecraft.level;
             v2InteractControlEpoch = arming.snapshot(session.worldSessionId()).controlEpoch();
@@ -1955,7 +1966,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     + minecraft.player.getAbsorptionAmount();
             v2InteractLastPosition = minecraft.player.position();
             v2InteractTravelled = 0.0D;
-            v2InteractMaxDistance = request.maxDistance();
+            v2InteractMaxDistance = maxDistance;
             requireLiveCall(context, "agent_interact");
         } catch (RuntimeException | LinkageError failure) {
             if (actionId != null) v2Jobs.abandon(actionId);

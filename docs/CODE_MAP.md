@@ -117,7 +117,7 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 
 Batchは確認済み状態だけを更新し、click自体はportが発行します。ACK前に次のsourceを選び直したり、未知結果のclickを再送したりしません。公開結果へのeffect回収、readback後の成功判定、cleanup完了までの画面所有はportの責務です。policyクラスへMinecraft操作やattempt状態を追加しないでください。
 
-現在開いている対応収納は `runtime/KnownMenuProfileSupport` が画面・slot構成とserver同期の一致を確認し、`KnownMenuOperationRefs` が操作参照を発行します。`routine/MinecraftKnownMenuPort` は通常QUICK_MOVEに加え、`StorageAccess`／`KnownStorageRefs`による所持収納の発見・個体照合・開封と、`ExactInventoryTransfer`の両方向数量移送・再開封・終了確認を担当します。MOD固有の開封・同期契約はprovider／profileへ分け、転送本体を共有します。v2の`agent_inventory(target:"storage")`は`MinecraftV2StorageDriver`、座標収納は`MinecraftV2ContainerDriver`が既存の共通処理へ接続し、`V2InventoryJobExecution`が配送確認・進行・取消・解放後の結果を保持します。現在の対応範囲と未検証事項は[公開API v2](PUBLIC_API_V2.md)を参照してください。
+現在開いている対応収納は `runtime/KnownMenuProfileSupport` が画面・slot構成とserver同期の一致を確認し、`KnownMenuOperationRefs` が操作参照を発行します。`routine/MinecraftKnownMenuPort` は通常QUICK_MOVEに加え、`StorageAccess`／`KnownStorageRefs`による所持収納の発見・個体照合・開封と、`ExactInventoryTransfer`の両方向数量移送・再開封・終了確認を担当します。MOD固有の開封・同期契約はprovider／profileへ分け、転送本体を共有します。v2の`agent_inventory(target:"storage")`は`MinecraftV2StorageDriver`、座標収納は`MinecraftV2ContainerDriver`が既存の共通処理へ接続し、`V2OperationJobExecution`が配送確認・進行・取消・解放後の結果を保持します。現在の対応範囲と未検証事項は[公開API v2](PUBLIC_API_V2.md)を参照してください。
 
 `MinecraftPhaseFiveInventoryPortTest`はportと各方針の接続・順序を検査し、独立したslot/batch試験は対応する小さなテストファイルで実行します。`./gradlew test --tests '*Inventory*Test'`でまとめて確認できます。照準の共通解析を変える場合は、呼出元のBrewing/Furnaceの契約試験も実行してください。
 
@@ -155,3 +155,5 @@ capability gateの入口は `Invoke-Mcmcp*CapabilityGate.ps1` です。共通支
 ## 平面施工の保存・再開
 
 外部runnerは tools/building/Invoke-McmcpBuilding.ps1、行列と原子的checkpointは McmcpBuildingLedger.ps1。公開Toolと tools/mcp/McmcpClient.ps1 のschema検証を再利用する。対応試験は Test-McmcpBuilding.ps1 と Test-McmcpBuildingRecovery.ps1。ゲーム内の入力・設置・server確認は既存primitiveが所有する。
+
+手持ちitemのv2使用は`V2ItemUseArguments`／`MinecraftV2ItemUseDriver`が扱い、`V2OperationJobExecution`をinventoryと共有します。`V2JobExecution`がblock実行器との取消境界を揃えます。`AgentInputState.suppressUseRestart`は一度始めた長押しの自動再使用を防ぎ、`MultiPlayerGameModeUseMixin`は有効なAgent USE leaseがある間だけ物理キー由来の解除を抑えます。

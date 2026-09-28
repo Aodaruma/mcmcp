@@ -3,6 +3,8 @@ package dev.aod.mcmcp.runtime;
 import dev.aod.mcmcp.agent.action.AgentJobStore;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -36,14 +38,15 @@ class V2InventoryInspectExecutionTest {
                 "operation", "transfer"))).isInstanceOf(IllegalArgumentException.class);
     }
 
-    @Test
-    void readbackWaitsForDeliveryAndRetainsResultAfterRelease() {
+    @ParameterizedTest
+    @EnumSource(value = AgentJobStore.Kind.class, names = {"INVENTORY", "INTERACT"})
+    void readbackWaitsForDeliveryAndRetainsResultAfterRelease(AgentJobStore.Kind kind) {
         var jobs = new AgentJobStore();
         var session = UUID.randomUUID();
-        var id = jobs.reserve(AgentJobStore.Kind.INVENTORY, session, 1, 100);
+        var id = jobs.reserve(kind, session, 1, 100);
         var calls = new AtomicInteger();
         var releaseAttempts = new AtomicInteger();
-        var execution = new V2InventoryJobExecution(jobs, id, session,
+        var execution = new V2OperationJobExecution(jobs, id, session,
                 new StubDriver(calls, Map.of("slots", 2)),
                 () -> releaseAttempts.incrementAndGet() >= 2);
         assertThat(execution.tick(session, 1, 1, true, () -> true).state())
@@ -59,21 +62,22 @@ class V2InventoryInspectExecutionTest {
         assertThat(calls).hasValue(1);
     }
 
-    @Test
-    void cancellationAndUnsafeWorldNeverReadInventory() {
+    @ParameterizedTest
+    @EnumSource(value = AgentJobStore.Kind.class, names = {"INVENTORY", "INTERACT"})
+    void cancellationAndUnsafeWorldNeverReadInventory(AgentJobStore.Kind kind) {
         var jobs = new AgentJobStore();
         var session = UUID.randomUUID();
-        var id = jobs.reserve(AgentJobStore.Kind.INVENTORY, session, 1, 100);
+        var id = jobs.reserve(kind, session, 1, 100);
         var calls = new AtomicInteger();
-        var execution = new V2InventoryJobExecution(jobs, id, session,
+        var execution = new V2OperationJobExecution(jobs, id, session,
                 new StubDriver(calls, Map.of()), () -> true);
         jobs.confirm(id, 2);
         assertThat(execution.tick(UUID.randomUUID(), 3, 3, true, () -> true).state())
                 .isEqualTo(AgentJobStore.State.FAILED);
         assertThat(calls).hasValue(0);
 
-        var second = jobs.reserve(AgentJobStore.Kind.INVENTORY, session, 1, 100);
-        var cancelled = new V2InventoryJobExecution(jobs, second, session,
+        var second = jobs.reserve(kind, session, 1, 100);
+        var cancelled = new V2OperationJobExecution(jobs, second, session,
                 new StubDriver(calls, Map.of()), () -> true);
         jobs.confirm(second, 2);
         assertThat(cancelled.cancel().state()).isEqualTo(AgentJobStore.State.CANCELLED);
@@ -85,15 +89,15 @@ class V2InventoryInspectExecutionTest {
         var jobs = new AgentJobStore();
         var session = UUID.randomUUID();
         var id = jobs.reserve(AgentJobStore.Kind.INVENTORY, session, 12, 100);
-        var execution = new V2InventoryJobExecution(jobs, id, session,
-                new V2InventoryJobExecution.Driver() {
+        var execution = new V2OperationJobExecution(jobs, id, session,
+                new V2OperationJobExecution.Driver() {
                     @Override
                     public void begin(long clientTick, BooleanSupplier allowed) { }
 
                     @Override
-                    public V2InventoryJobExecution.Step tick(
+                    public V2OperationJobExecution.Step tick(
                             long clientTick, BooleanSupplier allowed) {
-                        return V2InventoryJobExecution.Step.RUNNING;
+                        return V2OperationJobExecution.Step.RUNNING;
                     }
 
                     @Override
@@ -113,23 +117,24 @@ class V2InventoryInspectExecutionTest {
                 .containsEntry("unconfirmed_count", 1);
     }
 
-    @Test
-    void cancellationCapturesCleanupEffectsEvenWhenMenuReleaseNeedsAnotherTick() {
+    @ParameterizedTest
+    @EnumSource(value = AgentJobStore.Kind.class, names = {"INVENTORY", "INTERACT"})
+    void cancellationCapturesCleanupEffectsEvenWhenMenuReleaseNeedsAnotherTick(AgentJobStore.Kind kind) {
         var jobs = new AgentJobStore();
         var session = UUID.randomUUID();
-        var id = jobs.reserve(AgentJobStore.Kind.INVENTORY, session, 100, 100);
+        var id = jobs.reserve(kind, session, 100, 100);
         var closes = new AtomicInteger();
         var ticks = new AtomicInteger();
         var released = new AtomicInteger();
-        var execution = new V2InventoryJobExecution(jobs, id, session,
-                new V2InventoryJobExecution.Driver() {
+        var execution = new V2OperationJobExecution(jobs, id, session,
+                new V2OperationJobExecution.Driver() {
                     @Override
                     public void begin(long clientTick, BooleanSupplier allowed) { }
 
                     @Override
-                    public V2InventoryJobExecution.Step tick(long clientTick, BooleanSupplier allowed) {
+                    public V2OperationJobExecution.Step tick(long clientTick, BooleanSupplier allowed) {
                         ticks.incrementAndGet();
-                        return V2InventoryJobExecution.Step.RUNNING;
+                        return V2OperationJobExecution.Step.RUNNING;
                     }
 
                     @Override
@@ -161,7 +166,7 @@ class V2InventoryInspectExecutionTest {
         assertThat(released).hasValue(1);
     }
 
-    private static final class StubDriver implements V2InventoryJobExecution.Driver {
+    private static final class StubDriver implements V2OperationJobExecution.Driver {
         private final AtomicInteger calls;
         private final Map<String, Object> captured;
         private Map<String, Object> result = Map.of();
@@ -175,11 +180,11 @@ class V2InventoryInspectExecutionTest {
         public void begin(long clientTick, BooleanSupplier outputAllowed) { }
 
         @Override
-        public V2InventoryJobExecution.Step tick(
+        public V2OperationJobExecution.Step tick(
                 long clientTick, BooleanSupplier outputAllowed) {
             calls.incrementAndGet();
             result = captured;
-            return V2InventoryJobExecution.Step.CONFIRMED;
+            return V2OperationJobExecution.Step.CONFIRMED;
         }
 
         @Override

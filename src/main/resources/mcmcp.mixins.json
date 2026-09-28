@@ -23,6 +23,7 @@
     "client.MinecraftAttackInputMixin",
     "client.MinecraftPickInvoker",
     "client.MinecraftUseItemInvoker",
+    "client.MultiPlayerGameModeUseMixin",
     "client.MouseHandlerMixin"
   ],
   "injectors": {

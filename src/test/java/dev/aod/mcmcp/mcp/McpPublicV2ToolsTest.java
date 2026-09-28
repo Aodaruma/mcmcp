@@ -88,6 +88,20 @@ class McpPublicV2ToolsTest {
     }
 
     @Test
+    void itemUseIsPublicAndUsesTheSameInteractionReceipt() throws Exception {
+        var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();
+        var registry = registry(calls);
+        var input = JsonParser.parseString("""
+                {"target":"item","item":"example:flask","result_item":"example:empty_flask",
+                 "hold_ticks":40,"max_ticks":200}
+                """).getAsJsonObject();
+        var prepared = registry.prepareCall("agent_interact", input);
+        assertThat(prepared.response().get("isError").getAsBoolean()).isFalse();
+        assertThat(calls.getFirst()).isInstanceOf(McpRuntimePort.StartInteract.class);
+        assertThat(prepared.deliveryReceipt()).isInstanceOf(McpRuntimePort.ActionDeliveryReceipt.class);
+    }
+
+    @Test
     void inventorySwapIsPublicAndUsesTheSharedActionReceipt() throws Exception {
         var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();
         var registry = registry(calls);
