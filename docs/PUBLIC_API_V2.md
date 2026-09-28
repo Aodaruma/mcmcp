@@ -113,6 +113,8 @@ snapshotの既知の安全な停止候補を目標への直線距離、同距離
 
 `BlockWorkRegion`は破壊・設置で共用する座標範囲を保持する。`x/y/z`は始点、`dx/dy/dz`は符号付きの**終点差分**で、両端を含む。差分0は単一座標。X、Z、Yの順で安定して列挙し、最大4,096 cellと整数overflowを検査する。将来の楕円・path形状は現時点の契約に含めない。
 
+内部の`V2PlaceArguments`は同じ範囲、必須のVanilla `block`、省略可能な`item`・`properties`・`replace_blocks`と作業上限を受理する。`item`省略時はblock IDと同じitemを選ぶ。`properties`省略時は設置結果の既定stateを受け入れる。`replace_blocks`省略時はairだけを対象とし、他のblockへの置換は明示条件が必要。これらは引数検証のみで、まだゲームへの設置や公開toolには接続していない。
+
 内部の`V2BreakArguments`は未観測座標でも受け、任意の`include_blocks`／`exclude_blocks`、最大破壊数・実行tick・移動距離、`advance`を保持する。条件は新たに観測したblockへ適用する想定で、これらの引数を受理する公開ツールはまだない。`V2BreakSourcePolicy`はv1の固定許可リストから独立し、明示対象の登録済みVanilla非air blockを扱う。既存の攻撃leaseと予測確認ポートはv1ポリシーを既定として残し、v2専用インスタンスだけ新ポリシーを使える。`KnownBlockBreakAttempt`はv2向けに、期待dropなしでもサーバーACKと権威あるairへの遷移で成功を確定できる。局所rayの照準選択は、MCPへの観測配送を必須とせず、現在の視点・reach・revision・観測時刻に合う内部frameだけを使う。
 
 内部の`StartBreakBlock`は配送確認後に共通jobとして動き、範囲を順に調べる。`advance:true`なら対象がまだ見えない／届かない場合、既知の安全な経路で中間点まで接近し、新しい局所観測を待ってから次区間を検討する。未知cellへは踏み出さず、既知の経路が増えなければ有界に停止する。手の届く指定cellが空気の場合は、現在の視点からの視覚・衝突・液体rayが共に遮られず、経路上のcellがロード済みのときだけ読み飛ばす。局所rayで確認できた非air対象についてhotbarからドロップ採取可能な道具を優先し、同条件では採掘速度で選ぶ。適切な道具がなければ他の道具・空手も候補に残す。照準を合わせて通常の攻撃入力を出し、v2専用の最大600tickの攻撃lease内でサーバーACKとair遷移を確認して次の対象へ進む。v1の40tick上限は維持する。走査済みcell数と確定破壊数は取消・終了後も直前のjobまで進行結果に残す。取消・危険・world変更では入力を解放してから終了状態を確定する。公開catalogからはまだ呼び出せない。
