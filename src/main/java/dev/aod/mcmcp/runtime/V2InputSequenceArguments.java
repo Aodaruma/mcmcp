@@ -2,6 +2,7 @@ package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.input.FiniteInputSequence;
 import dev.aod.mcmcp.routine.BoundedInputLease;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -14,8 +15,9 @@ import java.util.Set;
 final class V2InputSequenceArguments {
     private V2InputSequenceArguments() { }
 
-    static FiniteInputSequence parse(Map<String, Object> arguments) {
-        RuntimeArguments.requireExactKeys(arguments, "agent_input_sequence", Set.of("steps"));
+    static Request parse(Map<String, Object> arguments) {
+        RuntimeArguments.requireAllowedKeys(arguments, "agent_input_sequence",
+                Set.of("steps", "stop_when"));
         var rawSteps = RuntimeArguments.objectListArgument(
                 arguments, "steps", 1, FiniteInputSequence.MAX_STEPS);
         var steps = new ArrayList<FiniteInputSequence.Step>(rawSteps.size());
@@ -58,6 +60,34 @@ final class V2InputSequenceArguments {
                     ? RuntimeArguments.intArgument(step, "repeat") : 1;
             steps.add(new FiniteInputSequence.Step(parsedInputs, holdTicks, gapTicks, repeat));
         }
-        return new FiniteInputSequence(steps);
+        StopWhen stopWhen = null;
+        if (arguments.containsKey("stop_when")) {
+            var condition = RuntimeArguments.objectArgument(arguments, "stop_when");
+            RuntimeArguments.requireAllowedKeys(condition, "stop_when",
+                    Set.of("x", "y", "z", "radius"));
+            if (!condition.keySet().containsAll(Set.of("x", "y", "z"))) {
+                throw new IllegalArgumentException("stop_when requires x/y/z");
+            }
+            double radius = condition.containsKey("radius")
+                    ? RuntimeArguments.doubleArgument(condition, "radius") : 0.75D;
+            if (!Double.isFinite(radius) || radius < 0.1D || radius > 16.0D) {
+                throw new IllegalArgumentException("stop_when radius must be in 0.1..16");
+            }
+            stopWhen = new StopWhen(RuntimeArguments.intArgument(condition, "x"),
+                    RuntimeArguments.intArgument(condition, "y"),
+                    RuntimeArguments.intArgument(condition, "z"), radius);
+        }
+        return new Request(new FiniteInputSequence(steps), stopWhen);
+    }
+
+    record Request(FiniteInputSequence sequence, StopWhen stopWhen) { }
+
+    record StopWhen(int x, int y, int z, double radius) {
+        boolean reached(Vec3 playerPosition) {
+            double dx = playerPosition.x - (x + 0.5D);
+            double dy = playerPosition.y - y;
+            double dz = playerPosition.z - (z + 0.5D);
+            return dx * dx + dy * dy + dz * dz <= radius * radius;
+        }
     }
 }

@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import net.minecraft.world.phys.Vec3;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -15,10 +16,29 @@ class V2InputSequenceArgumentsTest {
                 Map.of("inputs", List.of("forward", "sneak"),
                         "hold_ticks", 2, "gap_ticks", 1, "repeat", 2),
                 Map.of("inputs", List.of("use"), "hold_ticks", 1))));
-        assertThat(sequence.totalTicks()).isEqualTo(7);
+        assertThat(sequence.sequence().totalTicks()).isEqualTo(7);
         assertThat(V2InputSequenceArguments.parse(Map.of("steps", List.of(
                 Map.of("inputs", List.of("pick"), "hold_ticks", 1))))
-                .totalTicks()).isEqualTo(1);
+                .sequence().totalTicks()).isEqualTo(1);
+    }
+
+    @Test
+    void coordinateStopConditionIsBoundedAndChecksPlayerPosition() {
+        var request = V2InputSequenceArguments.parse(Map.of(
+                "steps", List.of(Map.of("inputs", List.of("forward"),
+                        "hold_ticks", 20)),
+                "stop_when", Map.of("x", 3, "y", 64, "z", -2,
+                        "radius", 0.8D)));
+        assertThat(request.stopWhen().reached(new Vec3(3.5D, 64.0D, -1.5D)))
+                .isTrue();
+        assertThat(request.stopWhen().reached(new Vec3(1.5D, 64.0D, -1.5D)))
+                .isFalse();
+        assertThatThrownBy(() -> V2InputSequenceArguments.parse(Map.of(
+                "steps", List.of(Map.of("inputs", List.of("forward"),
+                        "hold_ticks", 20)),
+                "stop_when", Map.of("x", 3, "y", 64, "z", -2,
+                        "radius", 100D))))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

@@ -42,6 +42,20 @@ class InputSequenceJobExecutionTest {
     }
 
     @Test
+    void reachedStopConditionReleasesTheHeldInputBeforeSuccess() {
+        var store = new AgentJobStore();
+        var session = UUID.randomUUID();
+        var id = store.reserve(INPUT_SEQUENCE, session, 20, 100);
+        var control = new RecordingControl();
+        var execution = execution(store, id, session, control, () -> true, 20);
+        store.confirm(id, 1);
+        assertThat(execution.tick(session, 1, 1, true, false).state()).isEqualTo(RUNNING);
+        assertThat(execution.tick(session, 2, 2, true, true).state()).isEqualTo(SUCCEEDED);
+        assertThat(store.get(id).completedOperations()).isEqualTo(1);
+        assertThat(control.events).containsExactly("publish", "release");
+    }
+
+    @Test
     void finalClickCanReleaseAfterItOpensAMenuWithoutSendingAnotherInput() {
         var store = new AgentJobStore();
         var session = UUID.randomUUID();

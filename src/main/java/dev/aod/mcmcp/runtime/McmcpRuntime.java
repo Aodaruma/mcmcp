@@ -173,6 +173,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private Object v2InputPlayerIdentity;
     private Object v2InputLevelIdentity;
     private V2ClickArguments.Target v2ClickTarget;
+    private V2InputSequenceArguments.StopWhen v2InputStopWhen;
     private long v2InputControlEpoch;
     private float v2InputHealthBaseline;
     private Vec3 v2InputLastPosition;
@@ -1352,9 +1353,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private CompletionStage<RuntimeReply> submitV2InputStart(
             StartInputSequence command, RuntimeCallContext context) {
-        final FiniteInputSequence sequence;
+        final V2InputSequenceArguments.Request request;
         try {
-            sequence = V2InputSequenceArguments.parse(command.arguments());
+            request = V2InputSequenceArguments.parse(command.arguments());
         } catch (RuntimeException | LinkageError failure) {
             return CompletableFuture.completedFuture(RuntimeFailures.mapFailure(failure));
         }
@@ -1363,8 +1364,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 command.toolName(), fence.generation(), context.deadlineNanos(),
                 () -> withEvaluationLeaseFence(context, command.toolName(), () -> {
                     var result = commitV2InputSequence(
-                            Minecraft.getInstance(), sessions.snapshot(), sequence,
-                            null, AgentJobStore.Kind.INPUT_SEQUENCE, command.toolName(), context);
+                            Minecraft.getInstance(), sessions.snapshot(), request.sequence(),
+                            null, request.stopWhen(), AgentJobStore.Kind.INPUT_SEQUENCE,
+                            command.toolName(), context);
                     return RuntimeReply.success(result, new McpRuntimePort.ActionDeliveryReceipt(
                             UUID.fromString((String) result.get("action_id"))));
                 }),
@@ -1425,7 +1427,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 () -> withEvaluationLeaseFence(context, command.toolName(), () -> {
                     var result = commitV2InputSequence(
                             Minecraft.getInstance(), sessions.snapshot(), request.sequence(),
-                            request.target(),
+                            request.target(), null,
                             AgentJobStore.Kind.CLICK, command.toolName(), context);
                     return RuntimeReply.success(result, new McpRuntimePort.ActionDeliveryReceipt(
                             UUID.fromString((String) result.get("action_id"))));
@@ -2043,6 +2045,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private Map<String, Object> commitV2InputSequence(
             Minecraft minecraft, WorldSessionTracker.Snapshot session,
             FiniteInputSequence sequence, V2ClickArguments.Target target,
+            V2InputSequenceArguments.StopWhen stopWhen,
             AgentJobStore.Kind kind,
             String toolName, RuntimeCallContext context) {
         assertClientThread(minecraft);
@@ -2092,6 +2095,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             v2InputPlayerIdentity = minecraft.player;
             v2InputLevelIdentity = minecraft.level;
             v2ClickTarget = target;
+            v2InputStopWhen = stopWhen;
             v2InputControlEpoch = arming.snapshot(session.worldSessionId()).controlEpoch();
             v2InputHealthBaseline = minecraft.player.getHealth()
                     + minecraft.player.getAbsorptionAmount();
@@ -3092,7 +3096,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
             var result = v2InputExecution.tick(
                     session.worldSessionId(), session.clientTick(), System.nanoTime(),
-                    safe, finalizationSafe, false);
+                    safe, finalizationSafe,
+                    safe && v2InputStopWhen != null
+                            && v2InputStopWhen.reached(minecraft.player.position()));
             finishV2InputIfTerminal(result);
         } catch (RuntimeException | LinkageError failure) {
             McmcpMod.LOGGER.error("MCMCP v2 input sequence failed", failure);
@@ -3544,6 +3550,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         v2InputPlayerIdentity = null;
         v2InputLevelIdentity = null;
         v2ClickTarget = null;
+        v2InputStopWhen = null;
         v2InputLastPosition = null;
         v2InputTravelled = 0.0D;
         v2InputHealthBaseline = 0.0F;
