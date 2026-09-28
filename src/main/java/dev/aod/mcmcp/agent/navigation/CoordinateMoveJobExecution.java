@@ -18,6 +18,7 @@ public final class CoordinateMoveJobExecution {
     private final UUID actionId;
     private final UUID worldSessionId;
     private final NavCell goal;
+    private final double arrivalRadius;
     private final double tolerance;
     private final double maxDistance;
     private final CoordinateGoalPlanner planner;
@@ -33,20 +34,31 @@ public final class CoordinateMoveJobExecution {
     public CoordinateMoveJobExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
                                       NavCell goal, double tolerance, double maxDistance,
                                       MovementDriver driver, BooleanSupplier releaseAndVerify) {
+        this(jobs, actionId, worldSessionId, goal, 0.0D, tolerance, maxDistance,
+                driver, releaseAndVerify);
+    }
+
+    public CoordinateMoveJobExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
+                                      NavCell goal, double arrivalRadius,
+                                      double tolerance, double maxDistance,
+                                      MovementDriver driver, BooleanSupplier releaseAndVerify) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.actionId = Objects.requireNonNull(actionId, "actionId");
         this.worldSessionId = Objects.requireNonNull(worldSessionId, "worldSessionId");
         this.goal = Objects.requireNonNull(goal, "goal");
         this.driver = Objects.requireNonNull(driver, "driver");
         this.releaseAndVerify = Objects.requireNonNull(releaseAndVerify, "releaseAndVerify");
-        if (!Double.isFinite(tolerance) || tolerance < 0.1D
+        if (!Double.isFinite(arrivalRadius) || arrivalRadius < 0.0D
+                || arrivalRadius > 16.0D
+                || !Double.isFinite(tolerance) || tolerance < 0.1D
                 || tolerance > 0.49D || !Double.isFinite(maxDistance)
                 || maxDistance < 1.0D || maxDistance > 256.0D) {
             throw new IllegalArgumentException("invalid move bounds");
         }
         this.tolerance = tolerance;
+        this.arrivalRadius = arrivalRadius;
         this.maxDistance = maxDistance;
-        this.planner = new CoordinateGoalPlanner(worldSessionId, goal);
+        this.planner = new CoordinateGoalPlanner(worldSessionId, goal, arrivalRadius);
         var job = jobs.get(actionId);
         if (job.kind() != AgentJobStore.Kind.MOVE
                 || !job.worldSessionId().equals(worldSessionId)) {
@@ -99,7 +111,7 @@ public final class CoordinateMoveJobExecution {
         }
         try {
             if (!driver.active()) {
-                if (currentCell.equals(goal)) {
+                if (reached(currentCell)) {
                     retainTerminal(AgentJobStore.State.SUCCEEDED, null);
                     return publishAfterRelease();
                 }
@@ -146,9 +158,9 @@ public final class CoordinateMoveJobExecution {
                 case SUCCEEDED -> {
                     driver.close();
                     if (routeWasGoal) {
-                        retainTerminal(currentCell.equals(goal)
+                        retainTerminal(reached(currentCell)
                                 ? AgentJobStore.State.SUCCEEDED : AgentJobStore.State.FAILED,
-                                currentCell.equals(goal) ? null : "goal_not_reached");
+                                reached(currentCell) ? null : "goal_not_reached");
                         yield publishAfterRelease();
                     }
                     waitingEvidence = map.edges();
@@ -206,6 +218,10 @@ public final class CoordinateMoveJobExecution {
         if (terminalIntent != null) return;
         terminalIntent = state;
         terminalFailure = failure;
+    }
+
+    private boolean reached(NavCell cell) {
+        return cell.distanceTo(goal) <= arrivalRadius;
     }
 
     private AgentJobStore.Snapshot publishAfterRelease() {

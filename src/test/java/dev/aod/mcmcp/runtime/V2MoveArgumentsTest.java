@@ -21,6 +21,20 @@ class V2MoveArgumentsTest {
         assertThat(request.maxTicks()).isEqualTo(900);
         assertThat(request.maxDistance()).isEqualTo(120.0D);
         assertThat(request.tolerance()).isEqualTo(0.25D);
+        assertThat(request.arrivalRadius()).isZero();
+    }
+
+    @Test
+    void acceptsBoundedArrivalRadiusAroundAnUnobservedCoordinate() {
+        var request = V2MoveArguments.parse(Map.of(
+                "x", 20, "y", 64, "z", -20, "arrival_radius", 2.0D), ORIGIN);
+        assertThat(request.arrivalRadius()).isEqualTo(2.0D);
+        assertThatThrownBy(() -> V2MoveArguments.parse(Map.of(
+                "x", 20, "y", 64, "z", -20, "arrival_radius", 17.0D), ORIGIN))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> V2MoveArguments.parse(Map.of(
+                "x", 20, "y", 64, "z", -20, "arrival_radius", -1.0D), ORIGIN))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

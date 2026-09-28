@@ -43,6 +43,18 @@ class CoordinateGoalPlannerTest {
     }
 
     @Test
+    void arrivalRadiusStopsAtReachableNeighbourWithoutEnteringTargetCell() {
+        var target = cell(2, 0);
+        var map = map(edge(cell(0, 0), cell(1, 0)),
+                edge(cell(1, 0), target));
+        var planner = new CoordinateGoalPlanner(SESSION, target, 1.0D);
+        var result = plan(planner, map, cell(0, 0));
+        assertThat(result.status()).isEqualTo(KNOWN_GOAL_ROUTE);
+        assertThat(result.route().orElseThrow().cells())
+                .containsExactly(cell(0, 0), cell(1, 0));
+    }
+
+    @Test
     void blockWorkNeverUsesTheTargetBlockAsAStandingWaypoint() {
         var map = map(edge(cell(0, 0), cell(1, 0)),
                 edge(cell(1, 0), cell(2, 0)));

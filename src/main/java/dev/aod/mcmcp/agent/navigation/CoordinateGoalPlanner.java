@@ -25,19 +25,34 @@ public final class CoordinateGoalPlanner {
     private static final int MAX_ISSUED_CELLS = 8_192;
     private final UUID session;
     private final NavCell goal;
+    private final double arrivalRadius;
     private final Predicate<NavCell> cellAllowed;
     private final Set<NavCell> issuedCells = new HashSet<>();
     private Map<TraversabilityEdge.Key, TraversabilityEdge> lastIssuedEvidence;
     private long newestRevision = -1;
 
     public CoordinateGoalPlanner(UUID session, NavCell goal) {
-        this(session, goal, cell -> true);
+        this(session, goal, 0.0D, cell -> true);
     }
 
     public CoordinateGoalPlanner(UUID session, NavCell goal,
             Predicate<NavCell> cellAllowed) {
+        this(session, goal, 0.0D, cellAllowed);
+    }
+
+    public CoordinateGoalPlanner(UUID session, NavCell goal, double arrivalRadius) {
+        this(session, goal, arrivalRadius, cell -> true);
+    }
+
+    public CoordinateGoalPlanner(UUID session, NavCell goal, double arrivalRadius,
+            Predicate<NavCell> cellAllowed) {
         this.session = Objects.requireNonNull(session, "session");
         this.goal = Objects.requireNonNull(goal, "goal");
+        if (!Double.isFinite(arrivalRadius) || arrivalRadius < 0.0D
+                || arrivalRadius > 16.0D) {
+            throw new IllegalArgumentException("invalid arrival radius");
+        }
+        this.arrivalRadius = arrivalRadius;
         this.cellAllowed = Objects.requireNonNull(cellAllowed, "cellAllowed");
     }
 
@@ -60,7 +75,9 @@ public final class CoordinateGoalPlanner {
         if (map.edges().size() > budget.edges()) return empty(Status.LIMIT, 0, 0);
 
         var candidates = new TreeSet<NavCell>(Comparator
-                .comparingDouble((NavCell cell) -> cell.distanceTo(goal))
+                .comparingInt((NavCell cell) -> reached(cell) ? 0 : 1)
+                .thenComparingDouble(cell -> reached(cell)
+                        ? cell.distanceTo(start) : cell.distanceTo(goal))
                 .thenComparing(Comparator.naturalOrder()));
         for (TraversabilityEdge edge : map.edges().values()) {
             if (stopped(cancelled)) return empty(Status.CANCELLED, 0, 0);
@@ -76,7 +93,7 @@ public final class CoordinateGoalPlanner {
             }
         }
         if (stopped(cancelled)) return empty(Status.CANCELLED, 0, 0);
-        if (start.equals(goal) && candidates.contains(goal) && cellAllowed.test(goal)) {
+        if (reached(start) && candidates.contains(start) && cellAllowed.test(start)) {
             return new Result(Status.REACHED_KNOWN_GOAL,
                     Optional.of(RoutePlan.from(map, List.of(start), List.of())), 0, 0);
         }
@@ -127,7 +144,7 @@ public final class CoordinateGoalPlanner {
                 }
                 issuedCells.addAll(newlyIssued);
                 lastIssuedEvidence = map.edges();
-                return new Result(candidate.equals(goal) ? Status.KNOWN_GOAL_ROUTE : Status.PARTIAL_WAYPOINT,
+                return new Result(reached(candidate) ? Status.KNOWN_GOAL_ROUTE : Status.PARTIAL_WAYPOINT,
                         found.route(), attempts, expanded);
             }
             if (found.failure().orElseThrow() == DeterministicAStar.FailureReason.SEARCH_CANCELLED) {
@@ -142,6 +159,10 @@ public final class CoordinateGoalPlanner {
 
     private static boolean stopped(BooleanSupplier cancelled) {
         return Thread.currentThread().isInterrupted() || cancelled.getAsBoolean();
+    }
+
+    private boolean reached(NavCell cell) {
+        return cell.distanceTo(goal) <= arrivalRadius;
     }
 
     private static Result empty(Status status, int candidates, int expansions) {

@@ -1708,7 +1708,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             };
             v2MoveExecution = new CoordinateMoveJobExecution(
                     v2Jobs, actionId, session.worldSessionId(), request.goal(),
-                    request.tolerance(), request.maxDistance(), driver,
+                    request.arrivalRadius(), request.tolerance(), request.maxDistance(), driver,
                     () -> {
                         boolean released = boundedActionInputRelease(
                                 () -> releaseAllAndConfirmNoInputOwner(minecraft));

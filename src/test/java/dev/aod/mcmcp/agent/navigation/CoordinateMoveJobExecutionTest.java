@@ -109,6 +109,23 @@ class CoordinateMoveJobExecutionTest {
     }
 
     @Test
+    void nearbyArrivalUsesOneSharedJobAndStopsBeforeUnobservedGoalCell() {
+        var map = map(edge(cell(0), cell(1)));
+        var store = new AgentJobStore();
+        var id = store.reserve(MOVE, SESSION, 10, 100);
+        var driver = new FakeDriver(RUNNING_STEP, SUCCESS_STEP);
+        var execution = new CoordinateMoveJobExecution(store, id, SESSION,
+                cell(2), 1.0D, 0.25D, 16.0D, driver, () -> true);
+        store.confirm(id, 1);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION,
+                0, 1, 1, true, 0, () -> true).state()).isEqualTo(RUNNING);
+        assertThat(driver.routes).singleElement().satisfies(route ->
+                assertThat(route.cells()).containsExactly(cell(0), cell(1)));
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(1), SESSION,
+                0, 2, 2, true, 1, () -> true).state()).isEqualTo(SUCCEEDED);
+    }
+
+    @Test
     void invalidatedFinalRouteFailsWithoutReissuingMovement() {
         var map = map(edge(cell(0), cell(1)));
         var store = new AgentJobStore();
