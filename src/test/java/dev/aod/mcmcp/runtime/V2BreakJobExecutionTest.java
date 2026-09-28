@@ -77,6 +77,34 @@ class V2BreakJobExecutionTest {
         assertThat(driver.ticks).isEqualTo(1);
     }
 
+    @Test
+    void approachCanSkipAConditionMismatchOnlyAfterItsDriverChecksTheTarget() {
+        var store = new AgentJobStore();
+        var id = store.reserve(AgentJobStore.Kind.BREAK_BLOCK, SESSION, 10, 100);
+        var request = V2BreakArguments.parse(Map.of(
+                "x", 10, "y", 64, "z", 20, "dx", 1, "advance", true),
+                "minecraft:overworld");
+        var driver = new FakeDriver();
+        driver.begins.addAll(List.of(
+                V2BreakJobExecution.BeginResult.STARTED,
+                V2BreakJobExecution.BeginResult.STARTED));
+        driver.steps.addAll(List.of(
+                V2BreakJobExecution.StepResult.RUNNING,
+                V2BreakJobExecution.StepResult.SKIPPED,
+                V2BreakJobExecution.StepResult.CONFIRMED));
+        var job = new V2BreakJobExecution(store, id, SESSION, request, driver, () -> true);
+        store.confirm(id, 1);
+        job.tick(SESSION, 1, 1, true, () -> true);
+        job.tick(SESSION, 2, 2, true, () -> true);
+        assertThat(job.tick(SESSION, 3, 3, true, () -> true).state())
+                .isEqualTo(AgentJobStore.State.SUCCEEDED);
+        assertThat(store.get(id).scannedCells()).isEqualTo(2);
+        assertThat(store.get(id).brokenBlocks()).isEqualTo(1);
+        assertThat(driver.targets).containsExactly(
+                new NavCell("minecraft:overworld", 10, 64, 20),
+                new NavCell("minecraft:overworld", 11, 64, 20));
+    }
+
     private static final class FakeDriver implements V2BreakJobExecution.Driver {
         final ArrayDeque<V2BreakJobExecution.BeginResult> begins = new ArrayDeque<>();
         final ArrayDeque<V2BreakJobExecution.StepResult> steps = new ArrayDeque<>();

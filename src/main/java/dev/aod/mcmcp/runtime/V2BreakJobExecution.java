@@ -121,6 +121,13 @@ final class V2BreakJobExecution {
             jobs.recordOperation(actionId);
             return switch (step) {
                 case RUNNING -> jobs.get(actionId);
+                case SKIPPED -> {
+                    driver.close();
+                    targetActive = false;
+                    index++;
+                    jobs.recordBlockProgress(actionId, index, broken);
+                    yield jobs.get(actionId);
+                }
                 case CONFIRMED -> {
                     index++;
                     broken++;
@@ -196,7 +203,7 @@ final class V2BreakJobExecution {
     }
 
     enum BeginResult { STARTED, SKIPPED, WAITING, FAILED }
-    enum StepResult { RUNNING, CONFIRMED, FAILED }
+    enum StepResult { RUNNING, SKIPPED, CONFIRMED, FAILED }
 
     interface Driver {
         String dimension();

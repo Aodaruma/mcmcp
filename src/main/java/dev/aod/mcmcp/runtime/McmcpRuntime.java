@@ -1359,7 +1359,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             actionId = v2Jobs.reserve(AgentJobStore.Kind.BREAK_BLOCK, session.worldSessionId(),
                     request.maxTicks(), System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS);
             var driver = new MinecraftV2BreakDriver(minecraft, sessions::snapshot,
-                    agentObservations, reconciliationSignals, v2BreakPort);
+                    agentObservations, reconciliationSignals, v2BreakPort,
+                    () -> v2BreakMaxDistance - v2BreakTravelled);
             v2BreakExecution = new V2BreakJobExecution(v2Jobs, actionId,
                     session.worldSessionId(), request, driver, () -> {
                         boolean released = boundedActionInputRelease(

@@ -3,7 +3,9 @@ package dev.aod.mcmcp.runtime;
 import dev.aod.mcmcp.agent.action.KnownBlockBreakAttempt;
 import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
 import dev.aod.mcmcp.agent.action.V2BlockAimResolver;
+import dev.aod.mcmcp.agent.navigation.CoordinateGoalPlanner;
 import dev.aod.mcmcp.agent.navigation.NavCell;
+import dev.aod.mcmcp.agent.navigation.TraversabilityEdge;
 import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
 import dev.aod.mcmcp.client.McmcpClientConfig;
 import dev.aod.mcmcp.routine.BlockTarget;
@@ -20,22 +22,32 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
+import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 
-/** Executes one observed, in-reach vanilla target at a time with normal player input. */
+/** Approaches a requested target through known safe cells, then uses normal break input. */
 final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
+    private static final int MAX_APPROACH_EVIDENCE_WAIT_TICKS = 80;
+    private static final double APPROACH_TOLERANCE = 0.35D;
     private final Minecraft minecraft;
     private final Supplier<WorldSessionTracker.Snapshot> sessions;
     private final AgentObservations observations;
     private final ClientReconciliationSignals reconciliationSignals;
     private final MinecraftStationaryBreakPort port;
+    private final DoubleSupplier remainingDistance;
+    private MinecraftActionPrimitiveExecutor navigation;
+    private CoordinateGoalPlanner planner;
+    private Map<TraversabilityEdge.Key, TraversabilityEdge> waitingEvidence;
+    private int approachEvidenceWaitTicks;
     private MinecraftActionPrimitiveExecutor facing;
     private KnownBlockBreakAttempt attack;
     private StationaryBreakRequest attackRequest;
     private NavCell target;
+    private V2BreakArguments request;
     private String blockId;
     private Stage stage = Stage.IDLE;
     private int originalSlot = -1;
@@ -46,12 +58,14 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
             Supplier<WorldSessionTracker.Snapshot> sessions,
             AgentObservations observations,
             ClientReconciliationSignals reconciliationSignals,
-            MinecraftStationaryBreakPort port) {
+            MinecraftStationaryBreakPort port,
+            DoubleSupplier remainingDistance) {
         this.minecraft = Objects.requireNonNull(minecraft, "minecraft");
         this.sessions = Objects.requireNonNull(sessions, "sessions");
         this.observations = Objects.requireNonNull(observations, "observations");
         this.reconciliationSignals = Objects.requireNonNull(reconciliationSignals, "reconciliationSignals");
         this.port = Objects.requireNonNull(port, "port");
+        this.remainingDistance = Objects.requireNonNull(remainingDistance, "remainingDistance");
     }
 
     @Override
@@ -64,6 +78,20 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
             V2BreakArguments request, BooleanSupplier outputAllowed) {
         if (stage != Stage.IDLE) throw new IllegalStateException("break driver already active");
         if (!outputAllowed.getAsBoolean()) return V2BreakJobExecution.BeginResult.FAILED;
+        var observed = beginObservedTarget(next, request, outputAllowed);
+        if (observed != V2BreakJobExecution.BeginResult.WAITING
+                || !request.advance() || request.maxDistance() <= 0.0D) return observed;
+        target = next;
+        this.request = request;
+        planner = new CoordinateGoalPlanner(sessions.get().worldSessionId(), next);
+        navigation = new MinecraftActionPrimitiveExecutor(
+                McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
+        stage = Stage.APPROACH;
+        return V2BreakJobExecution.BeginResult.STARTED;
+    }
+
+    private V2BreakJobExecution.BeginResult beginObservedTarget(
+            NavCell next, V2BreakArguments request, BooleanSupplier outputAllowed) {
         var session = sessions.get();
         var player = minecraft.player;
         var level = minecraft.level;
@@ -97,7 +125,9 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
         if (!V2BreakSourcePolicy.allowsLiveState(state)) {
             return V2BreakJobExecution.BeginResult.FAILED;
         }
+        if (!outputAllowed.getAsBoolean()) return V2BreakJobExecution.BeginResult.FAILED;
         target = next;
+        this.request = request;
         blockId = currentBlockId;
         originalSlot = player.getInventory().getSelectedSlot();
         selectedToolSlot = bestHotbarTool(state);
@@ -117,6 +147,9 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
         var session = sessions.get();
         if (!session.worldReady() || !session.dimension().equals(target.dimension())) {
             return V2BreakJobExecution.StepResult.FAILED;
+        }
+        if (stage == Stage.APPROACH) {
+            return tickApproach(session, clientTick, outputAllowed);
         }
         if (stage == Stage.FACING) {
             var map = observations.requireAgentMap(session);
@@ -162,6 +195,57 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
         };
     }
 
+    private V2BreakJobExecution.StepResult tickApproach(
+            WorldSessionTracker.Snapshot session, long clientTick,
+            BooleanSupplier outputAllowed) {
+        var map = observations.requireAgentMap(session);
+        if (navigation.active()) {
+            var motion = navigation.tick(minecraft, map, LocalObservationVolume.global(),
+                    Math.max(0.0D, remainingDistance.getAsDouble()),
+                    1_080.0D, clientTick, outputAllowed);
+            return switch (motion.status()) {
+                case RUNNING -> V2BreakJobExecution.StepResult.RUNNING;
+                case SUCCEEDED, REPLAN_REQUIRED -> {
+                    navigation.close();
+                    waitingEvidence = map.edges();
+                    approachEvidenceWaitTicks = 0;
+                    yield V2BreakJobExecution.StepResult.RUNNING;
+                }
+                case FAILED -> V2BreakJobExecution.StepResult.FAILED;
+            };
+        }
+        var observed = beginObservedTarget(target, request, outputAllowed);
+        switch (observed) {
+            case STARTED -> { return V2BreakJobExecution.StepResult.RUNNING; }
+            case SKIPPED -> { return V2BreakJobExecution.StepResult.SKIPPED; }
+            case FAILED -> { return V2BreakJobExecution.StepResult.FAILED; }
+            case WAITING -> { }
+        }
+        if (waitingEvidence != null && waitingEvidence.equals(map.edges())) {
+            return ++approachEvidenceWaitTicks <= MAX_APPROACH_EVIDENCE_WAIT_TICKS
+                    ? V2BreakJobExecution.StepResult.RUNNING
+                    : V2BreakJobExecution.StepResult.FAILED;
+        }
+        var current = ActionPlanning.playerCell(minecraft.player, session.dimension());
+        var plan = planner.plan(map, current, session.worldSessionId(), map.worldRevision(),
+                CoordinateGoalPlanner.Budget.DEFAULT,
+                () -> !outputAllowed.getAsBoolean());
+        return switch (plan.status()) {
+            case KNOWN_GOAL_ROUTE, PARTIAL_WAYPOINT -> {
+                navigation.beginNavigate(plan.route().orElseThrow(), APPROACH_TOLERANCE);
+                waitingEvidence = null;
+                yield V2BreakJobExecution.StepResult.RUNNING;
+            }
+            case BLOCKED, REACHED_KNOWN_GOAL -> {
+                waitingEvidence = map.edges();
+                approachEvidenceWaitTicks = 0;
+                yield V2BreakJobExecution.StepResult.RUNNING;
+            }
+            case LIMIT, CANCELLED, STALE_MAP, WORLD_MISMATCH ->
+                    V2BreakJobExecution.StepResult.FAILED;
+        };
+    }
+
     @Override
     public void close() {
         if (attack != null) {
@@ -173,6 +257,10 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
             facing.close();
             facing = null;
         }
+        if (navigation != null) {
+            navigation.close();
+            navigation = null;
+        }
         var player = minecraft.player;
         if (player != null && originalSlot >= 0
                 && player.getInventory().getSelectedSlot() == selectedToolSlot) {
@@ -181,6 +269,10 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
         originalSlot = -1;
         selectedToolSlot = -1;
         target = null;
+        request = null;
+        planner = null;
+        waitingEvidence = null;
+        approachEvidenceWaitTicks = 0;
         blockId = null;
         crosshairWaitTicks = 0;
         stage = Stage.IDLE;
@@ -209,5 +301,5 @@ final class MinecraftV2BreakDriver implements V2BreakJobExecution.Driver {
                 && hit.getBlockPos().equals(new BlockPos(target.x(), target.y(), target.z()));
     }
 
-    private enum Stage { IDLE, FACING, WAIT_CROSSHAIR, BREAKING }
+    private enum Stage { IDLE, APPROACH, FACING, WAIT_CROSSHAIR, BREAKING }
 }
