@@ -1,6 +1,6 @@
 # 公開API v2 クイックガイド
 
-開発中のv2用。基本操作の[実機smoke](experiments/20260928_public_api_v2_local.md)は通過しましたが、所持収納・追加停止経路・未実装機能の確認が残るため、配布済みv1と区別してください。旧`agent_start_action`／JSON Action DSLは公開しません。
+開発中のv2用。[基本操作](experiments/20260928_public_api_v2_local.md)と[所持収納・使用中停止](experiments/20260929_v2_storage_stop_local.md)の実機smokeを通過しました。未実装機能と追加検証は[進捗メモ](PUBLIC_API_V2_STATUS_20260928.md)を参照し、配布済みv1と区別してください。旧`agent_start_action`／JSON Action DSLは公開しません。
 
 ## 公開ツール
 
@@ -50,7 +50,7 @@
 {"operation":"inspect","target":"container","x":4,"y":65,"z":8}
 ```
 
-所持する収納itemなら`target:"storage",storage_slot:2`を指定します。`storage_slot`はプレイヤー所持枠です。収納間の数量移送には`operation:"transfer",direction:"take"`または`"store"`と`item,count`を指定します。収納providerは現在Sophisticated Backpacks 3.25.90／Core 1.4.99の検証済みJARに対応。他MODにはprovider／同期profileの追加が必要です。数量確認・部分結果・終了処理は共通化しています。
+所持する収納itemなら`target:"storage",storage_slot:2`を指定します。`storage_slot`はプレイヤー所持枠です。収納間の数量移送には`operation:"transfer",direction:"take"`または`"store"`と`item,count`を指定します。収納providerは現在Sophisticated Backpacks 3.25.90／Core 1.4.99の検証済みJARに対応。他MODにはprovider／同期profileの追加が必要です。新品backpackは通常UIで一度開いて個体IDを初期化してください。初期化済みのhotbar slot 2でinspect・store3・take2と再開封照合を実機確認しました。数量確認・部分結果・終了処理は共通化しています。
 
 `agent_run_script`の`source`には、次のような同期scriptを渡せます。
 

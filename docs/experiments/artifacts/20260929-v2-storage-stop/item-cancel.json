@@ -1,0 +1,113 @@
+{
+  "status": "passed",
+  "phase": "ItemCancel",
+  "failure": null,
+  "active_action_id": null,
+  "final_control": {
+    "schema_version": 2,
+    "control_mode": "ready",
+    "game_paused": false,
+    "ready_expires_at": null,
+    "world_session_id": "ef8dcc0c-5f92-41fe-8054-c9da6298b295",
+    "latest_frame_id": "obs-4fa1c197992e7428",
+    "running_action_id": null
+  },
+  "events": [
+    {
+      "arguments": {
+        "item": "minecraft:shield",
+        "hold_ticks": 1000,
+        "target": "item",
+        "max_ticks": 1200
+      },
+      "receipt": {
+        "state": "queued",
+        "action_id": "d98d63bd-6b6a-4bba-86d4-10bfacb3aa50",
+        "schema_version": 2
+      },
+      "tool": "agent_interact"
+    },
+    {
+      "before_stop": {
+        "schema_version": 2,
+        "action_id": "d98d63bd-6b6a-4bba-86d4-10bfacb3aa50",
+        "kind": "interact",
+        "state": "running",
+        "progress": {
+          "completed_operations": 4,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "client_consumed": true,
+          "inventory_layout_may_have_changed": false,
+          "server_processed": true,
+          "target": "item",
+          "slot": 3,
+          "dispatched": true,
+          "effect_confirmed": false
+        }
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "d98d63bd-6b6a-4bba-86d4-10bfacb3aa50",
+        "kind": "interact",
+        "state": "cancelled",
+        "progress": {
+          "completed_operations": 6,
+          "max_operations": 1200
+        },
+        "cancel_requested": true,
+        "failure": "client_request",
+        "result": {
+          "client_consumed": true,
+          "inventory_layout_may_have_changed": false,
+          "server_processed": true,
+          "target": "item",
+          "slot": 3,
+          "dispatched": true,
+          "effect_confirmed": false
+        }
+      }
+    },
+    {
+      "arguments": {
+        "item": "minecraft:shield",
+        "hold_ticks": 1,
+        "target": "item"
+      },
+      "receipt": {
+        "state": "queued",
+        "action_id": "84d7b426-c096-4178-8ac1-876e7c2f6e02",
+        "schema_version": 2
+      },
+      "tool": "agent_interact"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "84d7b426-c096-4178-8ac1-876e7c2f6e02",
+        "kind": "interact",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 2,
+          "max_operations": 200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "client_consumed": true,
+          "inventory_layout_may_have_changed": false,
+          "server_processed": true,
+          "target": "item",
+          "slot": 3,
+          "dispatched": true,
+          "effect_confirmed": false
+        }
+      }
+    }
+  ]
+}

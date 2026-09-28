@@ -1,0 +1,445 @@
+{
+  "status": "passed",
+  "phase": "Storage",
+  "failure": null,
+  "active_action_id": null,
+  "final_control": {
+    "schema_version": 2,
+    "control_mode": "ready",
+    "game_paused": false,
+    "ready_expires_at": null,
+    "world_session_id": "ef8dcc0c-5f92-41fe-8054-c9da6298b295",
+    "latest_frame_id": "obs-53c4e5eed358cb1e",
+    "running_action_id": null
+  },
+  "events": [
+    {
+      "arguments": {
+        "target": "storage",
+        "storage_slot": 2,
+        "storage_item": "sophisticatedbackpacks:backpack",
+        "operation": "inspect"
+      },
+      "tool": "agent_inventory",
+      "receipt": {
+        "state": "queued",
+        "action_id": "26a1bd5f-4a87-46bd-85ef-64ed392a3acc",
+        "schema_version": 2
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "26a1bd5f-4a87-46bd-85ef-64ed392a3acc",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 6,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "storage_item": "sophisticatedbackpacks:backpack",
+          "slots": [],
+          "complete": true,
+          "operation": "inspect",
+          "storage_slot": 2,
+          "target": "storage"
+        }
+      }
+    },
+    {
+      "arguments": {
+        "operation": "inspect"
+      },
+      "tool": "agent_inventory",
+      "receipt": {
+        "state": "queued",
+        "action_id": "689bce83-08c9-400b-9537-f8605125fc7b",
+        "schema_version": 2
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "689bce83-08c9-400b-9537-f8605125fc7b",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 1,
+          "max_operations": 1
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "matching_count": 36,
+          "selected_slot": 2,
+          "empty_slots": 37,
+          "operation": "inspect",
+          "slot_count": 43,
+          "slots": [
+            {
+              "item": "minecraft:bucket",
+              "count": 1,
+              "slot": 0
+            },
+            {
+              "item": "minecraft:netherite_pickaxe",
+              "count": 1,
+              "slot": 1
+            },
+            {
+              "item": "sophisticatedbackpacks:backpack",
+              "count": 1,
+              "slot": 2
+            },
+            {
+              "item": "minecraft:shield",
+              "count": 1,
+              "slot": 3
+            },
+            {
+              "item": "minecraft:black_wool",
+              "count": 16,
+              "slot": 9
+            },
+            {
+              "item": "minecraft:snow_block",
+              "count": 16,
+              "slot": 10
+            }
+          ]
+        }
+      }
+    },
+    {
+      "arguments": {
+        "storage_slot": 2,
+        "storage_item": "sophisticatedbackpacks:backpack",
+        "target": "storage",
+        "direction": "store",
+        "count": 3,
+        "operation": "transfer",
+        "item": "minecraft:snow_block"
+      },
+      "tool": "agent_inventory",
+      "receipt": {
+        "state": "queued",
+        "action_id": "29ddcf18-4585-43bd-914d-f6e09221a251",
+        "schema_version": 2
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "29ddcf18-4585-43bd-914d-f6e09221a251",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 17,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "target": "storage",
+          "unconfirmed": false,
+          "effects": [
+            {
+              "before": {
+                "source_count": 16,
+                "destination_count": 0
+              },
+              "verification": "confirmed",
+              "after": {
+                "transferred": 3,
+                "destination_count": 3,
+                "source_count": 13
+              }
+            }
+          ],
+          "confirmed_count": 3,
+          "requested_count": 3,
+          "direction": "store",
+          "item": "minecraft:snow_block",
+          "storage_item": "sophisticatedbackpacks:backpack",
+          "operation": "transfer",
+          "storage_slot": 2
+        }
+      }
+    },
+    {
+      "arguments": {
+        "target": "storage",
+        "storage_slot": 2,
+        "item": "minecraft:snow_block",
+        "storage_item": "sophisticatedbackpacks:backpack",
+        "operation": "inspect"
+      },
+      "tool": "agent_inventory",
+      "receipt": {
+        "state": "queued",
+        "action_id": "761d6412-4fa0-4d51-aac3-551d416ccda5",
+        "schema_version": 2
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "761d6412-4fa0-4d51-aac3-551d416ccda5",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 5,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "storage_item": "sophisticatedbackpacks:backpack",
+          "item": "minecraft:snow_block",
+          "storage_slot": 2,
+          "operation": "inspect",
+          "complete": true,
+          "target": "storage",
+          "slots": [
+            {
+              "item": "minecraft:snow_block",
+              "count": 3,
+              "slot": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "arguments": {
+        "operation": "inspect"
+      },
+      "tool": "agent_inventory",
+      "receipt": {
+        "state": "queued",
+        "action_id": "910a0eda-a013-4d95-88db-4176d16c6405",
+        "schema_version": 2
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "910a0eda-a013-4d95-88db-4176d16c6405",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 1,
+          "max_operations": 1
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "matching_count": 33,
+          "selected_slot": 2,
+          "empty_slots": 37,
+          "operation": "inspect",
+          "slot_count": 43,
+          "slots": [
+            {
+              "item": "minecraft:bucket",
+              "count": 1,
+              "slot": 0
+            },
+            {
+              "item": "minecraft:netherite_pickaxe",
+              "count": 1,
+              "slot": 1
+            },
+            {
+              "item": "sophisticatedbackpacks:backpack",
+              "count": 1,
+              "slot": 2
+            },
+            {
+              "item": "minecraft:shield",
+              "count": 1,
+              "slot": 3
+            },
+            {
+              "item": "minecraft:black_wool",
+              "count": 16,
+              "slot": 9
+            },
+            {
+              "item": "minecraft:snow_block",
+              "count": 13,
+              "slot": 10
+            }
+          ]
+        }
+      }
+    },
+    {
+      "arguments": {
+        "storage_slot": 2,
+        "storage_item": "sophisticatedbackpacks:backpack",
+        "target": "storage",
+        "direction": "take",
+        "count": 2,
+        "operation": "transfer",
+        "item": "minecraft:snow_block"
+      },
+      "tool": "agent_inventory",
+      "receipt": {
+        "state": "queued",
+        "action_id": "05633b2e-825e-479e-8fce-94afc8516b42",
+        "schema_version": 2
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "05633b2e-825e-479e-8fce-94afc8516b42",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 11,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "target": "storage",
+          "unconfirmed": false,
+          "effects": [
+            {
+              "before": {
+                "source_count": 3,
+                "destination_count": 13
+              },
+              "verification": "confirmed",
+              "after": {
+                "transferred": 2,
+                "destination_count": 15,
+                "source_count": 1
+              }
+            }
+          ],
+          "confirmed_count": 2,
+          "requested_count": 2,
+          "direction": "take",
+          "item": "minecraft:snow_block",
+          "storage_item": "sophisticatedbackpacks:backpack",
+          "operation": "transfer",
+          "storage_slot": 2
+        }
+      }
+    },
+    {
+      "arguments": {
+        "target": "storage",
+        "storage_slot": 2,
+        "item": "minecraft:snow_block",
+        "storage_item": "sophisticatedbackpacks:backpack",
+        "operation": "inspect"
+      },
+      "tool": "agent_inventory",
+      "receipt": {
+        "state": "queued",
+        "action_id": "5c018e9d-dd77-4025-ae64-334c64e054f9",
+        "schema_version": 2
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "5c018e9d-dd77-4025-ae64-334c64e054f9",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 5,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "storage_item": "sophisticatedbackpacks:backpack",
+          "item": "minecraft:snow_block",
+          "storage_slot": 2,
+          "operation": "inspect",
+          "complete": true,
+          "target": "storage",
+          "slots": [
+            {
+              "item": "minecraft:snow_block",
+              "count": 1,
+              "slot": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "arguments": {
+        "operation": "inspect"
+      },
+      "tool": "agent_inventory",
+      "receipt": {
+        "state": "queued",
+        "action_id": "f7cbc93a-8cdc-4dd1-b6f3-7c2d5174f05e",
+        "schema_version": 2
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "f7cbc93a-8cdc-4dd1-b6f3-7c2d5174f05e",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 1,
+          "max_operations": 1
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "matching_count": 35,
+          "selected_slot": 2,
+          "empty_slots": 37,
+          "operation": "inspect",
+          "slot_count": 43,
+          "slots": [
+            {
+              "item": "minecraft:bucket",
+              "count": 1,
+              "slot": 0
+            },
+            {
+              "item": "minecraft:netherite_pickaxe",
+              "count": 1,
+              "slot": 1
+            },
+            {
+              "item": "sophisticatedbackpacks:backpack",
+              "count": 1,
+              "slot": 2
+            },
+            {
+              "item": "minecraft:shield",
+              "count": 1,
+              "slot": 3
+            },
+            {
+              "item": "minecraft:black_wool",
+              "count": 16,
+              "slot": 9
+            },
+            {
+              "item": "minecraft:snow_block",
+              "count": 15,
+              "slot": 10
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

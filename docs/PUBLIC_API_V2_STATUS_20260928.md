@@ -1,8 +1,40 @@
 # 公開API v2：進捗と再開メモ（2026-09-28）
 
+## 最新更新（2026-09-29）
+
+利用者が指定した「所持収納」「追加停止経路」の実機確認を、このPCで完了した。[追加試験の記録・証拠](experiments/20260929_v2_storage_stop_local.md)を参照。製品の既存実装は今回の範囲で正常に動作し、再実行可能な試験runner・fixture・回帰mock 13件を追加した。製品Javaの変更はない。
+
+- Sophisticated Backpacksの空収納inspect、store3、take2、毎回の再開封照合が成功。収納内snowは0→3→1、所持品は16→13→15、未確定移送なし。
+- shield使用中のAPI取消、物理Esc、UI OFF、次元移動の4経路で、指定した理由による停止と入力所有終了を確認した。UI OFF・次元移動ではcontrol OFF、次元移動では新sessionを確認した。
+- OFF中の操作拒否、手動再許可後の新しい操作成功も確認。専用profileは12ファイルの個数・全hash一致で復旧し、ゲーム・launcherを終了した。
+- `tools/check-source.ps1 -SkipJava`成功。transport 15件、smoke mockは既存7件＋追加13件。製品JARは前回と同じ`6acde6beacbea21c812c390568332ccf5bcd8a21005204085ff3eda633dbdde5`。
+- M7の基本経路と今回の追加経路は実機確認済み。全機能の完成や全停止経路の網羅とは区別し、PR #85は引き続きDraft。
+
+### 現在の主な未実装機能
+
+| 機能 | 現在の範囲と不足 |
+|---|---|
+| 一般的なmenu／GUI操作 | `interact`によるmenu操作とmenu内clickが未対応。対応収納の開封・数量移送は専用経路で動作する |
+| 移動中の障害物処理 | `agent_move`が必要なblockを壊す・置く処理が未実装。`break(advance:true)`の接近しながらの採掘は実装・基本実機確認済み |
+| 遠方entityへの自動接近 | entity操作は観測済みかつ手の届く対象まで。接近してから操作する一連の処理が未対応 |
+| 停止・到達条件の拡張 | 座標以外のblock・item・画面状態等の条件、raw入力の追加guard・効果照合が未完了。今回確認したEsc等の停止経路とは別の機能 |
+| 特殊な複数cell設置 | ベッド・扉・二段植物など、1回で複数cellを変える設置が未対応。単一cellを直方体内で順に置く処理は対応済み |
+| 収納providerの追加 | 対応済みJARのSophisticated Backpacks／Core以外はprovider・同期profileが必要。新品backpackの自動初期化も未対応 |
+| 高度な道具選択・効果記録 | 耐久・Silk Touch／Fortune等の条件を含む選択、破壊drop・消費item等の詳細effect記録が未完了 |
+| 長期の施工保存・再開 | v2のjob保持は最新と直前の完了jobまで。旧施工台帳と統合したプロジェクト全体の永続保存・再開は未完了 |
+| scriptの追加仕様 | menuをまたぐ実行、命令ごとの失敗詳細・観測量予算の整備が残る。既存の同期合成は基本実機確認済み |
+
+楕円・パス等の任意形状と任意キー入力は拡張候補。完全なJavaScript、host I/O、任意commandは対象外であり、未実装の欠落とは扱わない。
+
+### 実装済みだが追加検証が必要な範囲
+
+収納transferやSWAPの応答待ち途中取消・遅延同期、装備枠／offhand／upgrade付き収納、他item・他action種類での停止、ログアウト／再接続が残る。今回の所持収納は通常UIで初期化したhotbar slot 2のbackpack、world境界は次元移動を対象にした。前回Hazardの停止後落下を避けるfixture改善、観測の実利用token測定、PR全体の独立レビューも未完了。
+
+以下の2026-09-28更新と停止時点の表は履歴であり、上の最新結果を優先する。
+
 ## 再開後の更新（2026-09-28 23:26 JST）
 
-利用者の指示で開発を再開し、このPCの独立した検証profileで実機smokeを行った。[実験記録と証拠](experiments/20260928_public_api_v2_local.md)を最新結果として参照する。下の停止時点の表は履歴として残す。
+利用者の指示で開発を再開し、このPCの独立した検証profileで実機smokeを行った。[実験記録と証拠](experiments/20260928_public_api_v2_local.md)を当日の結果として参照する。下の停止時点の表は履歴として残す。
 
 - entityのPASS後に無関係な手持ち変化で成功し得る判定を修正。仕様・catalog・単体回帰2件を同期した。
 - 実機で発見した数量投棄の確認待ちtimeoutと、接近後の破壊照準の外れを修正した。製品commitは`e79f59888e2aece6d426437e0d4c545f8e27384a`。

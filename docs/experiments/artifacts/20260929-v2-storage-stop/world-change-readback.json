@@ -1,0 +1,101 @@
+{
+  "state": {
+    "schema_version": 2,
+    "player": {
+      "health": 20.0,
+      "max_air": 300,
+      "absorption": 0.0,
+      "dimension": "minecraft:the_nether",
+      "status_effects": [],
+      "air": 300,
+      "position": {
+        "z": 200.5,
+        "y": 201.0,
+        "x": 200.5
+      },
+      "pitch": 0.0,
+      "yaw": 0.0,
+      "on_fire": false,
+      "submerged": false,
+      "hunger": 20
+    },
+    "hotbar": {
+      "selected_slot": 3,
+      "slots": [
+        {
+          "slot": 0,
+          "selected": false,
+          "item": "minecraft:bucket",
+          "count": 1
+        },
+        {
+          "slot": 1,
+          "selected": false,
+          "item": "minecraft:netherite_pickaxe",
+          "count": 1
+        },
+        {
+          "slot": 2,
+          "selected": false,
+          "item": "sophisticatedbackpacks:backpack",
+          "count": 1
+        },
+        {
+          "slot": 3,
+          "selected": true,
+          "item": "minecraft:shield",
+          "count": 1
+        },
+        {
+          "slot": 4,
+          "selected": false,
+          "item": null,
+          "count": 0
+        },
+        {
+          "slot": 5,
+          "selected": false,
+          "item": null,
+          "count": 0
+        },
+        {
+          "slot": 6,
+          "selected": false,
+          "item": null,
+          "count": 0
+        },
+        {
+          "slot": 7,
+          "selected": false,
+          "item": null,
+          "count": 0
+        },
+        {
+          "slot": 8,
+          "selected": false,
+          "item": null,
+          "count": 0
+        }
+      ]
+    }
+  },
+  "control": {
+    "schema_version": 2,
+    "control_mode": "off",
+    "game_paused": false,
+    "ready_expires_at": null,
+    "world_session_id": "0bcbe027-b81f-4157-935d-fd715835ad64",
+    "latest_frame_id": "obs-23f365b99da9f348",
+    "running_action_id": null
+  },
+  "off_admission": {
+    "ok": false,
+    "failure_kind": "tool",
+    "diagnostic_code": "tool_rejected",
+    "error": {
+      "code": "MCP_OPERATION_DISABLED",
+      "message": "The READY authorization is no longer available.",
+      "recoverable": true
+    }
+  }
+}

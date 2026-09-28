@@ -40,3 +40,31 @@ pwsh -File tools/eval/Test-McmcpV2Smoke.ps1
 ```
 
 この検査は誤session、応答消失、job失敗、照会失敗を模擬し、勝手な再送や誤った成功判定を検出します。実ゲームの成功証拠には含めません。
+
+## 所持収納と使用中停止の追加試験
+
+製品JARに加え、対応済みのSophisticated Backpacks 3.25.90.2084／Core 1.4.99.2265を専用profileへ導入します。組込みprofileが要求するSHA-256との一致を確認し、通常profileの設定や収納dataは流用しません。
+
+T0前に`prepare-storage-stop-ui.mcfunction`をゲームUIで実行します。hotbar slot 2に空のbackpack、slot 3にshieldを配置します。新しいbackpackは通常UIで一度開閉して個体IDを初期化します。storageの出し入れはMCP試験に任せ、snow blockを所持品に3個以上用意します。この準備はrestricted admin loaderの対象外です。
+
+| Phase | 試験と外部操作 |
+|---|---|
+| `Storage` | slot 2の空収納inspect → store3 → 再inspect → take2 → 再inspect。各数量とプレイヤー側の差分、未確定数量なしを確認 |
+| `ItemCancel` | shield使用の受付・稼働3tick以上を確認してcancel。terminal後に1tickの新しい使用が成功することも確認 |
+| `Escape` | `stop-ready.json`と稼働を確認した操作者がEscを一度押す。`failed / local_emergency_key`と入力所有終了を確認 |
+| `UiOff` | T0前にchat画面を開き、`stop-ready.json`後に画面のMCPボタンをOFFにする。Escで先に止めず、`local_ui_disabled`とcontrol OFFを確認 |
+| `WorldChange` | 下記の独立したfixture操作で使用中に次元を変更。`world_boundary`、新session、control OFFを確認 |
+
+使用中停止は`hold_ticks:1000`のshieldを一度だけ使用し、外部停止を最大40秒待ちます。稼働前の失敗、自然完了、異なる停止理由は合格にしません。開始応答を失った操作は再送しません。UI OFFと次元変更の後は手動で再許可し、1tickのshield使用が終了できることを別途確認します。
+
+WorldChangeでは専用datapackへ`prepare-dimension-ui.mcfunction`、`prepare-destination.mcfunction`、`world-change.mcfunction`を、それぞれ`v2smoke:prepare_dimension`、`v2smoke:prepare_destination`、`v2smoke:world_change`として配置します。T0前にprepare_dimensionを一度実行し、netherのchunkロード後に25cellの足場を作ります。`(200,200,200)`がstone、その上2cellがairであることを準備側で確認してから進みます。
+
+MCP READYで、ゲームUIから`/schedule function v2smoke:world_change 15s replace`を予約し、直後にWorldChangeを開始します。予約関数は準備時に付けたtagのプレイヤーだけをnetherの`(200.5,201,200.5)`へ移し、tagを外します。runnerへcommandやadmin tokenを渡しません。移動前の実稼働を証拠に残し、移動後はdimension・座標・体力と、OFF中の新規操作拒否を確認します。新sessionがまだ現れない場合は未完了として扱います。予定どおりに開始できなかった場合は予約を準備側で解除し、成功扱いで再送しません。
+
+追加runnerの数量不一致・未確定移送・早期終了・停止理由・OFF/session確認のmock:
+
+```powershell
+pwsh -File tools/eval/Test-McmcpV2StorageStopSmoke.ps1
+```
+
+所持収納transferの応答待ち取消、通信遅延、他MOD収納、次元変更以外の切断・再接続は、この追加smokeとは別の検証です。終了時はgame/JVMを停止し、datapack・次元save・MODも含むprofile全体を元へ復元します。

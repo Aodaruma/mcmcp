@@ -5,7 +5,7 @@ param(
     [string]$Endpoint = 'http://127.0.0.1:8765/mcp',
     [string]$ExpectedWorldSession,
     [string]$ArtifactDirectory,
-    [ValidateSet('Core', 'ItemEntity', 'Cancel', 'Hazard')][string]$Phase = 'Core',
+    [ValidateSet('Core', 'ItemEntity', 'Cancel', 'Hazard', 'Storage', 'ItemCancel', 'Escape', 'UiOff', 'WorldChange')][string]$Phase = 'Core',
     [switch]$LibraryOnly
 )
 Set-StrictMode -Version Latest
@@ -199,6 +199,65 @@ function Invoke-V2SmokeStop([bool]$Hazard) {
     }
 }
 
+function Invoke-V2SmokeStorage {
+    $storage = @{ target = 'storage'; storage_slot = 2; storage_item = 'sophisticatedbackpacks:backpack' }
+    $before = Invoke-V2SmokeJob 'agent_inventory' ($storage + @{ operation = 'inspect' })
+    Assert-V2Smoke ($before.result.complete -and @($before.result.slots).Count -eq 0) 'One empty initialized backpack is required'
+    $snowBefore = Get-V2SmokeItemCount (Get-V2SmokeInventory) 'minecraft:snow_block'
+    Assert-V2Smoke ($snowBefore -ge 3) 'Storage fixture needs three snow blocks'
+    foreach ($step in @(@{ direction = 'store'; count = 3; bag = 3; own = $snowBefore - 3 },
+            @{ direction = 'take'; count = 2; bag = 1; own = $snowBefore - 1 })) {
+        $transfer = Invoke-V2SmokeJob 'agent_inventory' ($storage + @{
+            operation = 'transfer'; direction = $step.direction; item = 'minecraft:snow_block'; count = $step.count
+        })
+        Assert-V2Smoke ($transfer.result.confirmed_count -eq $step.count -and -not $transfer.result.unconfirmed) 'Storage transfer was not confirmed'
+        $inspection = Invoke-V2SmokeJob 'agent_inventory' ($storage + @{ operation = 'inspect'; item = 'minecraft:snow_block' })
+        Assert-V2Smoke ($inspection.result.complete -and
+            (Get-V2SmokeItemCount $inspection.result 'minecraft:snow_block') -eq $step.bag) 'Reopened backpack count mismatch'
+        Assert-V2Smoke ((Get-V2SmokeItemCount (Get-V2SmokeInventory) 'minecraft:snow_block') -eq $step.own) 'Player count after storage transfer mismatch'
+    }
+}
+
+function Invoke-V2SmokeItemStop {
+    $id = Start-V2SmokeJob 'agent_interact' @{
+        target = 'item'; item = 'minecraft:shield'; hold_ticks = 1000; max_ticks = 1200
+    }
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $running = Invoke-V2SmokeTool 'agent_get_action' @{ action_id = $id; wait_timeout_ms = 100; include_result = $true }
+        Assert-V2Smoke ($running.state -cin @('unconfirmed', 'queued', 'running')) 'Item use ended before stop trigger'
+        if ($running.state -ceq 'running' -and $running.progress.completed_operations -ge 3 -and
+            $running.result.dispatched -and $running.result.client_consumed) { break }
+    } while ($clock.Elapsed.TotalSeconds -lt 5)
+    Assert-V2Smoke ($running.state -ceq 'running' -and $running.progress.completed_operations -ge 3 -and
+        $running.result.dispatched -and $running.result.client_consumed) 'Shield must be in use before stopping'
+    $script:SmokeEvents.Add(@{ before_stop = $running })
+    if ($Phase -ceq 'ItemCancel') {
+        [void](Invoke-V2SmokeTool 'agent_cancel_action' @{ action_id = $id })
+    } else {
+        # Physical Esc/UI OFF or a separately scheduled fixture dimension change.
+        # The runner holds no admin token and never injects these lifecycle events itself.
+        $temporary = Join-Path $ArtifactDirectory 'stop-ready.tmp'
+        [IO.File]::WriteAllText($temporary, (ConvertTo-CompactJson @{
+            phase = $Phase; action_id = $id; running = $running; world_session_id = $ExpectedWorldSession
+        }), [Text.UTF8Encoding]::new($false))
+        [IO.File]::Move($temporary, (Join-Path $ArtifactDirectory 'stop-ready.json'))
+    }
+    $terminal = Wait-V2SmokeJob $id 40
+    if ($Phase -ceq 'ItemCancel') {
+        Assert-V2Smoke ($terminal.state -ceq 'cancelled') 'Expected item cancellation'
+        # A second use is refused if the previous use remains active; completion must be finite.
+        [void](Invoke-V2SmokeJob 'agent_interact' @{ target = 'item'; item = 'minecraft:shield'; hold_ticks = 1 })
+    } else {
+        $reason = switch ($Phase) {
+            'Escape' { 'local_emergency_key' }
+            'UiOff' { 'local_ui_disabled' }
+            'WorldChange' { 'world_boundary' }
+        }
+        Assert-V2Smoke ($terminal.state -ceq 'failed' -and $terminal.failure -ceq $reason) "Expected stop reason: $reason"
+    }
+}
+
 function Invoke-McmcpV2Smoke {
     Assert-V2Smoke (-not [string]::IsNullOrWhiteSpace($ExpectedWorldSession)) 'Expected world session is required'
     Assert-V2Smoke (-not [string]::IsNullOrWhiteSpace($ArtifactDirectory)) 'Artifact directory is required'
@@ -217,6 +276,8 @@ function Invoke-McmcpV2Smoke {
         switch ($Phase) {
             'Core' { Invoke-V2SmokeCore }
             'ItemEntity' { Invoke-V2SmokeItemEntity }
+            'Storage' { Invoke-V2SmokeStorage }
+            { $_ -cin @('ItemCancel', 'Escape', 'UiOff', 'WorldChange') } { Invoke-V2SmokeItemStop }
             'Cancel' { Invoke-V2SmokeStop $false }
             'Hazard' {
                 $p = (Get-V2SmokeState).player.position
@@ -235,8 +296,15 @@ function Invoke-McmcpV2Smoke {
         }
         try {
             $finalControl = Invoke-V2SmokeTool 'agent_get_mcp_status'
-            Assert-V2Smoke ($finalControl.world_session_id -ceq $ExpectedWorldSession -and
-                $null -eq $finalControl.running_action_id -and $finalControl.control_mode -cne 'agent') 'Final control is not released'
+            if ($Phase -ceq 'WorldChange' -and $null -eq $failure) {
+                Assert-V2Smoke (-not [string]::IsNullOrWhiteSpace($finalControl.world_session_id) -and
+                    $finalControl.world_session_id -cne $ExpectedWorldSession -and
+                    $finalControl.control_mode -ceq 'off') 'World boundary did not replace the session and lock control'
+            } else {
+                Assert-V2Smoke ($finalControl.world_session_id -ceq $ExpectedWorldSession) 'Final world session changed'
+            }
+            Assert-V2Smoke ($null -eq $finalControl.running_action_id -and $finalControl.control_mode -cne 'agent') 'Final control is not released'
+            if ($Phase -ceq 'UiOff') { Assert-V2Smoke ($finalControl.control_mode -ceq 'off') 'UI OFF did not lock control' }
         } catch { if ($null -eq $failure) { $failure = 'Final control readback failed' } }
         $result = [ordered]@{ status = $(if ($null -eq $failure) { 'passed' } else { 'failed' })
             phase = $Phase; failure = $failure; active_action_id = $script:SmokeActive
