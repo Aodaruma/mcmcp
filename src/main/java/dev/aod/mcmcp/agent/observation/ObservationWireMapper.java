@@ -78,6 +78,14 @@ public final class ObservationWireMapper {
                 blocks.computeIfAbsent(key, ignored -> new CompactBlock(
                                 surface, placementStateRefs.apply(surface)))
                         .addFace(surface.face());
+            } else if (record instanceof VisibleEntity entity) {
+                otherRecords.add(compactVisibleEntity(entity));
+            } else if (record instanceof Hazard hazard) {
+                otherRecords.add(map(
+                        "kind", "hazard",
+                        "hazard_type", hazard.hazardType().wireName(),
+                        "position", worldPosition(hazard.position()),
+                        "severity", hazard.severity().wireName()));
             } else {
                 otherRecords.add(record(record, placementStateRefs));
             }
@@ -265,6 +273,34 @@ public final class ObservationWireMapper {
         result.put("observed_tick", entity.observedTick());
         result.put("world_revision", entity.worldRevision());
         result.put("provenance", entity.provenance().name());
+        return Collections.unmodifiableMap(result);
+    }
+
+    private static Map<String, Object> compactVisibleEntity(VisibleEntity entity) {
+        var result = new LinkedHashMap<String, Object>();
+        result.put("kind", entity.kind().wireName());
+        result.put("entity_type", entity.entityType().value());
+        result.put("entity_ref", entity.entityRef());
+        result.put("position", worldPosition(entity.position()));
+        result.put("hazard_class", entity.hazardClass().wireName());
+        if (entity.displayedItem() != null) {
+            result.put("displayed_item", entity.displayedItem().value());
+        }
+        if (entity.frameDisplay() != null) {
+            var display = entity.frameDisplay();
+            result.put("frame_display", map(
+                    "item", display.item() == null ? null : display.item().value(),
+                    "rotation", display.rotation(),
+                    "aim_point", worldPosition(display.aimPoint())));
+        }
+        if (entity.containerLabel() != null) {
+            var label = entity.containerLabel();
+            result.put("container_label", map(
+                    "item", label.item().value(),
+                    "container_position", blockPosition(label.containerPosition()),
+                    "container_block", label.containerBlock().value(),
+                    "attachment_face", label.attachmentFace().wireName()));
+        }
         return Collections.unmodifiableMap(result);
     }
 

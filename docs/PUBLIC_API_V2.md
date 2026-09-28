@@ -14,7 +14,7 @@ LLMは行き先、作業範囲、条件、反復の意図を伝える。MODは�
 |---|---|---|
 | `agent_get_state` | プレイヤーのdimension、位置・向き、体力・空腹・状態異常、手元のhotbar 9枠と選択枠。各枠のitem ID、個数、使用可否など公開可能な事実 | 全inventory、装備、レシピ、所持品集計はsection指定。session ID、MCP制御、最新frame/action IDは含めない |
 | `agent_get_mcp_status`（新） | MCP control mode、game pause、READY期限（該当時）、world session ID、実行中action ID、最新frame ID、公開schema version | 詳しいpolicy／利用可能命令は`agent_get_state`の明示sectionで当面維持 |
-| `agent_get_observation` | 引数なしで最新の観測を**一回で取得**。既定では近くのblock、entity、危険を短く返す。通行エッジはMODが内部で経路判断に使い、明示要求時だけ公開する。要件ごとに範囲・種類・件数を指定可能 | 既知frameのページング、見えた面の詳しい証拠、音等は明示要求。毎回`get_state`でframe IDを取る必要をなくす |
+| `agent_get_observation` | 引数なしで最新の観測を**一回で取得**。既定では近くのblock、entity、危険を短く返し、entityの速度・当たり判定と個別の観測証拠は明示要求にする。通行エッジはMODが内部で経路判断に使い、明示要求時だけ公開する。要件ごとに範囲・種類・件数を指定可能 | 既知frameのページング、見えた面の詳しい証拠、音等は明示要求。毎回`get_state`でframe IDを取る必要をなくす |
 
 観測は`visible_surface`ごとの長いrecordから、位置で束ねた`block` recordへ変える。見えた面は`faces:"UN"`のように1字コード（U/D/N/S/W/E）を並べるか、必要時に短い配列を返す。利用側が面の集合を解析する必要がない行動では表示自体を省き、MODは内部の実rayを保管する。座標のdimensionは応答共通部に置き、各recordに重複させない。tick/revisionは共通部へ寄せ、異なるものだけrecordに差分を残す。公開できない詳細stateは`null`のままにする。
 

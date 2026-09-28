@@ -891,7 +891,7 @@
     {
       "name": "agent_get_observation",
       "title": "Get MCMCP Observation",
-      "description": "With no arguments, atomically pins and returns the latest observation frame, up to 64 compact block, visible entity, and hazard records. Compact blocks group only actually visible faces by position plus block/state and encode faces with D/U/N/S/W/E; they never imply unseen faces or air. The default omits traversability, unknown_boundary, and sound_clue records; absence never means air. For precise evidence or paging, pass schema_version=1, an announced frame_id, kinds, cursor=null on the first page, limit=1..256, and optional filter; explicit queries retain detailed visible_surface and traversability records. Filters only narrow already visible records and do not scan unseen world state. If a frame expires, call with no arguments to read the newest frame.",
+      "description": "With no arguments, atomically pins and returns the latest observation frame, up to 64 compact block, entity, and hazard records. Entity and hazard summaries omit motion, bounds, and per-record evidence; explicit queries retain those fields. Compact blocks group only actually visible faces by position plus block/state and encode faces with D/U/N/S/W/E; they never imply unseen faces or air. The default omits traversability, unknown_boundary, and sound_clue records; absence never means air. For precise evidence or paging, pass schema_version=1, an announced frame_id, kinds, cursor=null on the first page, limit=1..256, and optional filter; explicit queries retain detailed visible_surface and traversability records. Filters only narrow already visible records and do not scan unseen world state. If a frame expires, call with no arguments to read the newest frame.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -1238,6 +1238,22 @@
             },
             "required": ["kind", "entity_type", "entity_ref", "position", "velocity", "aabb", "hazard_class", "eye_origin", "observed_tick", "world_revision", "provenance"]
           },
+          "compactVisibleEntity": {
+            "type": "object",
+            "description": "Argument-free summary; request an explicit visible_entity page for motion, bounds, and per-record evidence.",
+            "additionalProperties": false,
+            "properties": {
+              "kind": {"const": "visible_entity"},
+              "entity_type": {"$ref": "#/$defs/resourceLocation"},
+              "entity_ref": {"$ref": "#/$defs/visibleEntity/properties/entity_ref"},
+              "position": {"$ref": "#/$defs/worldPosition"},
+              "hazard_class": {"$ref": "#/$defs/visibleEntity/properties/hazard_class"},
+              "displayed_item": {"$ref": "#/$defs/resourceLocation"},
+              "frame_display": {"$ref": "#/$defs/visibleEntity/properties/frame_display"},
+              "container_label": {"$ref": "#/$defs/visibleEntity/properties/container_label"}
+            },
+            "required": ["kind", "entity_type", "entity_ref", "position", "hazard_class"]
+          },
           "traversability": {
             "type": "object",
             "additionalProperties": false,
@@ -1274,6 +1290,18 @@
               "provenance": {"enum": ["LOCAL_VOLUME", "CONTACT"]}
             },
             "required": ["kind", "hazard_type", "position", "severity", "observer_position", "observed_tick", "world_revision", "provenance"]
+          },
+          "compactHazard": {
+            "type": "object",
+            "description": "Argument-free hazard summary; request an explicit hazard page for per-record evidence.",
+            "additionalProperties": false,
+            "properties": {
+              "kind": {"const": "hazard"},
+              "hazard_type": {"$ref": "#/$defs/hazard/properties/hazard_type"},
+              "position": {"$ref": "#/$defs/worldPosition"},
+              "severity": {"$ref": "#/$defs/hazard/properties/severity"}
+            },
+            "required": ["kind", "hazard_type", "position", "severity"]
           },
           "unknownBoundary": {
             "type": "object",
@@ -1326,6 +1354,8 @@
             "items": {
               "oneOf": [
                 {"$ref": "#/$defs/compactBlock"},
+                {"$ref": "#/$defs/compactVisibleEntity"},
+                {"$ref": "#/$defs/compactHazard"},
                 {"$ref": "#/$defs/visibleSurface"},
                 {"$ref": "#/$defs/visibleEntity"},
                 {"$ref": "#/$defs/traversability"},

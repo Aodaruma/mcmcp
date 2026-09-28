@@ -291,6 +291,33 @@ class ObservationModelContractTest {
     }
 
     @Test
+    void compactPageKeepsEntityIdentityAndHazardButOmitsMotionAndEvidenceFields()
+            throws Exception {
+        var records = allKinds();
+        var page = new ObservationPage("obs-0000000000000001", 100, false,
+                List.of(records.get(1), records.get(3)), null);
+        var compact = ObservationWireMapper.compactPage(page, ignored -> null);
+        JsonObject catalog = JsonParser.parseString(Files.readString(catalogPath())).getAsJsonObject();
+        JsonObject schema = tool(catalog, "agent_get_observation").getAsJsonObject("outputSchema");
+        assertThat(matches(schema,
+                new GsonBuilder().serializeNulls().create().toJsonTree(compact))).isTrue();
+        var output = (List<?>) compact.get("records");
+        @SuppressWarnings("unchecked")
+        var entity = (Map<String, Object>) output.get(0);
+        assertThat(entity).containsKeys("entity_type", "entity_ref", "position", "hazard_class")
+                .doesNotContainKeys("velocity", "aabb", "eye_origin", "observed_tick",
+                        "world_revision", "provenance");
+        @SuppressWarnings("unchecked")
+        var hazard = (Map<String, Object>) output.get(1);
+        assertThat(hazard).containsKeys("hazard_type", "position", "severity")
+                .doesNotContainKeys("observer_position", "observed_tick", "world_revision");
+        var detailed = (List<?>) ObservationWireMapper.page(page, ignored -> null).get("records");
+        @SuppressWarnings("unchecked")
+        var detailedEntity = (Map<String, Object>) detailed.get(0);
+        assertThat(detailedEntity).containsKeys("velocity", "aabb", "observed_tick");
+    }
+
+    @Test
     void visibleItemExposesOnlyItsDisplayedRegistryIdentity() {
         var item = new VisibleEntity(
                 new ResourceId("minecraft:item"),
