@@ -40,7 +40,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> {
             throw new IllegalArgumentException("block work requires break or place kind");
         }
         this.request = Objects.requireNonNull(request, "request");
-        this.cells = request.region().cells();
+        this.cells = request.cells();
         this.driver = Objects.requireNonNull(driver, "driver");
         this.releaseAndVerify = Objects.requireNonNull(releaseAndVerify, "releaseAndVerify");
         var job = jobs.get(actionId);

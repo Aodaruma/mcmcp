@@ -109,6 +109,35 @@ class V2BlockJobExecutionTest {
     }
 
     @Test
+    void advancingBreakClearsBothHeightsBeforeTheNextTunnelColumn() {
+        var store = new AgentJobStore();
+        var id = store.reserve(AgentJobStore.Kind.BREAK_BLOCK, SESSION, 12, 100);
+        var request = V2BreakArguments.parse(Map.of(
+                "x", 10, "y", 64, "z", 20, "dx", 2, "dy", 1,
+                "advance", true), "minecraft:overworld");
+        var driver = new FakeDriver();
+        for (int i = 0; i < 6; i++) {
+            driver.begins.add(V2BlockJobExecution.BeginResult.STARTED);
+            driver.steps.add(V2BlockJobExecution.StepResult.CONFIRMED);
+        }
+        var job = new V2BlockJobExecution<>(store, id, SESSION,
+                AgentJobStore.Kind.BREAK_BLOCK, request, driver, () -> true);
+        store.confirm(id, 1);
+        for (int tick = 1; tick <= 6; tick++) {
+            job.tick(SESSION, tick, tick, true, () -> true);
+        }
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.SUCCEEDED);
+        assertThat(driver.targets).containsExactly(
+                new NavCell("minecraft:overworld", 10, 64, 20),
+                new NavCell("minecraft:overworld", 10, 65, 20),
+                new NavCell("minecraft:overworld", 11, 64, 20),
+                new NavCell("minecraft:overworld", 11, 65, 20),
+                new NavCell("minecraft:overworld", 12, 64, 20),
+                new NavCell("minecraft:overworld", 12, 65, 20));
+        assertThat(store.get(id).completedBlocks()).isEqualTo(6);
+    }
+
+    @Test
     void placeUsesTheSameDeliveryAndReleaseGateWithSeparateProgress() {
         var store = new AgentJobStore();
         var id = store.reserve(AgentJobStore.Kind.PLACE_BLOCK, SESSION, 10, 100);

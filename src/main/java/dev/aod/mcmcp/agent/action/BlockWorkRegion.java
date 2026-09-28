@@ -55,6 +55,23 @@ public record BlockWorkRegion(String dimension, int x, int y, int z,
         return List.copyOf(result);
     }
 
+    /** Complete each vertical column before advancing along X/Z. */
+    public List<NavCell> cellsByColumn() {
+        var result = new ArrayList<NavCell>(size());
+        int stepX = Integer.compare(dx, 0);
+        int stepY = Integer.compare(dy, 0);
+        int stepZ = Integer.compare(dz, 0);
+        for (int iz = 0; iz <= Math.abs((long) dz); iz++) {
+            for (int ix = 0; ix <= Math.abs((long) dx); ix++) {
+                for (int iy = 0; iy <= Math.abs((long) dy); iy++) {
+                    result.add(new NavCell(dimension,
+                            x + ix * stepX, y + iy * stepY, z + iz * stepZ));
+                }
+            }
+        }
+        return List.copyOf(result);
+    }
+
     private static long axisLength(int delta) {
         return Math.abs((long) delta) + 1L;
     }

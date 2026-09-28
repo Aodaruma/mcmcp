@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.action.BlockWorkRegion;
+import dev.aod.mcmcp.agent.navigation.NavCell;
 
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -51,6 +52,11 @@ record V2BreakArguments(BlockWorkRegion region, Set<String> includeBlocks,
     boolean accepts(String blockId) {
         return (includeBlocks.isEmpty() || includeBlocks.contains(blockId))
                 && !excludeBlocks.contains(blockId);
+    }
+
+    @Override
+    public List<NavCell> cells() {
+        return advance ? region.cellsByColumn() : region.cells();
     }
 
     private static int optionalInt(Map<String, Object> arguments, String key, int fallback) {
