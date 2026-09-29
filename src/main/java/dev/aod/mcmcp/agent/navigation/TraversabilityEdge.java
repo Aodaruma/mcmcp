@@ -91,7 +91,7 @@ public record TraversabilityEdge(
     /** Ladder rungs remain internal transit nodes unless they also have floor support. */
     public boolean destination() {
         return traversable()
-                && (locomotion == Locomotion.GROUND || locomotion == Locomotion.WATER
+                && (locomotion == Locomotion.GROUND || locomotion == Locomotion.WATER || locomotion.aerial()
                         || targetSupport == TargetSupport.CONFIRMED);
     }
 

@@ -3556,9 +3556,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var player = minecraft.player;
         var level = minecraft.level;
         if (player.isDeadOrDying()) return "player_dead";
-        if (player.isOnFire()) return "player_on_fire";
-        if (player.isInLava()) return "player_in_lava";
-        if (player.isInWater()) return "player_in_water";
+        boolean spectator = dev.aod.mcmcp.agent.safety.Locomotion.aerialMode(player)
+                == dev.aod.mcmcp.agent.safety.Locomotion.SPECTATOR;
+        if (!spectator && player.isOnFire()) return "player_on_fire";
+        if (!spectator && player.isInLava()) return "player_in_lava";
+        if (!spectator && player.isInWater()) return "player_in_water";
         if (player.isPassenger() || player.isFallFlying()) return "unsupported_locomotion";
         if (!allowScreenChange && !AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen()))
             return "screen_changed";

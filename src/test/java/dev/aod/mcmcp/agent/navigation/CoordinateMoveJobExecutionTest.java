@@ -305,6 +305,23 @@ class CoordinateMoveJobExecutionTest {
     }
 
     @Test
+    void takeoffPreparationReceivesOnlyTheRemainingDistanceAndConsumesTheOriginalTickBudget() {
+        var store = new AgentJobStore();
+        var id = store.reserve(MOVE, SESSION, 1, 100);
+        var driver = new FakeDriver();
+        driver.prepareReady = false;
+        var execution = execution(store, id, cell(2), driver, () -> true);
+        store.confirm(id, 1);
+        var map = map(edge(cell(0), cell(1))).snapshot().orElseThrow();
+        assertThat(execution.tick(map, cell(0), SESSION, 0, 1, 1, true, 255.75, () -> true).state())
+                .isEqualTo(RUNNING);
+        assertThat(driver.preparationDistance).isEqualTo(.25);
+        assertThat(execution.tick(map, cell(0), SESSION, 0, 2, 2, true, 255.75, () -> true).failure())
+                .isEqualTo("tick_limit");
+        assertThat(driver.ticks).isZero();
+    }
+
+    @Test
     void explicitLongMoveSurvivesLegacyWallLimitAndStillRequiresArrivalProof() {
         var store=new AgentJobStore();var id=store.reserve(MOVE,SESSION,6000,100);
         var driver=new FakeDriver(RUNNING_STEP,SUCCESS_STEP);
@@ -421,6 +438,14 @@ class CoordinateMoveJobExecutionTest {
         final List<RoutePlan> routes = new ArrayList<>();
         boolean active;
         int ticks;
+        boolean prepareReady = true;
+        double preparationDistance;
+
+        @Override
+        public boolean prepare(long tick, double remainingDistance, BooleanSupplier allowed) {
+            preparationDistance = remainingDistance;
+            return prepareReady;
+        }
 
         FakeDriver(MinecraftActionPrimitiveExecutor.TickResult... steps) {
             results.addAll(List.of(steps));

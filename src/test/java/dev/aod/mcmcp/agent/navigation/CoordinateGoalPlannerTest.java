@@ -16,6 +16,25 @@ class CoordinateGoalPlannerTest {
     private static final CoordinateGoalPlanner.Budget DEFAULT = CoordinateGoalPlanner.Budget.DEFAULT;
 
     @Test
+    void denseKnownAirColumnChoosesABoundedSegmentWithoutExhaustingCandidateSearches() {
+        var map = map();
+        for (int y = 64; y < 164; y++) {
+            var from = new NavCell("overworld", 0, y, 0);
+            var to = new NavCell("overworld", 0, y + 1, 0);
+            map.observe(new TraversabilityEdge(SESSION, new TraversabilityEdge.Key(from, to),
+                    TraversabilityEdge.Status.PROBE_ALLOWED, TraversabilityEdge.TargetSupport.ABSENT,
+                    TraversabilityEdge.Clearance.CONFIRMED, TraversabilityEdge.Transition.PARTIAL,
+                    TraversabilityEdge.Fluid.NONE, TraversabilityEdge.Hazard.NONE,
+                    TraversabilityEdge.Provenance.LOCAL_VOLUME, from, 1, 0,
+                    dev.aod.mcmcp.agent.safety.Locomotion.FLIGHT));
+        }
+        var planned = plan(new CoordinateGoalPlanner(SESSION, new NavCell("overworld", 0, 164, 0)), map, cell(0, 0));
+        assertThat(planned.status()).isEqualTo(PARTIAL_WAYPOINT);
+        assertThat(planned.candidates()).isEqualTo(1);
+        assertThat(planned.route().orElseThrow().cells().getLast().y()).isEqualTo(82);
+    }
+
+    @Test
     void unknownFarGoalReturnsOnlyReachableKnownSegmentAndDoesNotReissueIt() {
         var map = map(edge(cell(0, 0), cell(1, 0)), edge(cell(1, 0), cell(2, 0)));
         var planner = new CoordinateGoalPlanner(SESSION, cell(10000, 0));

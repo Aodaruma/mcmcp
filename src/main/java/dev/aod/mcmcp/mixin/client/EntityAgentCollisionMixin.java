@@ -13,10 +13,43 @@ import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.ModifyVariable;
 
 /** Captures only Vanilla's authoritative collision resolution for agent-controlled local movement. */
 @Mixin(Entity.class)
 abstract class EntityAgentCollisionMixin {
+    /** Entity.move returns before collide/back-off in spectator mode, so fence that lane too. */
+    @ModifyVariable(method = "move(Lnet/minecraft/world/entity/MoverType;Lnet/minecraft/world/phys/Vec3;)V",
+            at = @At("HEAD"), argsOnly = true, ordinal = 0, require = 1, expect = 1)
+    private Vec3 mcmcp$guardNoClipMovement(Vec3 intended, MoverType moverType, Vec3 requested) {
+        if (!((Object) this instanceof LocalPlayer player) || !player.noPhysics || moverType != MoverType.SELF)
+            return intended;
+        var input = AgentInputState.global();
+        var boundary = input.movementBoundary(player);
+        var contribution = boundary.expired() ? boundary.contribution()
+                : input.agentMoveContribution(player, player.level());
+        if (!boundary.expired() && !boundary.active()) return intended;
+        boolean verified = false;
+        try {
+            var proof = input.goalMovementProofFor(player, player.level()).orElse(null);
+            verified = !boundary.expired() && proof != null && proof.navigationIntent() != null
+                    && proof.navigationIntent().locomotion() == dev.aod.mcmcp.agent.safety.Locomotion.SPECTATOR
+                    && intended.length() <= proof.distanceAllowance() + 1.0E-9D
+                    && ClientReconciliationSignals.global().currentSnapshot((ClientLevel) player.level())
+                            .filter(s -> s.worldRevision() == proof.worldRevision()).isPresent()
+                    && LocalObservationVolume.global().verifiesNavigationResolvedMovement(player,
+                            intended, intended, player.tickCount, proof.worldRevision(), proof.navigationIntent());
+        } catch (RuntimeException | LinkageError ignored) { }
+        if (verified) {
+            input.acceptGoalMovement(intended.length());
+            return intended;
+        }
+        if (!boundary.velocityReset()) player.setDeltaMovement(player.getDeltaMovement().subtract(contribution));
+        if (boundary.expired()) input.completeExpiredMovementBoundary();
+        else input.rejectGoalMovement();
+        return intended.subtract(contribution);
+    }
+
     @WrapOperation(
             method = "moveRelative(FLnet/minecraft/world/phys/Vec3;)V",
             at = @At(

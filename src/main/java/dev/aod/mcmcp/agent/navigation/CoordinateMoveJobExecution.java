@@ -159,7 +159,7 @@ public final class CoordinateMoveJobExecution {
                 return clearObstacle(currentCell, clientTick, outputAllowed, map);
             }
             if (!driver.active()) {
-                if (!driver.prepare(clientTick, () -> jobs.canDispatch(actionId, currentWorldSessionId)
+                if (!driver.prepare(clientTick, Math.max(0.0D, maxDistance - travelled), () -> jobs.canDispatch(actionId, currentWorldSessionId)
                         && outputAllowed.getAsBoolean())) {
                     jobs.recordOperation(actionId);
                     return jobs.get(actionId);
@@ -345,7 +345,7 @@ public final class CoordinateMoveJobExecution {
     }
 
     public interface MovementDriver {
-        default boolean prepare(long clientTick, BooleanSupplier outputAllowed) { return true; }
+        default boolean prepare(long clientTick, double remainingDistance, BooleanSupplier outputAllowed) { return true; }
         void begin(RoutePlan route, double tolerance);
         MinecraftActionPrimitiveExecutor.TickResult tick(KnownTraversabilitySnapshot map,
                 double remainingDistance, long clientTick, BooleanSupplier outputAllowed);

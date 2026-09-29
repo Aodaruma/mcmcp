@@ -59,6 +59,7 @@ final class AgentObservations {
     private LocalObservationVolume.Snapshot latestLocalObservation;
     private LocalObservationProjector.CurrentSafety localSafety =
             LocalObservationProjector.CurrentSafety.REPLAN;
+    private dev.aod.mcmcp.agent.safety.Locomotion navigationMode;
     private long knownTraversabilityRevision;
     private boolean soundPlaybackTruncated;
 
@@ -333,6 +334,13 @@ final class AgentObservations {
         var reconciliation = reconciliationSignals.bindAndSnapshot(
                 minecraft.level, session.worldSessionId());
         long worldRevision = reconciliation.worldRevision();
+        var mode = dev.aod.mcmcp.agent.safety.Locomotion.observedMode(minecraft.player);
+        if (mode != navigationMode) {
+            // Ground, collision-bound flight and spectator proofs are never interchangeable.
+            knownTraversability.startSession(session.worldSessionId(), session.dimension(), worldRevision);
+            knownTraversabilityRevision = worldRevision;
+            navigationMode = mode;
+        }
         var dimension = new ResourceId(session.dimension());
         latestLocalObservation = LocalObservationVolume.global().observe(
                 minecraft.player, session.clientTick(), worldRevision);

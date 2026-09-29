@@ -16,6 +16,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class McpPublicV2ToolsTest {
+    @Test
+    void flightMovementUsesExistingCoordinateAndVerticalDirectionSchemas() {
+        var catalog = new McpToolCatalog();
+        var schema = catalog.inputSchema("agent_move");
+        for (String arguments : List.of("{\"direction\":\"up\",\"distance\":12}",
+                "{\"direction\":\"down\",\"distance\":12}", "{\"x\":1,\"y\":200,\"z\":2}")) {
+            assertThat(CatalogSchemaValidator.matches(schema, JsonParser.parseString(arguments))).isTrue();
+        }
+    }
     private static final UUID ACTION_ID =
             UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
 

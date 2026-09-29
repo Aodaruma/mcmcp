@@ -11,6 +11,32 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class LocalObservationProjectorTest {
+    @Test
+    void airRoutesMayAscendDescendAndFinishWithoutFloorSupport() {
+        for (var mode : List.of(Locomotion.FLIGHT, Locomotion.SPECTATOR)) {
+            var session = UUID.randomUUID();
+            var center = new ObservationRecord.Point(0.5, 101.15, 0.5);
+            var upper = new ObservationRecord.Point(0.5, 102.15, 0.5);
+            var lower = new ObservationRecord.Point(0.5, 100.15, 0.5);
+            var current = record(10, 3, 0, center, center, center,
+                    ObservationRecord.Transition.STATIONARY, ObservationRecord.Clearance.CLEAR, ObservationRecord.Hazard.NONE);
+            var snapshot = new LocalObservationVolume.Snapshot(10, 3, center, current, List.of(
+                    climbableRecord(center, upper, ObservationRecord.Support.ABSENT, mode),
+                    climbableRecord(center, lower, ObservationRecord.Support.ABSENT, mode)));
+            var projection = LocalObservationProjector.project(snapshot, session, OVERWORLD, 3, 100.25);
+            assertThat(projection.edges()).hasSize(2).allMatch(TraversabilityEdge::destination);
+            var map = new KnownTraversabilityMap();
+            map.startSession(session, OVERWORLD, 3);
+            projection.edges().forEach(map::observe);
+            var start = new NavCell(OVERWORLD, 0, 100, 0);
+            for (int y : new int[] {99, 101}) {
+                var goal = new NavCell(OVERWORLD, 0, y, 0);
+                var planned = new CoordinateGoalPlanner(session, goal).plan(map.snapshot().orElseThrow(),
+                        start, session, 3, CoordinateGoalPlanner.Budget.DEFAULT, () -> false);
+                assertThat(planned.status()).isEqualTo(CoordinateGoalPlanner.Status.KNOWN_GOAL_ROUTE);
+            }
+        }
+    }
     private static final String OVERWORLD = "minecraft:overworld";
 
     @Test

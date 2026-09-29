@@ -2,7 +2,6 @@ package dev.aod.mcmcp.agent.navigation;
 
 import dev.aod.mcmcp.agent.safety.Locomotion;
 
-import java.util.ArrayDeque;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -91,7 +90,7 @@ public final class CoordinateGoalPlanner {
             if (edge.worldRevision() > currentRevision) return empty(Status.STALE_MAP, 0, 0);
             if (edge.destination()) {
                 candidates.add(edge.key().to());
-                if (edge.locomotion() == Locomotion.GROUND) candidates.add(edge.key().from());
+                if (edge.locomotion() == Locomotion.GROUND || edge.locomotion().aerial()) candidates.add(edge.key().from());
             }
         }
         if (stopped(cancelled)) return empty(Status.CANCELLED, 0, 0);
@@ -106,19 +105,25 @@ public final class CoordinateGoalPlanner {
         if (lastIssuedEvidence != null && lastIssuedEvidence.equals(map.edges())) {
             return empty(Status.BLOCKED, 0, 0);
         }
-        // Visible but disconnected terrain must not consume the small A* candidate budget.
-        // This is only a graph prefilter: A* still enforces route distance and proof budgets.
-        var connected = new HashSet<NavCell>();
-        var pending = new ArrayDeque<NavCell>();
-        connected.add(start);
-        pending.add(start);
+        // Disconnected or over-budget terrain must not consume repeated A* searches. Bound this
+        // prefilter by the same segment cost, especially for a dense three-dimensional air map.
+        var connected = new java.util.HashMap<NavCell, Double>();
+        var pending = new java.util.PriorityQueue<Reachable>(Comparator.comparingDouble(Reachable::cost)
+                .thenComparing(Reachable::cell));
+        connected.put(start, 0.0D);
+        pending.add(new Reachable(start, 0.0D));
         while (!pending.isEmpty()) {
             if (stopped(cancelled)) return empty(Status.CANCELLED, 0, 0);
-            for (TraversabilityEdge edge : map.outgoing(pending.removeFirst())) {
+            var current = pending.remove();
+            if (current.cost() > connected.get(current.cell())) continue;
+            for (TraversabilityEdge edge : map.outgoing(current.cell())) {
+                double cost = current.cost() + NavigationDistanceBudget.edgeCost(edge);
                 if (edge.traversable() && cellAllowed.test(edge.key().to())
                         && DiagonalTraversal.clear(map, edge)
-                        && connected.add(edge.key().to())) {
-                    pending.addLast(edge.key().to());
+                        && NavigationDistanceBudget.searchCostFits(cost)
+                        && cost < connected.getOrDefault(edge.key().to(), Double.POSITIVE_INFINITY)) {
+                    connected.put(edge.key().to(), cost);
+                    pending.add(new Reachable(edge.key().to(), cost));
                 }
             }
         }
@@ -129,7 +134,7 @@ public final class CoordinateGoalPlanner {
             if (stopped(cancelled)) return empty(Status.CANCELLED, attempts, expanded);
             if (candidate.equals(start) || !cellAllowed.test(candidate)
                     || issuedCells.contains(candidate)
-                    || !connected.contains(candidate)) continue;
+                    || !connected.containsKey(candidate)) continue;
             if (attempts >= budget.candidates() || expanded >= budget.expansions()) {
                 return empty(Status.LIMIT, attempts, expanded);
             }
@@ -162,6 +167,8 @@ public final class CoordinateGoalPlanner {
     private static boolean stopped(BooleanSupplier cancelled) {
         return Thread.currentThread().isInterrupted() || cancelled.getAsBoolean();
     }
+
+    private record Reachable(NavCell cell, double cost) { }
 
     private boolean reached(NavCell cell) {
         return cell.distanceTo(goal) <= arrivalRadius;
