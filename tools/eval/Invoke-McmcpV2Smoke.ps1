@@ -269,7 +269,7 @@ function Invoke-McmcpV2Smoke {
     $finalControl = $null
     try {
         $checked = Invoke-McmcpClient -TokenPath $TokenPath -Endpoint $Endpoint -Check
-        Assert-V2Smoke ($checked.ok -and $checked.tool_count -eq 13) 'Unexpected public tool surface'
+        Assert-V2Smoke ($checked.ok -and $checked.tool_count -eq 14) 'Unexpected public tool surface'
         $control = Invoke-V2SmokeTool 'agent_get_mcp_status'
         Assert-V2Smoke ($control.control_mode -ceq 'ready' -and $null -eq $control.running_action_id) 'MCP must be idle and READY'
         [void](Get-V2SmokeState)
