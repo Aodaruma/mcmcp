@@ -15,7 +15,7 @@ MCPサーバーはMinecraft内で動くため、サーバー側MODや別の中�
 
 **読み方：** そのまま読む場合は **README.pdf** を開いてください。
 
-**同梱物：** MOD本体のJAR、`README.pdf`、`README.md`、画像フォルダー `assets/readme/`、Action DSLガイド、ライセンス・出典・ソース取得先、チェックサム。Markdown版を移動するときは画像フォルダーも一緒に置いてください。
+**同梱物：** MOD本体のJAR、`README.pdf`、`README.md`、画像フォルダー `assets/readme/`、公開API v2ガイド、ライセンス・出典・ソース取得先、チェックサム。Markdown版を移動するときは画像フォルダーも一緒に置いてください。
 
 ## 目次
 

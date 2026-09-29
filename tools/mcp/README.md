@@ -1,8 +1,8 @@
 # MCP接続診断・fallback / Connection diagnostics and fallback
 
-通常はゲームの **Esc → MCP接続設定 → Codex / Claude Codeを自動設定** を使い、AIクライアントを再起動してください。登録された5つのMCP Toolを優先します。設定と確認手順は[接続ガイド](../../docs/MCMCP_導入と接続ガイド.md)を参照してください。
+通常はゲームの **Esc → MCP接続設定 → Codex / Claude Codeを自動設定** を使い、AIクライアントを再起動してください。登録されたMCP Toolを優先します。設定と確認手順は[接続ガイド](../../docs/MCMCP_導入と接続ガイド.md)を参照してください。
 
-Use in-game setup and restart your AI client first. Prefer its five registered MCP tools. This developer utility is a fallback for an environment where those tools are unavailable; it is not an additional MCP server or a replacement for normal registration.
+Use in-game setup and restart your AI client first. Prefer its registered MCP tools. This developer utility is a fallback for an environment where those tools are unavailable; it is not an additional MCP server or a replacement for normal registration.
 
 必要環境は **PowerShell 7.4以上** と本repositoryのcloneです。Windows PowerShell 5.1の `powershell.exe` ではなく `pwsh` を使います。追加PowerShell moduleは不要です。tokenをコマンドへ貼らず、起動中のゲームのtokenファイルのパスを指定します。
 
@@ -17,7 +17,7 @@ pwsh -NoProfile -File tools/mcp/Invoke-Mcmcp.ps1 `
   -TokenPath 'C:\path\to\minecraft\config\mcmcp\mcp-token' -Check
 ```
 
-`-Check` は接続と5 Toolの登録だけを確認します。worldの読み取り・Action開始・ONへの切替は行いません。成功時は `{"ok":true,"connection":"reachable","tool_count":5}` を返します。ゲーム内の操作許可とは別の判定です。
+`-Check` は接続とcatalog記載のTool登録だけを確認します。worldの読み取り・Action開始・ONへの切替は行いません。成功時の`tool_count`はcatalogの件数です。ゲーム内の操作許可とは別の判定です。
 
 `-Check` only discovers the server and lists tools. A reachable connection does not imply that gameplay is enabled. No Action is started and no control setting is changed.
 
@@ -32,18 +32,25 @@ Use this path only when normal MCP tools are unavailable. Supply exact UTF-8 JSO
 pwsh -NoProfile -File tools/mcp/Invoke-Mcmcp.ps1 `
   -TokenPath 'C:\path\to\minecraft\config\mcmcp\mcp-token' -Tool agent_get_state
 
-# 用意したActionを一度開始し、最大60秒待つ / Start once, then wait up to 60 seconds
+# 用意したスクリプトを一度開始し、最大60秒待つ / Run a script once and wait
 pwsh -NoProfile -File tools/mcp/Invoke-Mcmcp.ps1 `
   -TokenPath 'C:\path\to\minecraft\config\mcmcp\mcp-token' `
-  -Tool agent_start_action -ArgumentsPath './action.json' -WaitSeconds 60
+  -Tool agent_run_script -ArgumentsPath './script.json' -WaitSeconds 60
+
+# v2の座標移動を一度開始し、同じaction_idで完了を待つ
+pwsh -NoProfile -File tools/mcp/Invoke-Mcmcp.ps1 `
+  -TokenPath 'C:\path\to\minecraft\config\mcmcp\mcp-token' `
+  -Tool agent_move -ArgumentsPath './move.json' -WaitSeconds 60
 ```
 
 - 成功は `ok:true` とschema検証済みの `result`、失敗は `ok:false` と下表の診断を返します。プロセス終了コードはそれぞれ0・1です。`ok:true` は通信・結果形式の成功であり、Actionの完了判定は `result.state` を確認します。
-- `-WaitSeconds` はAction開始成功時の有効なIDだけを待機に使います。`AWAITING_CONSENT` では待たずに結果を返します。各照会は既存の `wait_timeout_ms`（最大25秒）を使います。
+- `-WaitSeconds` はAction開始成功時の有効なIDだけを待機に使います。各照会は既存の `wait_timeout_ms`（最大25秒）を使います。v2の詳細な作業結果が必要なときは、完了後に `agent_get_action` を `include_result:true` で明示的に呼びます。
 - HTTP・JSON-RPC・Toolエラー、ID欠落、schema不一致では待機しません。通信失敗後に開始・移送などのmutationを自動再送しません。応答を失った操作の成否は未確認です。
 - 待機期限やCtrl+Cはクライアントの待機を終えるだけで、Actionを自動cancelしません。取得済みIDがあれば `agent_get_action` で状態を確認し、停止が必要なら `agent_cancel_action` を明示的に呼びます。新しいActionを推測で開始しないでください。
 
-Success returns `ok:true` with schema-validated `result`; failure returns `ok:false` and exits with code 1. Check `result.state` for gameplay completion. Waiting uses only the ID from a successful start and stops on any error; consent responses without an ID are returned immediately. No mutation is replayed. A wait timeout or Ctrl+C does not cancel an Action; inspect the known ID or explicitly cancel it.
+Success returns `ok:true` with schema-validated `result`; failure returns `ok:false` and exits with code 1. Check `result.state` for gameplay completion. Waiting uses only the ID from a successful start and stops on any error; No mutation is replayed. A wait timeout or Ctrl+C does not cancel an Action; inspect the known ID or explicitly cancel it.
+
+`script.json`は、例えば`{"source":"move(x=4, y=65, z=8);"}`です。旧`agent_start_action`とJSON Action DSLはv2では公開しません。
 
 ## 診断 / Diagnostics
 
@@ -72,3 +79,5 @@ pwsh -NoProfile -File tools/eval/Test-McmcpEvalTrace.ps1 -SelfTest
 テストは一時loopback HTTP serverと架空tokenを使い、実Minecraftへ接続しません。`pwsh` がPATHにない場合は `MCMCP_TEST_PWSH` に実行ファイルのパスを設定します。
 
 Tests use temporary loopback HTTP servers and fake tokens, never Minecraft. Set `MCMCP_TEST_PWSH` if `pwsh` is not on PATH.
+
+視点専用の`agent_look`も開始後の`-WaitSeconds`待機に対応する。引数例は`{"x":4.5,"y":65.5,"z":8.5}`。移動の`auto_replan`は既定true、`sneak`は既定false。詳細は[クイックガイド](../../docs/MCMCP_Public_API_v2_クイックガイド.md)を参照。

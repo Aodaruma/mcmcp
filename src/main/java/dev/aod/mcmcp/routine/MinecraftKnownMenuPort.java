@@ -3,6 +3,8 @@ package dev.aod.mcmcp.routine;
 import dev.aod.mcmcp.client.AgentScreenPolicy;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals;
 import dev.aod.mcmcp.runtime.KnownMenuOperationRefs;
+import dev.aod.mcmcp.runtime.KnownStorageRefs;
+import dev.aod.mcmcp.runtime.StorageAccess;
 import dev.aod.mcmcp.runtime.KnownMenuProfileSupport;
 import dev.aod.mcmcp.runtime.WorldSessionTracker;
 import net.minecraft.client.Minecraft;
@@ -22,7 +24,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
-/** One single-use operation_ref on the exact currently open accepted Menu profile. */
+/** One single-use operation_ref on an accepted Menu or portable storage identity. */
 public final class MinecraftKnownMenuPort implements PhaseFivePort {
     public static final String KIND = "operate_known_menu";
     private static final String TRANSFER_TO_PLAYER = "transfer_to_player";
@@ -33,6 +35,7 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
     private final Supplier<WorldSessionTracker.Snapshot> sessionSupplier;
     private final ContainerSyncSignals signals;
     private final KnownMenuOperationRefs references;
+    private final KnownStorageRefs storages;
     private final Map<PhaseFiveAttempt, AttemptState> attempts = new IdentityHashMap<>();
 
     public MinecraftKnownMenuPort(
@@ -40,10 +43,18 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
             Supplier<WorldSessionTracker.Snapshot> sessionSupplier,
             ContainerSyncSignals signals,
             KnownMenuOperationRefs references) {
+        this(minecraftSupplier, sessionSupplier, signals, references, new KnownStorageRefs());
+    }
+
+    public MinecraftKnownMenuPort(
+            Supplier<Minecraft> minecraftSupplier,
+            Supplier<WorldSessionTracker.Snapshot> sessionSupplier,
+            ContainerSyncSignals signals, KnownMenuOperationRefs references, KnownStorageRefs storages) {
         this.minecraftSupplier = Objects.requireNonNull(minecraftSupplier, "minecraftSupplier");
         this.sessionSupplier = Objects.requireNonNull(sessionSupplier, "sessionSupplier");
         this.signals = Objects.requireNonNull(signals, "signals");
         this.references = Objects.requireNonNull(references, "references");
+        this.storages = Objects.requireNonNull(storages, "storages");
     }
 
     @Override
@@ -73,6 +84,17 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
         RoutineFailure failure = preflight(request, session, false);
         if (failure != null) {
             state.latchFailure(failure);
+            return attempt;
+        }
+        if (request.parameters().containsKey("operation")) {
+            state.storageTarget = storages.resolve(state.operationReference, minecraft, session, true).orElseThrow();
+            capturePlayer(state, minecraft);
+            state.initialPacketRevision = packetRevision();
+            state.awaitingOpenEvidence = true;
+            state.storageTarget.open(minecraft);
+            state.openCount++;
+            state.stage = Stage.OPENING;
+            state.stageDeadline = boundedDeadline(tick, UPDATE_TIMEOUT_TICKS);
             return attempt;
         }
         KnownMenuProfileSupport.Context context = currentContext(session).orElseThrow();
@@ -119,7 +141,12 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
             return;
         }
         if (tick >= attempt.hardDeadlineClientTick() || tick > state.stageDeadline) {
-            state.latchInconclusive("known_menu_update_deadline_exceeded");
+            state.latchInconclusive(state.readbackProblem == null
+                    ? "known_menu_update_deadline_exceeded" : state.readbackProblem);
+            return;
+        }
+        if (state.storageTarget != null) {
+            maintainStorage(state, session, tick);
             return;
         }
         if (state.stage == Stage.DISPATCH) {
@@ -155,6 +182,175 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
                 && minecraft.player.containerMenu == minecraft.player.inventoryMenu) {
             state.latchSuccess();
         }
+    }
+
+    private static void capturePlayer(AttemptState state, Minecraft minecraft) {
+        state.playerIdentity = minecraft.player;
+        state.levelIdentity = minecraft.level;
+        state.connectionIdentity = minecraft.getConnection();
+        state.positionX = minecraft.player.getX();
+        state.positionY = minecraft.player.getY();
+        state.positionZ = minecraft.player.getZ();
+        state.health = minecraft.player.getHealth();
+    }
+
+    private void maintainStorage(AttemptState state, WorldSessionTracker.Snapshot session, long tick) {
+        Minecraft minecraft = requireMinecraft();
+        if (state.stage == Stage.OPENING || state.stage == Stage.READBACK) {
+            captureStorageOpening(state, session);
+            var context = KnownMenuProfileSupport.current(minecraft, session.worldSessionId(), signals).orElse(null);
+            if (context == null) {
+                state.readbackProblem = state.awaitingOpenEvidence ? "storage_open_unconfirmed"
+                        : KnownMenuProfileSupport.synchronizedMenuMatches(
+                                signals.snapshot(minecraft.level).orElse(null), session.worldSessionId(),
+                                minecraft.player.containerMenu)
+                                ? "storage_layout_unsupported" : "storage_contents_unconfirmed";
+                return;
+            }
+            state.readbackProblem = null;
+            if (context.snapshot().packetLedgerRevision() <= state.initialPacketRevision
+                    || !state.storageTarget.matches(context)) {
+                state.latchInconclusive("storage_open_identity_mismatch");
+                return;
+            }
+            state.screenIdentity = context.screen();
+            state.profileHash = context.profile().profileHash();
+            state.awaitingOpenEvidence = false;
+            if (state.stage == Stage.READBACK) {
+                // Preserve observed counts even if replenishment or another change prevents success.
+                state.inspection = context;
+                if (!state.exactTransfer.reconcileReadback(context.snapshot())) {
+                    state.latchInconclusive("storage_readback_changed");
+                    return;
+                }
+                closeStorage(state, tick);
+                return;
+            }
+            if ("inspect".equals(state.request.parameters().get("operation"))) {
+                state.inspection = context;
+                closeStorage(state, tick);
+                return;
+            }
+            state.exactTransfer = planStorageTransfer(state.request, context).orElse(null);
+            if (state.exactTransfer == null) {
+                state.latchFailure(failure("STORAGE_TRANSFER_UNPROVABLE", RoutineFailure.Category.PRECONDITION,
+                        RoutineFailure.Recovery.REPLAN));
+                return;
+            }
+            state.transferStack = context.snapshot().slots().get(state.exactTransfer.next().slot());
+            boolean take = "take".equals(state.request.parameters().get("operation"));
+            state.sourceBefore = countExact(context.snapshot(), take ? context.storageSlots() : context.playerSlots(), state.transferStack);
+            state.destinationBefore = countExact(context.snapshot(), take ? context.playerSlots() : context.storageSlots(), state.transferStack);
+            state.stage = Stage.EXACT_DISPATCH;
+            state.stageDeadline = boundedDeadline(tick, UPDATE_TIMEOUT_TICKS);
+            return;
+        }
+        if (state.stage == Stage.EXACT_DISPATCH || state.stage == Stage.EXACT_UPDATE) {
+            var context = KnownMenuProfileSupport.current(minecraft, session.worldSessionId(), signals, true).orElse(null);
+            if (context == null) return;
+            if (context.screen() != state.screenIdentity || !state.storageTarget.matches(context)) {
+                state.latchInconclusive("storage_transfer_context_changed");
+                return;
+            }
+            if (state.stage == Stage.EXACT_DISPATCH) {
+                if (!state.exactTransfer.beginClick(context.snapshot(), tick)) {
+                    state.latchInconclusive("storage_transfer_snapshot_changed");
+                    return;
+                }
+                var click = state.exactTransfer.next();
+                state.containerClicks++;
+                KnownMenuTransfers.dispatchServerConfirmedPickup(minecraft, context.menu(), click.slot(), click.button());
+                state.stage = Stage.EXACT_UPDATE;
+                state.stageDeadline = boundedDeadline(tick, UPDATE_TIMEOUT_TICKS);
+                return;
+            }
+            if (!state.exactTransfer.confirm(context.snapshot(), signals.cursorProofRevision(minecraft.level))) return;
+            if (state.exactTransfer.exhausted()) {
+                context.screen().onClose();
+                state.stage = Stage.REOPEN;
+                state.stageDeadline = boundedDeadline(tick, CLOSE_TIMEOUT_TICKS);
+            } else {
+                state.stage = Stage.EXACT_DISPATCH;
+                state.stageDeadline = boundedDeadline(tick, UPDATE_TIMEOUT_TICKS);
+            }
+            return;
+        }
+        if (state.stage == Stage.REOPEN) {
+            if (!AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
+                    || minecraft.player.containerMenu != minecraft.player.inventoryMenu) return;
+            if (!state.storageTarget.stillPresent(minecraft)) {
+                state.latchInconclusive("storage_target_changed_before_readback");
+                return;
+            }
+            state.initialPacketRevision = packetRevision();
+            state.storageTarget.open(minecraft);
+            state.openCount++;
+            state.screenIdentity = null;
+            state.awaitingOpenEvidence = true;
+            state.stage = Stage.READBACK;
+            state.stageDeadline = boundedDeadline(tick, UPDATE_TIMEOUT_TICKS);
+            return;
+        }
+        if (state.stage == Stage.AWAIT_CLOSE && AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
+                && minecraft.player.containerMenu == minecraft.player.inventoryMenu) {
+            storages.inspected(session.worldSessionId(), state.operationReference, state.storageTarget, state.inspection);
+            state.latchSuccess();
+        }
+    }
+
+    private void captureStorageOpening(AttemptState state, WorldSessionTracker.Snapshot session) {
+        if (!state.awaitingOpenEvidence || session == null) return;
+        var minecraft = requireMinecraft();
+        if (!(minecraft.gui.screen() instanceof AbstractContainerScreen<?> screen)
+                || screen.getMenu() != minecraft.player.containerMenu) return;
+        var ledger = signals.snapshot(minecraft.level).orElse(null);
+        if (!KnownMenuProfileSupport.freshOpenedMenuMatches(ledger, session.worldSessionId(),
+                screen.getMenu(), state.initialPacketRevision)
+                || !state.storageTarget.matchesOpenedMenu(screen.getMenu(), minecraft.player)) return;
+        // A matching ordinary open proves which screen we own even if an upgrade tab or
+        // incomplete slot synchronization prevents the stricter gameplay profile from matching.
+        state.screenIdentity = screen;
+        state.awaitingOpenEvidence = false;
+    }
+
+    private static void closeStorage(AttemptState state, long tick) {
+        state.screenIdentity.onClose();
+        state.stage = Stage.AWAIT_CLOSE;
+        state.stageDeadline = boundedDeadline(tick, CLOSE_TIMEOUT_TICKS);
+    }
+
+    static Optional<ExactInventoryTransfer> planStorageTransfer(
+            PhaseFiveRequest request, KnownMenuProfileSupport.Context context) {
+        if (!context.supportsExactPickup()) return Optional.empty();
+        String item = (String) request.parameters().get("item");
+        int quantity = ((Number) request.parameters().get("transfer_count")).intValue();
+        boolean take = "take".equals(request.parameters().get("operation"));
+        List<Integer> sources = take ? context.transferableStorageSlots() : context.playerSlots();
+        List<Integer> destinations = take ? context.playerSlots() : context.transferableStorageSlots();
+        for (int source : sources) {
+            ItemStack stack = context.menu().slots.get(source).getItem();
+            var fingerprint = context.snapshot().slots().get(source);
+            if (fingerprint.empty() || !fingerprint.itemId().equals(item)
+                    || !KnownMenuTransfers.ordinaryPickupItem(stack.getItem().getClass())) continue;
+            var capacities = context.pickupCapacities(stack);
+            var availableSources = sources.stream().filter(slot -> capacities.get(slot) > 0).toList();
+            var availableDestinations = destinations.stream().filter(slot -> capacities.get(slot) > 0).toList();
+            var plan = ExactInventoryTransfer.plan(context.snapshot().slots(), availableSources, availableDestinations,
+                    item, fingerprint.itemAndComponentsHash(), true, quantity, 14, stack.getMaxStackSize(), capacities);
+            if (plan.isPresent()) return plan;
+        }
+        return Optional.empty();
+    }
+
+    private static int countExact(ContainerSyncSignals.ContainerSnapshot snapshot, List<Integer> slots,
+            ContainerSyncSignals.StackFingerprint item) {
+        int count = 0;
+        for (int slot : slots) {
+            var stack = snapshot.slots().get(slot);
+            if (stack.itemId().equals(item.itemId()) && stack.itemAndComponentsHash() == item.itemAndComponentsHash())
+                count = Math.addExact(count, stack.count());
+        }
+        return count;
     }
 
     /** Sends the ordinary server QUICK_MOVE without client changed-slot prediction suppression. */
@@ -239,6 +435,28 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
             return failure("KNOWN_MENU_PLAYER_UNSAFE", RoutineFailure.Category.SAFETY,
                     RoutineFailure.Recovery.USER);
         }
+        if (request.parameters().containsKey("operation")) {
+            if (!AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
+                    || minecraft.player.containerMenu != minecraft.player.inventoryMenu
+                    || !minecraft.player.containerMenu.getCarried().isEmpty()) {
+                return failure("STORAGE_SCREEN_UNAVAILABLE", RoutineFailure.Category.PRECONDITION,
+                        RoutineFailure.Recovery.REPLAN);
+            }
+            if (!minecraft.player.onGround()) {
+                return failure("STORAGE_PLAYER_AIRBORNE", RoutineFailure.Category.PRECONDITION,
+                        RoutineFailure.Recovery.REPLAN);
+            }
+            // Grounded Vanilla players can retain a small gravity Y component at rest.
+            if (minecraft.player.getDeltaMovement().horizontalDistanceSqr() > 0.0001D) {
+                return failure("STORAGE_PLAYER_MOVING", RoutineFailure.Category.PRECONDITION,
+                        RoutineFailure.Recovery.REPLAN);
+            }
+            if (storages.resolve(reference, minecraft, session, consume).isEmpty()) {
+                return failure("STORAGE_TARGET_UNAVAILABLE", RoutineFailure.Category.PRECONDITION,
+                        RoutineFailure.Recovery.REPLAN);
+            }
+            return null;
+        }
         Optional<KnownMenuProfileSupport.Context> optional = currentContext(session);
         if (optional.isEmpty()) {
             return failure("UNSUPPORTED_MENU_PROFILE", RoutineFailure.Category.PRECONDITION,
@@ -265,6 +483,13 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
         if (!safePlayer(minecraft, session, state)) {
             return failure("KNOWN_MENU_PLAYER_UNSAFE", RoutineFailure.Category.SAFETY,
                     RoutineFailure.Recovery.USER);
+        }
+        if (state.storageTarget != null) {
+            if (state.screenIdentity != null && state.stage != Stage.AWAIT_CLOSE && state.stage != Stage.REOPEN
+                    && minecraft.gui.screen() != state.screenIdentity)
+                return failure("KNOWN_MENU_CONTEXT_CHANGED", RoutineFailure.Category.SAFETY,
+                        RoutineFailure.Recovery.REPLAN);
+            return null;
         }
         if (state.stage == Stage.AWAIT_CLOSE) {
             return null;
@@ -337,6 +562,7 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
 
     private void maintainRelease(AttemptState state) {
         Minecraft minecraft = requireClientMinecraft();
+        if (state.releaseDeadline < 0) state.releaseDeadline = boundedDeadline(currentTick(), 160);
         if (minecraft.player != state.playerIdentity
                 || minecraft.level != state.levelIdentity
                 || minecraft.getConnection() != state.connectionIdentity) {
@@ -344,18 +570,80 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
             state.publishTerminal();
             return;
         }
+        if (state.awaitingOpenEvidence) {
+            captureStorageOpening(state, sessionSupplier.get());
+            if (state.awaitingOpenEvidence) {
+                if (currentTick() > state.stageDeadline) state.releaseFault = true;
+                return;
+            }
+        }
         if (AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 && minecraft.player.containerMenu == minecraft.player.inventoryMenu) {
+            if (state.exactTransfer != null && state.exactTransfer.pending() && !state.cursorReleaseProven) {
+                state.releaseFault = true;
+                return;
+            }
             state.releaseConfirmed = true;
             state.publishTerminal();
             return;
         }
+        var server = signals.snapshot(minecraft.level).map(ContainerSyncSignals.Snapshot::container).orElse(null);
+        if (state.storageTarget != null && state.exactTransfer != null && !state.cursorReleaseProven
+                && !releaseStorageCursor(state, server)) return;
+        boolean cursorProven = server != null && server.containerId() == minecraft.player.containerMenu.containerId
+                && server.carried().empty() && (state.exactTransfer == null || !state.exactTransfer.pending()
+                || signals.cursorProofRevision(minecraft.level) > state.exactTransfer.dispatchRevision());
         if (minecraft.gui.screen() == state.screenIdentity
-                && minecraft.player.containerMenu.getCarried().isEmpty()) {
+                && minecraft.player.containerMenu.getCarried().isEmpty() && cursorProven) {
+            state.cursorReleaseProven = true;
             state.screenIdentity.onClose();
             return;
         }
         state.releaseFault = true;
+    }
+
+    private boolean releaseStorageCursor(AttemptState state, ContainerSyncSignals.ContainerSnapshot server) {
+        var minecraft = requireMinecraft();
+        var session = sessionSupplier.get();
+        var context = session == null ? null : KnownMenuProfileSupport.current(
+                minecraft, session.worldSessionId(), signals, true).orElse(null);
+        if (context == null || context.screen() != state.screenIdentity || !state.storageTarget.matches(context)) {
+            if (currentTick() > state.releaseDeadline) state.releaseFault = true;
+            return false;
+        }
+        long cursorProof = signals.cursorProofRevision(minecraft.level);
+        if (state.cursorReturn != null) {
+            if (server.packetLedgerRevision() > state.cursorReturnRevision
+                    && cursorProof > state.cursorReturnRevision && state.cursorReturn.confirmed(server)) {
+                state.cursorReleaseProven = true;
+                return true;
+            }
+            if (currentTick() > state.releaseDeadline) state.releaseFault = true;
+            return false; // A possibly sent cleanup click is never retried.
+        }
+        var plan = state.exactTransfer;
+        if (plan.awaitingAcknowledgement()) plan.confirm(server, cursorProof);
+        if (plan.awaitingAcknowledgement() || !plan.matchesConfirmed(server)) {
+            if (currentTick() > state.releaseDeadline) state.releaseFault = true;
+            return false;
+        }
+        if (server.carried().empty()) return true;
+        var cleanup = plan.cursorReturn(server).orElse(null);
+        if (cleanup == null || !context.supportsExactPickup()) {
+            state.releaseFault = true;
+            return false;
+        }
+        var slot = context.menu().getSlot(cleanup.slot());
+        var carried = context.menu().getCarried();
+        if (!slot.mayPlace(carried) || slot.getMaxStackSize(carried) < cleanup.slots().get(cleanup.slot()).count()) {
+            state.releaseFault = true;
+            return false;
+        }
+        state.cursorReturn = cleanup;
+        state.cursorReturnRevision = server.packetLedgerRevision();
+        state.containerClicks++;
+        KnownMenuTransfers.dispatchServerConfirmedPickup(minecraft, context.menu(), cleanup.slot(), 0);
+        return false;
     }
 
     private static boolean safePlayer(
@@ -365,6 +653,7 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
         if (session == null || !session.worldReady()
                 || minecraft.level == null || minecraft.player == null
                 || minecraft.gameMode == null || minecraft.getConnection() == null
+                || minecraft.isPaused() || minecraft.gui.overlay() != null
                 || minecraft.gameMode.getPlayerMode() != GameType.SURVIVAL
                 || !minecraft.player.isAlive() || minecraft.player.isDeadOrDying()
                 || minecraft.player.getHealth() < 10.0F
@@ -399,10 +688,22 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
 
     private static String operationReference(PhaseFiveRequest request) {
         if (!KIND.equals(request.kind())
-                || !request.parameters().keySet().equals(Set.of("operation_ref"))
+                || !(request.parameters().keySet().equals(Set.of("operation_ref"))
+                    || request.parameters().keySet().equals(Set.of("operation_ref", "operation"))
+                    || request.parameters().keySet().equals(Set.of("operation_ref", "operation", "item", "transfer_count")))
                 || !(request.parameters().get("operation_ref") instanceof String reference)
                 || !reference.matches("[A-Za-z0-9_-]{24}")) {
             throw new IllegalArgumentException("invalid known Menu operation request");
+        }
+        if (request.parameters().containsKey("operation")) {
+            Object operation = request.parameters().get("operation");
+            boolean inspect = "inspect".equals(operation) && request.parameters().size() == 2;
+            boolean transfer = ("take".equals(operation) || "store".equals(operation))
+                    && request.parameters().get("item") instanceof String item
+                    && item.matches("[a-z0-9_.-]+:[a-z0-9_./-]+")
+                    && request.parameters().get("transfer_count") instanceof Integer count
+                    && count >= 1 && count <= 896;
+            if (!inspect && !transfer) throw new IllegalArgumentException("invalid storage operation request");
         }
         return reference;
     }
@@ -447,12 +748,26 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
                 recovery == RoutineFailure.Recovery.USER);
     }
 
-    private enum Stage { DISPATCH, AWAIT_UPDATE, AWAIT_CLOSE, RELEASING, TERMINAL }
+    private enum Stage { OPENING, EXACT_DISPATCH, EXACT_UPDATE, REOPEN, READBACK,
+        DISPATCH, AWAIT_UPDATE, AWAIT_CLOSE, RELEASING, TERMINAL }
 
     private static final class AttemptState {
         private final PhaseFiveRequest request;
         private final String operationReference;
         private KnownMenuOperationRefs.Operation operation;
+        private StorageAccess.Target storageTarget;
+        private ExactInventoryTransfer exactTransfer;
+        private KnownMenuProfileSupport.Context inspection;
+        private int openCount;
+        private boolean awaitingOpenEvidence;
+        private String readbackProblem;
+        private boolean cursorReleaseProven;
+        private ExactInventoryTransfer.CursorReturn cursorReturn;
+        private long cursorReturnRevision;
+        private long releaseDeadline = -1;
+        private ContainerSyncSignals.StackFingerprint transferStack;
+        private int sourceBefore;
+        private int destinationBefore;
         private String profileHash;
         private AbstractContainerScreen<?> screenIdentity;
         private LocalPlayer playerIdentity;
@@ -496,12 +811,20 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
 
         private void latchSuccess() {
             if (pendingFailure == null && pendingInconclusive == null && pendingResult == null) {
-                pendingResult = new PhaseFiveResult(
-                        operation.stack().count(), true,
-                        Map.of("transferred_items", operation.stack().count(),
-                                "profile_hash", profileHash,
-                                "fresh_server_slot_delta", true),
-                        List.of());
+                int quantity = storageTarget == null ? operation.stack().count()
+                        : exactTransfer == null ? 1 : exactTransfer.confirmedCount();
+                var evidence = new LinkedHashMap<String, Object>();
+                evidence.put("transferred_items", exactTransfer == null && storageTarget != null ? 0 : quantity);
+                evidence.put("profile_hash", profileHash);
+                evidence.put("fresh_server_slot_delta", true);
+                if (exactTransfer != null) {
+                    evidence.put("transferred", quantity);
+                    evidence.put("source_count_before", sourceBefore);
+                    evidence.put("destination_count_before", destinationBefore);
+                    evidence.put("source_count_after", sourceBefore - quantity);
+                    evidence.put("destination_count_after", destinationBefore + quantity);
+                }
+                pendingResult = new PhaseFiveResult(quantity, true, evidence, List.of());
             }
             stage = Stage.RELEASING;
         }
@@ -520,12 +843,34 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
 
         private Map<String, Object> basis() {
             var basis = new LinkedHashMap<String, Object>();
-            basis.put("open_count", 0);
+            basis.put("phase", stage.name().toLowerCase(java.util.Locale.ROOT));
+            basis.put("awaiting_open_evidence", awaitingOpenEvidence);
+            if (readbackProblem != null) basis.put("wait_reason", readbackProblem);
+            if (pendingFailure != null) basis.put("failure", pendingFailure.code().toLowerCase(java.util.Locale.ROOT));
+            else if (pendingInconclusive != null) basis.put("failure", pendingInconclusive);
+            basis.put("open_count", openCount);
             basis.put("container_clicks", containerClicks);
             basis.put("recipe_placements", 0);
             basis.put("release_pending", releasing());
             basis.put("release_confirmed", releaseConfirmed);
             basis.put("release_fault", releaseFault);
+            if (exactTransfer != null) {
+                int confirmed = exactTransfer.confirmedCount();
+                basis.put("source_before", sourceBefore);
+                basis.put("destination_before", destinationBefore);
+                basis.put("confirmed_transfer_count", confirmed);
+                basis.put("confirmed_source_count", sourceBefore - confirmed);
+                basis.put("confirmed_destination_count", destinationBefore + confirmed);
+                basis.put("transfer_in_flight", exactTransfer.pending());
+                basis.put("pending_source_before", sourceBefore - confirmed);
+                basis.put("pending_destination_before", destinationBefore + confirmed);
+                basis.put("transfer_readback_observed", inspection != null);
+                if (inspection != null) {
+                    boolean take = "take".equals(request.parameters().get("operation"));
+                    basis.put("source_after", countExact(inspection.snapshot(), take ? inspection.storageSlots() : inspection.playerSlots(), transferStack));
+                    basis.put("destination_after", countExact(inspection.snapshot(), take ? inspection.playerSlots() : inspection.storageSlots(), transferStack));
+                }
+            }
             return Map.copyOf(basis);
         }
     }

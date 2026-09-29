@@ -3,7 +3,10 @@
 param(
     [Parameter(Mandatory)][string]$TokenPath,
     [string]$Endpoint = 'http://127.0.0.1:8765/mcp',
-    [ValidateSet('agent_get_state', 'agent_get_observation', 'agent_start_action',
+    [ValidateSet('agent_get_state', 'agent_get_mcp_status', 'agent_get_observation',
+        'agent_move', 'agent_look', 'agent_break_block', 'agent_place_block',
+        'agent_interact', 'agent_inventory', 'agent_click',
+        'agent_input_sequence', 'agent_run_script',
         'agent_get_action', 'agent_cancel_action')][string]$Tool = 'agent_get_state',
     [string]$ArgumentsPath,
     [switch]$Check,

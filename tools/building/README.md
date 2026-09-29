@@ -1,5 +1,7 @@
 # 平面建築の保存・補充・再開
 
+> この施工runnerはv1のJSON Action DSL専用です。v2ではその開始ツールを廃止したため、実行には対応するv1タグのcheckoutとJARが必要です。[v2の公開ツール案内](../../docs/MCMCP_Public_API_v2_クイックガイド.md)を参照してください。
+
 PowerShell 7.4以上で使う施工runnerです。最大128×128の床を蛇行順に1セルずつ施工し、指定したセルの上へ松明を置きます。MCMCPの固定5 Toolと既存の検証済みtransportを使います。MinecraftのMCP操作を手動でONにし、Survivalで開始してください。
 
 `example-small-floor.json`はDockerの試験用座標の例です。実際の建築では、利用者が決めた場所・材料・行列へ変更した別ファイルを作ってください。

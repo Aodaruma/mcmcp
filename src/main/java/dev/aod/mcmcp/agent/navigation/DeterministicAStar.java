@@ -11,6 +11,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.PriorityQueue;
 import java.util.function.BooleanSupplier;
+import java.util.function.Predicate;
 
 /** Deterministic A* over an immutable Known Traversability Map snapshot. */
 public final class DeterministicAStar {
@@ -60,11 +61,24 @@ public final class DeterministicAStar {
             int expansionLimit,
             BooleanSupplier canContinue,
             Runnable onExpansion) {
+        return findRoute(snapshot, start, target, expansionLimit,
+                canContinue, onExpansion, cell -> true);
+    }
+
+    SearchResult findRoute(
+            KnownTraversabilitySnapshot snapshot,
+            NavCell start,
+            NavCell target,
+            int expansionLimit,
+            BooleanSupplier canContinue,
+            Runnable onExpansion,
+            Predicate<NavCell> canEnter) {
         Objects.requireNonNull(snapshot, "snapshot");
         Objects.requireNonNull(start, "start");
         Objects.requireNonNull(target, "target");
         Objects.requireNonNull(canContinue, "canContinue");
         Objects.requireNonNull(onExpansion, "onExpansion");
+        Objects.requireNonNull(canEnter, "canEnter");
         if (expansionLimit < 1 || expansionLimit > MAX_EXPANDED_NODES) {
             throw new IllegalArgumentException(
                     "expansionLimit must be within 1.." + MAX_EXPANDED_NODES);
@@ -79,6 +93,9 @@ public final class DeterministicAStar {
         }
         if (!snapshot.containsDestination(target)) {
             return SearchResult.failure(FailureReason.TARGET_UNKNOWN, List.of());
+        }
+        if (!canEnter.test(target)) {
+            return SearchResult.failure(FailureReason.NO_PATH, List.of());
         }
         if (start.equals(target)) {
             return SearchResult.found(
@@ -118,7 +135,7 @@ public final class DeterministicAStar {
             for (TraversabilityEdge edge : snapshot.outgoing(current.cell())) {
                 if (!edge.traversable() || !DiagonalTraversal.clear(snapshot, edge)) continue;
                 NavCell next = edge.key().to();
-                if (closed.contains(next)) continue;
+                if (closed.contains(next) || !canEnter.test(next)) continue;
                 double candidateDistance = current.distance()
                         + NavigationDistanceBudget.edgeCost(edge);
                 if (!NavigationDistanceBudget.searchCostFits(candidateDistance)) {

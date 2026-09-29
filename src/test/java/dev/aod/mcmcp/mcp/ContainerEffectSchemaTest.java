@@ -18,6 +18,13 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ContainerEffectSchemaTest {
+    private static com.google.gson.JsonObject legacyActionOutputSchema() {
+        var output = new McpToolCatalog().outputSchema("agent_get_action");
+        var legacy = output.getAsJsonArray("oneOf").get(0).getAsJsonObject().deepCopy();
+        legacy.add("$defs", output.getAsJsonObject("$defs"));
+        return legacy;
+    }
+
     @Test
     void actualConstructionSwapReceiptPassesThePublishedEffectSchema() throws Exception {
         var method = dev.aod.mcmcp.routine.MinecraftApplyBlockPlanPort.class.getDeclaredMethod(
@@ -28,7 +35,7 @@ class ContainerEffectSchemaTest {
         var destination = new dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint("minecraft:snow_block", 64, 2);
         var before = method.invoke(null, source, destination);
         var after = method.invoke(null, destination, source);
-        var output = new McpToolCatalog().outputSchema("agent_get_action");
+        var output = legacyActionOutputSchema();
         var schema = output.getAsJsonObject("properties").getAsJsonObject("effects")
                 .getAsJsonObject("items").deepCopy();
         schema.add("$defs", output.getAsJsonObject("$defs"));
@@ -45,7 +52,7 @@ class ContainerEffectSchemaTest {
     @Test
     void effectCountsAndGoalsRespectDirectionAndBoundedBatchCapacity() {
         var catalog = new McpToolCatalog();
-        var observation = catalog.outputSchema("agent_get_action")
+        var observation = legacyActionOutputSchema()
                 .getAsJsonObject("$defs").getAsJsonObject("effectObservation");
         var gson = new Gson();
         for (String field : new String[] {"source_count", "destination_count"}) {
@@ -62,7 +69,7 @@ class ContainerEffectSchemaTest {
                 gson.toJsonTree(Map.of("transferred", 896)))).isTrue();
         assertThat(CatalogSchemaValidator.matches(observation,
                 gson.toJsonTree(Map.of("transferred", 897)))).isFalse();
-        var nodes = catalog.inputSchema("agent_start_action").getAsJsonObject("$defs");
+        var nodes = LegacyActionSchema.inputSchema().getAsJsonObject("$defs");
         assertThat(nodes.getAsJsonObject("takeContainerStackNode").getAsJsonObject("properties")
                 .getAsJsonObject("minimum_inventory_count").get("maximum").getAsInt())
                 .isEqualTo(2_304);
@@ -96,7 +103,7 @@ class ContainerEffectSchemaTest {
                 "observed_before", effect.observedBefore(), "observed_after", effect.observedAfter(),
                 "verification", effect.verification().wireName(),
                 "client_tick", effect.clientTick(), "world_revision", effect.worldRevision()));
-        var output = new McpToolCatalog().outputSchema("agent_get_action");
+        var output = legacyActionOutputSchema();
         var schema = output.getAsJsonObject("properties").getAsJsonObject("effects")
                 .getAsJsonObject("items").deepCopy();
         schema.add("$defs", output.getAsJsonObject("$defs"));

@@ -77,4 +77,18 @@ class LocalArmingStateTest {
 
         assertThat(state.snapshot(null).lastLockReason()).isEqualTo("a");
     }
+
+    @Test
+    void workerPeekDoesNotLockANewerWorldSession() {
+        var state = new LocalArmingState();
+        var oldWorld = UUID.randomUUID();
+        var newWorld = UUID.randomUUID();
+        state.arm(oldWorld, Set.of("movement"));
+        state.arm(newWorld, Set.of("movement"));
+
+        var observed = state.peek();
+        assertThat(observed.worldSessionId()).isEqualTo(newWorld);
+        assertThat(observed.mode()).isEqualTo(LocalArmingState.Mode.READY);
+        assertThat(state.snapshot(newWorld).mode()).isEqualTo(LocalArmingState.Mode.READY);
+    }
 }

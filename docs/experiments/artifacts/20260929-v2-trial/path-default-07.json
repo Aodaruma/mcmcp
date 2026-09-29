@@ -1,0 +1,127 @@
+{
+  "world_session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+  "passed": true,
+  "events": [
+    {
+      "tool": "agent_move",
+      "arguments": {
+        "z": 207,
+        "max_distance": 20,
+        "max_ticks": 200,
+        "x": 200,
+        "y": 201
+      },
+      "receipt": {
+        "schema_version": 2,
+        "action_id": "af2407bf-5c2c-4434-ae56-e8cb795b823f",
+        "state": "queued"
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "af2407bf-5c2c-4434-ae56-e8cb795b823f",
+        "kind": "move",
+        "state": "failed",
+        "progress": {
+          "completed_operations": 23,
+          "max_operations": 200
+        },
+        "cancel_requested": false,
+        "failure": "tick_limit"
+      }
+    },
+    {
+      "after": {
+        "schema_version": 2,
+        "player": {
+          "hunger": 20,
+          "submerged": false,
+          "on_fire": false,
+          "yaw": -62.85001,
+          "pitch": -32.39999,
+          "position": {
+            "y": 201.0,
+            "z": 202.57213894867326,
+            "x": 200.52566196771477
+          },
+          "air": 300,
+          "status_effects": [],
+          "dimension": "minecraft:overworld",
+          "absorption": 0.0,
+          "max_air": 300,
+          "health": 20.0
+        },
+        "hotbar": {
+          "slots": [
+            {
+              "slot": 0,
+              "selected": true,
+              "item": "minecraft:bucket",
+              "count": 1
+            },
+            {
+              "slot": 1,
+              "selected": false,
+              "item": "minecraft:netherite_pickaxe",
+              "count": 1
+            },
+            {
+              "slot": 2,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 3,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 4,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 5,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 6,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 7,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 8,
+              "selected": false,
+              "item": null,
+              "count": 0
+            }
+          ],
+          "selected_slot": 0
+        }
+      },
+      "control": {
+        "schema_version": 2,
+        "control_mode": "ready",
+        "game_paused": false,
+        "ready_expires_at": null,
+        "world_session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+        "latest_frame_id": "obs-a0f6e9d97fa4d121",
+        "running_action_id": null
+      }
+    }
+  ],
+  "phase": "PathDefault"
+}

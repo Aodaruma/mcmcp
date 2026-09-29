@@ -13,6 +13,7 @@ import dev.aod.mcmcp.agent.observation.ObservationFrameStore;
 import dev.aod.mcmcp.agent.observation.ObservationKind;
 import dev.aod.mcmcp.agent.observation.ObservationPage;
 import dev.aod.mcmcp.agent.observation.ObservationStoreException;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.VisibleSurface;
 import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
 import dev.aod.mcmcp.agent.observation.ObservationWireMapper;
 import dev.aod.mcmcp.agent.observation.OmnidirectionalObserver;
@@ -37,6 +38,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
@@ -57,6 +59,7 @@ final class AgentObservations {
     private LocalObservationVolume.Snapshot latestLocalObservation;
     private LocalObservationProjector.CurrentSafety localSafety =
             LocalObservationProjector.CurrentSafety.REPLAN;
+    private dev.aod.mcmcp.agent.safety.Locomotion navigationMode;
     private long knownTraversabilityRevision;
     private boolean soundPlaybackTruncated;
 
@@ -98,6 +101,22 @@ final class AgentObservations {
     }
 
     PreparedObservationPage getAgentObservation(Map<String, Object> arguments) {
+        boolean compact = arguments.isEmpty();
+        if (compact) {
+            String frameId = agentObservationFrames.announceLatestSummary()
+                    .orElseThrow(() -> new RuntimeInvocationException(
+                            "frame_expired", "No observation frame is available yet.", true, Map.of()))
+                    .latestFrameId();
+            arguments = new LinkedHashMap<>();
+            arguments.put("schema_version", 1);
+            arguments.put("frame_id", frameId);
+            arguments.put("kinds", List.of(
+                    ObservationKind.VISIBLE_SURFACE.wireName(),
+                    ObservationKind.VISIBLE_ENTITY.wireName(),
+                    ObservationKind.HAZARD.wireName()));
+            arguments.put("cursor", null);
+            arguments.put("limit", 64);
+        }
         Set<String> required = Set.of("schema_version", "frame_id", "kinds", "cursor", "limit");
         RuntimeArguments.requireAllowedKeys(arguments, "agent_get_observation",
                 Set.of("schema_version", "frame_id", "kinds", "filter", "cursor", "limit"));
@@ -132,9 +151,12 @@ final class AgentObservations {
                     cursor,
                     RuntimeArguments.intArgument(arguments, "limit"));
             UUID receiptId = deliveredAgentEvidence.prepareDelivery(page);
-            Map<String, Object> wirePage = ObservationWireMapper.page(page, surface ->
-                    deliveredAgentEvidence.preparedPlacementStateRef(receiptId, surface)
-                            .orElse(null));
+            Function<VisibleSurface, String> placementStateRefs = surface ->
+                            deliveredAgentEvidence.preparedPlacementStateRef(receiptId, surface)
+                                    .orElse(null);
+            Map<String, Object> wirePage = compact
+                    ? ObservationWireMapper.compactPage(page, placementStateRefs)
+                    : ObservationWireMapper.page(page, placementStateRefs);
             return new PreparedObservationPage(wirePage, receiptId);
         } catch (ObservationStoreException failure) {
             throw new RuntimeInvocationException(
@@ -170,6 +192,11 @@ final class AgentObservations {
      */
     Optional<ObservationFrame> agentPlanningFrame() {
         return agentPlanningFrame(null);
+    }
+
+    /** v2 handlers use newly collected local rays without requiring an MCP observation round trip. */
+    Optional<ObservationFrame> latestInternalFrame() {
+        return agentObservationFrames.latestFrame();
     }
 
     Optional<ObservationFrame> agentPlanningFrame(ActionDsl.Node primitive) {
@@ -307,6 +334,13 @@ final class AgentObservations {
         var reconciliation = reconciliationSignals.bindAndSnapshot(
                 minecraft.level, session.worldSessionId());
         long worldRevision = reconciliation.worldRevision();
+        var mode = dev.aod.mcmcp.agent.safety.Locomotion.observedMode(minecraft.player);
+        if (mode != navigationMode) {
+            // Ground, collision-bound flight and spectator proofs are never interchangeable.
+            knownTraversability.startSession(session.worldSessionId(), session.dimension(), worldRevision);
+            knownTraversabilityRevision = worldRevision;
+            navigationMode = mode;
+        }
         var dimension = new ResourceId(session.dimension());
         latestLocalObservation = LocalObservationVolume.global().observe(
                 minecraft.player, session.clientTick(), worldRevision);

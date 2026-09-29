@@ -1,0 +1,59 @@
+{
+  "restored_at": "2026-09-28T23:26:45.7691800+09:00",
+  "scope": "Dedicated MCMCP-V2-Local-20260928 profile, baseline before world creation",
+  "expected_file_count": 12,
+  "actual_file_count": 12,
+  "hash_mismatches": [],
+  "passed": true,
+  "game_and_launcher_stopped": true,
+  "manifest": [
+    {
+      "path": "instance.cfg",
+      "sha256": "398FC2F2F4AB6452C6B6239E33F27B2D26138BC27B6F0E274625E030AB47CBE5"
+    },
+    {
+      "path": "mmc-pack.json",
+      "sha256": "F91D12869136322B60E819646E8450F583DCE611D516DA18B11CBF39CF1B801C"
+    },
+    {
+      "path": "minecraft\\options.txt",
+      "sha256": "9B95784E4F61A1BD6F2F73764C8CEE656DA5DCB4D19253908EA5AC233B9686F5"
+    },
+    {
+      "path": "minecraft\\config\\mcmcp-fixture-admin\\enabled-profile.marker",
+      "sha256": "42AA3E186855FA785515477FDE687FB2575EAAB0A0D2E26C9222B5887E783011"
+    },
+    {
+      "path": "minecraft\\config\\mcmcp-fixture-admin\\fixtures\\public-api-v2\\fixture.json",
+      "sha256": "46CD4E8011B9653395DBD86F136D299CDFF0CD6A23CA28952ABC6AD7722BE905"
+    },
+    {
+      "path": "minecraft\\config\\mcmcp-fixture-admin\\fixtures\\public-api-v2\\prepare-ui.mcfunction",
+      "sha256": "7A21111A3B0FA97AB0E80C2F19D2EF8FF1B17B8AE592FAF68EAE7CB1023CA082"
+    },
+    {
+      "path": "minecraft\\config\\mcmcp-fixture-admin\\fixtures\\public-api-v2\\README.md",
+      "sha256": "D6A3121CED9375D4D6395EB093882CED1E443B62D05269F3996A1EC15B531C3F"
+    },
+    {
+      "path": "minecraft\\config\\mcmcp-fixture-admin\\fixtures\\public-api-v2\\setup.mcfunction",
+      "sha256": "0E8140247CAA42028FF90D982DE4E6FF72E8FDD78A8172BA6A33F97D1486F029"
+    },
+    {
+      "path": "minecraft\\config\\mcmcp-fixture-admin\\fixtures\\public-api-v2-water-stop\\fixture.json",
+      "sha256": "43415709A957CBB31DB5DFA5DEFCE30659AB0C92CD786C5EB22DBE3E1E4A441C"
+    },
+    {
+      "path": "minecraft\\config\\mcmcp-fixture-admin\\fixtures\\public-api-v2-water-stop\\setup.mcfunction",
+      "sha256": "D65206AFD44AA4F123F772A1E67F9565B17D8F61DBB80A5B472F8F1A9B18F90F"
+    },
+    {
+      "path": "minecraft\\mods\\mcmcp-neoforge-26.2-0.1.0-SNAPSHOT-fixture-admin.jar",
+      "sha256": "9B4AEB58E57C6AC3353FE8D553F55971CF11B50766506B4E9C2CD7DC6A584230"
+    },
+    {
+      "path": "minecraft\\mods\\mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar",
+      "sha256": "98777CB76F6B709F71BCF284626FC32455D68C48CB1C20439B7ED585A0C13C48"
+    }
+  ]
+}

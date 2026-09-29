@@ -1,0 +1,66 @@
+[
+  {
+    "path": "bridge-07.json",
+    "sha256": "adeeab133c91bf6a16912af305685d211911103022076e18eebbfddddcb81c04"
+  },
+  {
+    "path": "candidate.json",
+    "sha256": "62226d2db36bf669386844e14259ea507356a16cdd1e2d8d4aea76ab580cdc8d"
+  },
+  {
+    "path": "conditions-07.json",
+    "sha256": "5cdfeeaadc3722894d8bea3b5041c968c09079634e39f27bbc624b0c97e310e4"
+  },
+  {
+    "path": "construction-07.json",
+    "sha256": "9291ee1a75055c682a0d786be3e54c6ef331f825eaf25639b0f8677950919c6d"
+  },
+  {
+    "path": "entity-07.json",
+    "sha256": "959dc24d4c0e0a840d1ef9545f0f431d0d78c957f31146a4d1311b2a2e9a7f2e"
+  },
+  {
+    "path": "installation-correction.json",
+    "sha256": "8b6499faf1e7c8c1be6671b2bf163e8d6a64c1a756ac33a94dbf5d7900ef4836"
+  },
+  {
+    "path": "installation.json",
+    "sha256": "eca1e1db24073159cb881c1cec3110acaba437b7d659160dd9e86f0006edd1bd"
+  },
+  {
+    "path": "menu-07.json",
+    "sha256": "d09e67409eb6798993fc54826c3c0459dbbb9afcb5edeb1a7819e1eae337c7cd"
+  },
+  {
+    "path": "path-cancel-08.json",
+    "sha256": "c88bdcb2854d6f3492884ac83c74dd4ef89ead9255b9495466c85fd408956a20"
+  },
+  {
+    "path": "path-clear-05-failed.json",
+    "sha256": "f84f009505db6af3f9f3703487f1d5339806d2409c80c769337a278b2dc43f59"
+  },
+  {
+    "path": "path-clear-06-failed.json",
+    "sha256": "ab2474c204972dd195c233f0439a1492126eaa995cf0dba1ef0ac8e48af7f199"
+  },
+  {
+    "path": "path-clear-07.json",
+    "sha256": "813dda3f1180edb9c868f6277b83f30a4ae0cb1d44810d30843401e810923b42"
+  },
+  {
+    "path": "path-default-07.json",
+    "sha256": "f1881fef3c47242f55dea94b35f6b3682566af40787a8f678928212f89159bc5"
+  },
+  {
+    "path": "restoration.json",
+    "sha256": "f6118efdb30cdf6252bcf58f225c3ef53d9334276a6938b11f0401a25f0dad2e"
+  },
+  {
+    "path": "special-07-failed.json",
+    "sha256": "3b23bb4f44d504401d1de1d43d6f5b6e56f98782f39a2219bc1462b6f55250f3"
+  },
+  {
+    "path": "special-08.json",
+    "sha256": "3d3a8af5e67bf761a1ea08c1b0fbe3b04f1a56e20e1f61fadcaccabe8d4964e6"
+  }
+]

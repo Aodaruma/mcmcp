@@ -496,6 +496,15 @@ public final class LocalObservationVolume {
         var level = (ClientLevel) player.level();
         var start = player.getBoundingBox();
         var startPoint = point(start.getCenter());
+        if (intent.locomotion().aerial()) {
+            if (Locomotion.aerialMode(player) != intent.locomotion()) return false;
+            var target = start.move(intent.target().subtract(start.getCenter()));
+            // Recheck the full body corridor immediately before vanilla movement. Gravity and
+            // residual inertia can briefly move away from a waypoint; neither grants new space.
+            return aerialPathSafe(player, level, startPoint, start, target)
+                    && aerialLoaded(level, startPoint, start.minmax(start.move(intended)))
+                    && aerialPathSafe(player, level, startPoint, start, start.move(resolved));
+        }
         var evaluated = evaluateResolvedHypothetical(
                 player,
                 level,
@@ -966,12 +975,80 @@ public final class LocalObservationVolume {
         latest = null;
     }
 
+    private List<ObservationRecord> expandAerial(LocalPlayer player, ClientLevel level,
+            AABB start, Point origin, long revision) {
+        var records = new ArrayList<ObservationRecord>();
+        var queue = new ArrayDeque<AerialNode>();
+        var visited = new HashSet<BlockPos>();
+        queue.add(new AerialNode(start, 0));
+        visited.add(BlockPos.containing(start.getCenter().x, start.minY, start.getCenter().z));
+        int evaluations = 0;
+        while (!queue.isEmpty() && evaluations < MAX_OBSERVATIONS) {
+            var node = queue.removeFirst();
+            for (var direction : net.minecraft.core.Direction.values()) {
+                if (evaluations++ >= MAX_OBSERVATIONS) break;
+                var center = node.box().getCenter();
+                var cell = BlockPos.containing(center.x, node.box().minY, center.z).relative(direction);
+                var target = node.box().move(cell.getX() + 0.5D - center.x,
+                        cell.getY() + Locomotion.FLIGHT_FEET_OFFSET - node.box().minY, cell.getZ() + 0.5D - center.z);
+                if (origin.distanceSquared(point(target.getCenter())) > RADIUS_SQUARED) continue;
+                var record = aerialRecord(player, level, origin, node.box(), target, node.depth() + 1, revision);
+                records.add(record);
+                if (record.loaded() == LoadedState.LOADED && record.hazard() == Hazard.NONE
+                        && visited.add(cell)) queue.addLast(new AerialNode(target, node.depth() + 1));
+            }
+        }
+        return List.copyOf(records);
+    }
+
+    private record AerialNode(AABB box, int depth) { }
+
+    /** Only derived, bounded local traversability leaves this classifier. */
+    private ObservationRecord aerialRecord(LocalPlayer player, ClientLevel level, Point origin,
+            AABB from, AABB to, int depth, long revision) {
+        var corridor = from.minmax(to);
+        boolean loaded = aerialLoaded(level, origin, corridor);
+        boolean safe = loaded && aerialPathSafe(player, level, origin, from, to);
+        var fromPoint = point(from.getCenter());
+        var toPoint = point(to.getCenter());
+        return new ObservationRecord(player.tickCount, revision, depth, fromPoint, toPoint, toPoint,
+                loaded ? Support.ABSENT : Support.UNKNOWN,
+                !loaded ? Clearance.UNKNOWN : safe ? Clearance.CLEAR : Clearance.BLOCKED,
+                depth == 0 ? Transition.STATIONARY : !loaded ? Transition.UNKNOWN
+                        : safe ? Transition.PROBE_ALLOWED : Transition.BLOCKED,
+                loaded ? Fluid.NONE : Fluid.UNKNOWN, false,
+                !loaded ? Hazard.UNKNOWN : safe ? Hazard.NONE : Hazard.COLLISION,
+                loaded ? LoadedState.LOADED : LoadedState.UNKNOWN,
+                loaded ? Drop.AIRBORNE_OR_SWIMMING : Drop.UNKNOWN, !safe,
+                depth == 0 ? Locomotion.GROUND : Locomotion.aerialMode(player));
+    }
+
+    private static boolean aerialLoaded(ClientLevel level, Point origin, AABB region) {
+        return level.getWorldBorder().isWithinBounds(region)
+                && !level.isOutsideBuildHeight(Mth.floor(region.minY))
+                && !level.isOutsideBuildHeight(Mth.floor(Math.nextDown(region.maxY)))
+                && loadedState(level, origin, List.of(region)) == LoadedState.LOADED;
+    }
+
+    private static boolean aerialPathSafe(LocalPlayer player, ClientLevel level, Point origin,
+            AABB from, AABB to) {
+        var mode = Locomotion.aerialMode(player);
+        var corridor = from.minmax(to).deflate(1.0E-7D);
+        if (!mode.aerial() || !aerialLoaded(level, origin, corridor)) return false;
+        // Spectator's vanilla no-clip needs no block identity or collision query.
+        return mode == Locomotion.SPECTATOR || level.noCollision(player, corridor)
+                && fluid(level, origin, List.of(corridor)) == Fluid.NONE
+                && damageBlockHazard(level, origin, List.of(corridor)) == Hazard.NONE;
+    }
+
     private List<ObservationRecord> expandTraversable(
             LocalPlayer player,
             ClientLevel level,
             AABB originBox,
             Point origin,
             long worldRevision) {
+        if (Locomotion.observedMode(player).aerial())
+            return expandAerial(player, level, originBox, origin, worldRevision);
         var records = new ArrayList<ObservationRecord>();
         var queue = new ArrayDeque<Node>();
         var reached = new HashSet<NodeKey>();
@@ -1498,7 +1575,7 @@ public final class LocalObservationVolume {
         return switch (locomotion) {
             case LADDER -> safeLadderCell(player, level, origin, box);
             case SCAFFOLDING -> safeScaffoldingCell(player, level, origin, box);
-            case GROUND, WATER -> false;
+            case GROUND, WATER, FLIGHT, SPECTATOR -> false;
         };
     }
 
@@ -1557,7 +1634,7 @@ public final class LocalObservationVolume {
         return switch (locomotion) {
             case LADDER -> ladderPathSafe(player, level, origin, from, to);
             case SCAFFOLDING -> scaffoldingPathSafe(player, level, origin, from, to);
-            case GROUND, WATER -> false;
+            case GROUND, WATER, FLIGHT, SPECTATOR -> false;
         };
     }
 
@@ -1617,7 +1694,7 @@ public final class LocalObservationVolume {
         return switch (locomotion) {
             case LADDER -> exactLadderAtFeet(level, box);
             case SCAFFOLDING -> exactScaffoldingAtFeet(level, box);
-            case GROUND, WATER -> false;
+            case GROUND, WATER, FLIGHT, SPECTATOR -> false;
         };
     }
 
@@ -1684,6 +1761,8 @@ public final class LocalObservationVolume {
             AABB box,
             Point origin,
             long worldRevision) {
+        if (Locomotion.aerialMode(player).aerial() && (!player.onGround() || player.getAbilities().flying))
+            return aerialRecord(player, level, origin, box, box, 0, worldRevision);
         var loaded = loadedState(level, origin, List.of(box, supportSlab(box)));
         if (loaded == LoadedState.UNKNOWN) {
             return unknownRecord(
@@ -1944,6 +2023,8 @@ public final class LocalObservationVolume {
             AgentMovementTrace.TickMovement frame,
             AgentMovementTrace.CollisionResolution collision,
             long worldRevision) {
+        if (Locomotion.observedMode(player).aerial())
+            return aerialRecord(player, level, origin, collision.start(), collision.resolvedEnd(), 1, worldRevision);
         var start = collision.start();
         var end = collision.resolvedEnd();
         var from = point(start.getCenter());

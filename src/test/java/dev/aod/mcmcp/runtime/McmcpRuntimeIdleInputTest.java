@@ -64,10 +64,21 @@ class McmcpRuntimeIdleInputTest {
     private static void assertIdleDoesNotTouchClient(McmcpRuntime runtime) throws Exception {
         var tick = McmcpRuntime.class.getDeclaredMethod("tickAgentAction", Minecraft.class);
         tick.setAccessible(true);
+        var v2Tick = McmcpRuntime.class.getDeclaredMethod("tickV2InputSequence", Minecraft.class);
+        v2Tick.setAccessible(true);
+        var moveTick = McmcpRuntime.class.getDeclaredMethod("tickV2Move", Minecraft.class);
+        moveTick.setAccessible(true);
+        var breakTick = McmcpRuntime.class.getDeclaredMethod("tickV2Break", Minecraft.class);
+        breakTick.setAccessible(true);
         // A null client makes ANY cleanup/input dispatch fail. Idle must be a pure no-op,
         // including across the many ticks needed to draw a bow or drink a potion.
         assertThatCode(() -> {
-            for (int i = 0; i < 100; i++) tick.invoke(runtime, new Object[] { null });
+            for (int i = 0; i < 100; i++) {
+                v2Tick.invoke(runtime, new Object[] { null });
+                moveTick.invoke(runtime, new Object[] { null });
+                breakTick.invoke(runtime, new Object[] { null });
+                tick.invoke(runtime, new Object[] { null });
+            }
         }).doesNotThrowAnyException();
     }
 }

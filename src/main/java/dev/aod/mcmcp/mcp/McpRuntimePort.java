@@ -19,11 +19,20 @@ import java.util.UUID;
 public interface McpRuntimePort {
     CompletionStage<RuntimeReply> submit(RuntimeCommand command, RuntimeCallContext context);
 
-    sealed interface RuntimeCommand permits GetState, GetObservation, StartAction, GetAction,
+    sealed interface RuntimeCommand permits GetState, GetMcpStatus, GetObservation, StartAction,
+            StartMove, StartLook, StartBreakBlock, StartPlaceBlock, StartInteract, StartInventory,
+            StartInputSequence, StartClick, StartScript, GetAction,
             CancelAction, ConfirmActionDelivery, AbandonActionDelivery,
             ConfirmObservationDelivery, AbandonObservationDelivery, GetSnapshot, CompareBlockPlan,
             GetRecipes, ListRoutines, GetRoutine, StartRoutine, CancelRoutine, EmergencyStop {
         String toolName();
+    }
+
+    record GetMcpStatus() implements RuntimeCommand {
+        @Override
+        public String toolName() {
+            return "agent_get_mcp_status";
+        }
     }
 
     record GetState(Map<String, Object> arguments) implements RuntimeCommand {
@@ -60,6 +69,109 @@ public interface McpRuntimePort {
         @Override
         public String toolName() {
             return "agent_start_action";
+        }
+    }
+
+    /** Public v2 dispatch path for a delivery-gated job. */
+    record StartInputSequence(Map<String, Object> arguments) implements RuntimeCommand {
+        public StartInputSequence {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "agent_input_sequence";
+        }
+    }
+
+    /** Public v2 world clicks share the finite input job. */
+    record StartClick(Map<String, Object> arguments) implements RuntimeCommand {
+        public StartClick {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "agent_click";
+        }
+    }
+
+    /** Public v2 script dispatch path for a delivery-gated job. */
+    record StartScript(Map<String, Object> arguments) implements RuntimeCommand {
+        public StartScript {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "agent_run_script";
+        }
+    }
+
+    /** Public v2 dispatch path for a delivery-gated job. */
+    record StartMove(Map<String, Object> arguments) implements RuntimeCommand {
+        public StartMove {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "agent_move";
+        }
+    }
+
+    /** Public v2 dispatch path for a delivery-gated job. */
+    record StartBreakBlock(Map<String, Object> arguments) implements RuntimeCommand {
+        public StartBreakBlock {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "agent_break_block";
+        }
+    }
+
+    /** Public v2 dispatch path for a delivery-gated job. */
+    record StartPlaceBlock(Map<String, Object> arguments) implements RuntimeCommand {
+        public StartPlaceBlock {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "agent_place_block";
+        }
+    }
+
+    /** Camera-only action sharing the finite operation lifecycle. */
+    record StartLook(Map<String, Object> arguments) implements RuntimeCommand {
+        public StartLook { arguments = immutableCopy(arguments); }
+        @Override
+        public String toolName() { return "agent_look"; }
+    }
+
+    /** Public v2 block-state interaction path. */
+    record StartInteract(Map<String, Object> arguments) implements RuntimeCommand {
+        public StartInteract {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "agent_interact";
+        }
+    }
+
+    /** Public v2 player-inventory job path. */
+    record StartInventory(Map<String, Object> arguments) implements RuntimeCommand {
+        public StartInventory {
+            arguments = immutableCopy(arguments);
+        }
+
+        @Override
+        public String toolName() {
+            return "agent_inventory";
         }
     }
 

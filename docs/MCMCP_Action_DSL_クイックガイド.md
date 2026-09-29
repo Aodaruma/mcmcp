@@ -1,5 +1,7 @@
 # MCMCP Action DSL クイックガイド
 
+> この文書はv1専用です。v2では`agent_start_action`を廃止しています。[v2の公開ツール案内](MCMCP_Public_API_v2_クイックガイド.md)を参照してください。
+
 ### kill-zone許可経路（2026-09-05更新）
 
 2026-07-28 MCP form elicitation対応clientでは、`operate_kill_zone`の既定許可経路はMinecraft内GrantではなくMCP formです。初回要求はActionやMinecraft内同意UI・input lockを作らず`input_required`と署名済み`requestState`を返します。LLM側で利用者の明示許可を受け、同じ要求と`requestState`、`accept / approve:true`を再送したときだけfinite Actionを予約します。物理Grantはform非対応client向けの明示的fallbackです。runner mockは初回無Action、同一要求のapprove再送、terminal成功、同意state非保持までを検査します。
@@ -25,7 +27,7 @@ Action本文は通常のJSONなので、LLMは`agent_get_action.source.canonical
 
 同じ応答の`effects`は、実行中に観測・ACKできた変更を順番に残す上限64件のledgerです。`confirmed`はserver由来のbefore / afterを確認済み、`unknown`はmutation dispatch後のafter-stateを確定できなかったことを意味します。`unknown`を成功扱いしたりblind replayしたりせず、必ず再観測してください。`partial`は非terminal中は`null`、terminal後は割込みnodeと未実行node上限、再観測要否を返します。
 
-利用可能な全opcodeは`agent_get_state.policy.action_dsl.available_operations`にあり、必要capability、opaque ref field、現在のローカルgrantとの差分を機械可読に返します。`MISSING_CAPABILITY`時は同じ場所のguidanceに従い、必要値を`program.capabilities`へ宣言します。ローカル側のgrant不足は`control.granted_capabilities`と`locally_missing_capabilities`で区別します。公開Toolは引き続き5件です。
+利用可能な全opcodeは`agent_get_state.policy.action_dsl.available_operations`にあり、必要capability、opaque ref field、現在のローカルgrantとの差分を機械可読に返します。`MISSING_CAPABILITY`時は同じ場所のguidanceに従い、必要値を`program.capabilities`へ宣言します。ローカル側のgrant不足は`control.granted_capabilities`と`locally_missing_capabilities`で区別します。MCP制御・world session・最新frame・実行中actionの相関情報は`agent_get_mcp_status({})`で取得します。
 
 汎用破壊の最初の閉じたprimitiveは`break_known_block`です。`target`、`face`、完全な`expected_state`をcurrentな`visible_surface`からそのままコピーし、`tool_item`、`expected_drop`、`minimum_inventory_count`を宣言します。現時点の許可組合せは、oak/birch log＋対応するlog drop＋Vanilla axe、またはcobblestone＋`minecraft:iron_pickaxe`＋cobblestoneだけです。成功にはserver ACK、authoritative air、同期待dropのserver-synchronized inventory増加と絶対目標到達が必要です。`repeat`内には置けず、次の破壊は再観測して新しいActionにします。
 

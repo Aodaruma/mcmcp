@@ -188,7 +188,7 @@ def build(version: str, jar: Path | None, output: Path, tag: str | None = None) 
         for name in ('LICENSE', 'NOTICE.md'):
             shutil.copy2(ROOT / name, staging / name)
         shutil.copy2(ROOT / 'tools/release/OFL-NotoSansJP.txt', staging / 'OFL-NotoSansJP.txt')
-        shutil.copy2(ROOT / 'docs/MCMCP_Action_DSL_クイックガイド.md', staging / 'ACTION_DSL.md')
+        shutil.copy2(ROOT / 'docs/MCMCP_Public_API_v2_クイックガイド.md', staging / 'PUBLIC_API.md')
         source = 'https://github.com/Aodaruma/mcmcp/tree/' + (tag or 'main')
         (staging / 'SOURCE.txt').write_text(f'MCMCP {version}\nMPL-2.0 source: {source}\n', encoding='utf-8')
         allowed = [path for path in staging.rglob('*') if path.is_file() and path.suffix != '.html']

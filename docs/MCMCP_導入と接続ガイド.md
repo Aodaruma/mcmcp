@@ -179,8 +179,8 @@ tokenそのものをトラブル報告へ添付してはいけない。
 
 ### 接続とActionの失敗を分けて確認する / Separate connection and Action failures
 
-接続を詳しく確認する場合は、repoに含まれる[接続診断ツール](../tools/mcp/README.md)を `-Check` で実行します。接続と固定5 Toolの登録だけを検査し、Minecraft内の操作は開始しません。通常のMCP Toolが使える場合はそちらを優先してください。<br>
-Use the repository's [connection diagnostic](../tools/mcp/README.md) with `-Check` to test connectivity and the five tools without starting gameplay. Prefer normal MCP tools whenever available.
+接続を詳しく確認する場合は、repoに含まれる[接続診断ツール](../tools/mcp/README.md)を `-Check` で実行します。接続と公開catalog記載のTool登録だけを検査し、Minecraft内の操作は開始しません。通常のMCP Toolが使える場合はそちらを優先してください。<br>
+Use the repository's [connection diagnostic](../tools/mcp/README.md) with `-Check` to test connectivity and the catalog-listed tools without starting gameplay. Prefer normal MCP tools whenever available.
 
 接続拒否・HTTP 401・protocol不一致と、Toolの `isError:true` は別の失敗です。後者はMCPまで到達したうえで、操作許可や観測などの条件によって拒否されています。開始が成功して有効な `action_id` を受け取った場合だけ、そのIDで待機します。IDがない失敗応答を空文字や仮のIDで繰り返し照会しないでください。<br>
 Connection/HTTP/protocol failures differ from a Tool's `isError:true`: the latter reached MCP but was rejected by its operation checks. Only poll a valid ID returned by a successful start. Never substitute an empty or guessed ID.

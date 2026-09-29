@@ -1,0 +1,49 @@
+{
+  "status": "passed",
+  "phase": "Hazard",
+  "failure": null,
+  "active_action_id": null,
+  "final_control": {
+    "schema_version": 2,
+    "control_mode": "ready",
+    "game_paused": false,
+    "ready_expires_at": null,
+    "world_session_id": "f4b2d604-2959-4982-b37f-8e7c6f96df69",
+    "latest_frame_id": "obs-5bdf0b9727ec7530",
+    "running_action_id": null
+  },
+  "events": [
+    {
+      "arguments": {
+        "steps": [
+          {
+            "inputs": [
+              "sneak"
+            ],
+            "hold_ticks": 1200
+          }
+        ]
+      },
+      "receipt": {
+        "action_id": "5e1d3d1c-31ea-463a-ae81-15ade51cf49b",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "tool": "agent_input_sequence"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "5e1d3d1c-31ea-463a-ae81-15ade51cf49b",
+        "kind": "input_sequence",
+        "state": "failed",
+        "progress": {
+          "completed_operations": 35,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": "safety_interrupted"
+      }
+    }
+  ]
+}

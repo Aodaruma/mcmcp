@@ -1,0 +1,101 @@
+{
+  "jar_changed": false,
+  "control": {
+    "ok": true,
+    "result": {
+      "schema_version": 2,
+      "control_mode": "off",
+      "game_paused": true,
+      "ready_expires_at": null,
+      "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+      "latest_frame_id": "obs-0a771e4187cd9fbd",
+      "running_action_id": null
+    }
+  },
+  "fixture_stop_executed": true,
+  "gui": "Game Menu; MCP OFF; original first-person view restored",
+  "utc": "2026-09-29T05:47:48.2190968Z",
+  "state": {
+    "ok": true,
+    "result": {
+      "schema_version": 2,
+      "player": {
+        "on_fire": false,
+        "yaw": 0.0,
+        "pitch": 60.0,
+        "position": {
+          "z": 200.5,
+          "x": 200.5,
+          "y": 201.0
+        },
+        "air": 300,
+        "status_effects": [],
+        "dimension": "minecraft:overworld",
+        "absorption": 0.0,
+        "max_air": 300,
+        "health": 20.0,
+        "hunger": 20,
+        "submerged": false
+      },
+      "hotbar": {
+        "slots": [
+          {
+            "slot": 0,
+            "selected": false,
+            "item": null,
+            "count": 0
+          },
+          {
+            "slot": 1,
+            "selected": false,
+            "item": null,
+            "count": 0
+          },
+          {
+            "slot": 2,
+            "selected": false,
+            "item": null,
+            "count": 0
+          },
+          {
+            "slot": 3,
+            "selected": false,
+            "item": null,
+            "count": 0
+          },
+          {
+            "slot": 4,
+            "selected": false,
+            "item": null,
+            "count": 0
+          },
+          {
+            "slot": 5,
+            "selected": true,
+            "item": null,
+            "count": 0
+          },
+          {
+            "slot": 6,
+            "selected": false,
+            "item": null,
+            "count": 0
+          },
+          {
+            "slot": 7,
+            "selected": false,
+            "item": null,
+            "count": 0
+          },
+          {
+            "slot": 8,
+            "selected": false,
+            "item": null,
+            "count": 0
+          }
+        ],
+        "selected_slot": 5
+      }
+    }
+  }
+}

@@ -1,0 +1,443 @@
+package dev.aod.mcmcp.runtime;
+
+import dev.aod.mcmcp.agent.action.AgentJobStore;
+import dev.aod.mcmcp.agent.input.FiniteInputSequence;
+import dev.aod.mcmcp.agent.input.InputSequenceJobExecution;
+import dev.aod.mcmcp.agent.input.InputSequenceLeaseDriver;
+import dev.aod.mcmcp.agent.navigation.CoordinateMoveJobExecution;
+import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
+import dev.aod.mcmcp.agent.navigation.NavCell;
+import dev.aod.mcmcp.agent.navigation.RoutePlan;
+import dev.aod.mcmcp.agent.script.ScriptJobExecution;
+import dev.aod.mcmcp.agent.action.MinecraftActionPrimitiveExecutor;
+import dev.aod.mcmcp.client.AgentInputState;
+import dev.aod.mcmcp.mcp.RuntimeCallContext;
+import dev.aod.mcmcp.routine.BoundedInputLease;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
+import java.lang.reflect.Method;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class McmcpRuntimeV2InputRoutingTest {
+    private final McmcpRuntime runtime = new McmcpRuntime("test", "26.2.0.59");
+
+    @AfterEach
+    void closeVoiceListener() throws Exception {
+        ((AutoCloseable) field("voiceChat").get(runtime)).close();
+    }
+
+    @Test
+    void deliveryStatusAndCancelRouteToTheSameV2Job() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("v2Jobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.INPUT_SEQUENCE, session, 1, Long.MAX_VALUE);
+        installExecution(store, id, session);
+
+        var confirmed = invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id);
+        assertThat(confirmed).isEqualTo(Map.of("action_id", id.toString(), "confirmed", true));
+        var queued = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString()));
+        assertThat(queued.get("action_id")).isEqualTo(id.toString());
+        assertThat(queued.get("state")).isEqualTo("queued");
+        assertThat(queued.get("kind")).isEqualTo("input_sequence");
+
+        var cancelled = (Map<?, ?>) invoke("cancelAgentAction",
+                new Class<?>[]{net.minecraft.client.Minecraft.class, Map.class},
+                null, Map.of("action_id", id.toString()));
+        assertThat(cancelled.get("cancel_requested")).isEqualTo(true);
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.CANCELLED);
+        assertThat(field("v2InputExecution").get(runtime)).isNull();
+        assertThat(invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString())))
+                .asString().contains("cancelled");
+    }
+
+    @Test
+    void abandonedResponseCannotStartInput() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("v2Jobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.INPUT_SEQUENCE, session, 1, Long.MAX_VALUE);
+        installExecution(store, id, session);
+
+        var abandoned = invoke("abandonAgentActionDelivery", new Class<?>[]{UUID.class}, id);
+        assertThat(abandoned).isEqualTo(Map.of("action_id", id.toString(), "abandoned", true));
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.FAILED);
+        assertThat(field("v2InputExecution").get(runtime)).isNull();
+        var lateConfirm = invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id);
+        assertThat(lateConfirm).isEqualTo(Map.of("action_id", id.toString(), "confirmed", false));
+    }
+
+    @Test
+    void lookDeliveryCancellationAndAbandonmentReleaseItsOwner() throws Exception {
+        for (boolean delivered : new boolean[]{true, false}) {
+            var session = UUID.randomUUID();
+            var store = (AgentJobStore) field("v2Jobs").get(runtime);
+            var id = store.reserve(AgentJobStore.Kind.LOOK, session, 100, Long.MAX_VALUE);
+            field("v2InteractExecution").set(runtime, new V2OperationJobExecution(
+                    store, id, session, new V2OperationJobExecution.Driver() {
+                        @Override public void begin(long tick, java.util.function.BooleanSupplier allowed) {
+                            throw new AssertionError("a stopped look must not start");
+                        }
+                        @Override public V2OperationJobExecution.Step tick(long tick,
+                                java.util.function.BooleanSupplier allowed) {
+                            throw new AssertionError("a stopped look must not tick");
+                        }
+                        @Override public Map<String, Object> result() { return Map.of(); }
+                        @Override public void close() { }
+                    }, () -> true));
+            if (delivered) {
+                assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                        .isEqualTo(Map.of("action_id", id.toString(), "confirmed", true));
+                var queued = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                        Map.of("action_id", id.toString()));
+                assertThat(queued.get("kind")).isEqualTo("look");
+                invoke("cancelAgentAction", new Class<?>[]{net.minecraft.client.Minecraft.class, Map.class},
+                        null, Map.of("action_id", id.toString()));
+                assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.CANCELLED);
+            } else {
+                invoke("abandonAgentActionDelivery", new Class<?>[]{UUID.class}, id);
+                assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.FAILED);
+                assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                        .isEqualTo(Map.of("action_id", id.toString(), "confirmed", false));
+            }
+            assertThat(field("v2InteractExecution").get(runtime)).isNull();
+        }
+    }
+
+    @Test
+    void moveUsesSharedDeliveryStatusAndCancelRouting() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("v2Jobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.MOVE, session, 10, Long.MAX_VALUE);
+        field("v2MoveExecution").set(runtime, new CoordinateMoveJobExecution(
+                store, id, session, new NavCell("overworld", 1, 64, 0),
+                0.25D, 16.0D, new CoordinateMoveJobExecution.MovementDriver() {
+                    @Override public void begin(RoutePlan route, double tolerance) { }
+                    @Override public MinecraftActionPrimitiveExecutor.TickResult tick(
+                            KnownTraversabilitySnapshot map, double remainingDistance,
+                            long clientTick, java.util.function.BooleanSupplier outputAllowed) {
+                        throw new AssertionError("a cancelled move must not tick");
+                    }
+                    @Override public boolean active() { return false; }
+                    @Override public void close() { }
+                }, () -> true));
+
+        assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                .isEqualTo(Map.of("action_id", id.toString(), "confirmed", true));
+        var queued = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString()));
+        assertThat(queued.get("kind")).isEqualTo("move");
+        assertThat(queued.get("state")).isEqualTo("queued");
+        var cancelled = (Map<?, ?>) invoke("cancelAgentAction",
+                new Class<?>[]{net.minecraft.client.Minecraft.class, Map.class},
+                null, Map.of("action_id", id.toString()));
+        assertThat(cancelled.get("cancel_requested")).isEqualTo(true);
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.CANCELLED);
+        assertThat(field("v2MoveExecution").get(runtime)).isNull();
+    }
+
+    @Test
+    void breakUsesSharedDeliveryStatusAndCancelRouting() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("v2Jobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.BREAK_BLOCK, session, 10, Long.MAX_VALUE);
+        var request = V2BreakArguments.parse(Map.of(
+                "x", 1, "y", 64, "z", 0), "overworld");
+        field("v2BreakExecution").set(runtime, new V2BlockJobExecution<>(
+                store, id, session, AgentJobStore.Kind.BREAK_BLOCK, request,
+                new V2BlockJobExecution.Driver<V2BreakArguments>() {
+                    @Override public String dimension() { return "overworld"; }
+                    @Override public V2BlockJobExecution.BeginResult begin(NavCell target,
+                            V2BreakArguments args,
+                            java.util.function.BooleanSupplier outputAllowed) {
+                        throw new AssertionError("a cancelled break must not start");
+                    }
+                    @Override public V2BlockJobExecution.StepResult tick(long clientTick,
+                            java.util.function.BooleanSupplier outputAllowed) {
+                        throw new AssertionError("a cancelled break must not tick");
+                    }
+                    @Override public void close() { }
+                }, () -> true));
+        assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                .isEqualTo(Map.of("action_id", id.toString(), "confirmed", true));
+        var queued = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString()));
+        assertThat(queued.get("kind")).isEqualTo("break_block");
+        assertThat(queued.get("state")).isEqualTo("queued");
+        var progress = (Map<?, ?>) queued.get("progress");
+        assertThat(progress.get("scanned_cells")).isEqualTo(0);
+        assertThat(progress.get("broken_blocks")).isEqualTo(0);
+        var cancelled = (Map<?, ?>) invoke("cancelAgentAction",
+                new Class<?>[]{net.minecraft.client.Minecraft.class, Map.class},
+                null, Map.of("action_id", id.toString()));
+        assertThat(cancelled.get("cancel_requested")).isEqualTo(true);
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.CANCELLED);
+        assertThat(field("v2BreakExecution").get(runtime)).isNull();
+    }
+
+    @Test
+    void clickUsesTheSameDeliveryStatusAndCancelOwner() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("v2Jobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.CLICK, session, 1, Long.MAX_VALUE);
+        var sequence = V2ClickArguments.parse(Map.of("button", "middle")).sequence();
+        field("v2InputExecution").set(runtime, new InputSequenceJobExecution(
+                store, id, session, AgentJobStore.Kind.CLICK,
+                new InputSequenceLeaseDriver(sequence, AgentInputState.global()),
+                () -> true, ignored -> { }));
+        field("v2ClickTarget").set(runtime,
+                new V2ClickArguments.BlockTarget(1, 64, 0, "minecraft:lever"));
+
+        assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                .isEqualTo(Map.of("action_id", id.toString(), "confirmed", true));
+        var queued = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString()));
+        assertThat(queued.get("kind")).isEqualTo("click");
+        var cancelled = (Map<?, ?>) invoke("cancelAgentAction",
+                new Class<?>[]{net.minecraft.client.Minecraft.class, Map.class},
+                null, Map.of("action_id", id.toString()));
+        assertThat(cancelled.get("cancel_requested")).isEqualTo(true);
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.CANCELLED);
+        assertThat(field("v2InputExecution").get(runtime)).isNull();
+        assertThat(field("v2ClickTarget").get(runtime)).isNull();
+    }
+
+    @Test
+    void anUnconfirmedScriptCanBeCancelledBeforeItsWorkerStarts() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("scriptJobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.SCRIPT, session, 2, Long.MAX_VALUE);
+        field("scriptExecution").set(runtime, new ScriptJobExecution(
+                store, id, session, "move(x=1);", Set.of("move"), 100, 10, 2,
+                new ScriptJobExecution.CommandRunner() {
+                    @Override public ScriptJobExecution.Outcome execute(String name,
+                            Map<String, Object> arguments,
+                            java.util.function.BooleanSupplier cancelled) {
+                        throw new AssertionError("unconfirmed script must not execute");
+                    }
+                    @Override public void cancelActive() { }
+                }, () -> true, Long.MAX_VALUE));
+
+        var queued = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString()));
+        assertThat(queued.get("kind")).isEqualTo("script");
+        assertThat(queued.get("state")).isEqualTo("unconfirmed");
+        var cancelled = (Map<?, ?>) invoke("cancelAgentAction",
+                new Class<?>[]{net.minecraft.client.Minecraft.class, Map.class},
+                null, Map.of("action_id", id.toString()));
+        assertThat(cancelled.get("cancel_requested")).isEqualTo(true);
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.CANCELLED);
+        assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                .isEqualTo(Map.of("action_id", id.toString(), "confirmed", false));
+    }
+
+    @Test
+    void deliveredScriptStartsAWorkerAndPublishesTheSharedResultAfterRelease() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("scriptJobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.SCRIPT, session, 1, Long.MAX_VALUE);
+        var executed = new java.util.concurrent.CountDownLatch(1);
+        field("scriptExecution").set(runtime, new ScriptJobExecution(
+                store, id, session, "move(x=1);", Set.of("move"), 100, 10, 1,
+                new ScriptJobExecution.CommandRunner() {
+                    @Override public ScriptJobExecution.Outcome execute(String name,
+                            Map<String, Object> arguments,
+                            java.util.function.BooleanSupplier cancelled) {
+                        executed.countDown();
+                        return ScriptJobExecution.Outcome.SUCCESS;
+                    }
+                    @Override public void cancelActive() { }
+                }, () -> true, Long.MAX_VALUE));
+
+        assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                .isEqualTo(Map.of("action_id", id.toString(), "confirmed", true));
+        assertThat(executed.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+        while (!store.get(id).state().terminal() && System.nanoTime() < deadline) {
+            invoke("tickV2Script", new Class<?>[0]);
+            Thread.sleep(5);
+        }
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.SUCCEEDED);
+        var summary = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString()));
+        assertThat(summary.containsKey("result")).isFalse();
+        var result = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString(), "include_result", true));
+        assertThat(result.get("kind")).isEqualTo("script");
+        assertThat(((Map<?, ?>) result.get("result")).get("completed_commands")).isEqualTo(1);
+    }
+
+    @Test
+    void placeProgressUsesTheSharedActionStatusWithoutBreakLabels() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("v2Jobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.PLACE_BLOCK, session, 10, Long.MAX_VALUE);
+        store.confirm(id, 1);
+        store.start(id, session);
+        store.recordBlockProgress(id, 2, 1);
+        store.recordResult(id, Map.of("confirmed_count", 1));
+        var payload = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString()));
+        assertThat(payload.get("kind")).isEqualTo("place_block");
+        assertThat(payload.containsKey("result")).isFalse();
+        var detailed = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString(), "include_result", true));
+        assertThat(detailed.get("result")).isEqualTo(Map.of("confirmed_count", 1));
+        var publicSummary = runtime.submit(new dev.aod.mcmcp.mcp.McpRuntimePort.GetAction(
+                Map.of("action_id", id.toString())),
+                dev.aod.mcmcp.mcp.RuntimeCallContext.withTimeout(
+                        java.time.Duration.ofSeconds(2)))
+                .toCompletableFuture().get();
+        assertThat(publicSummary.successful()).isTrue();
+        assertThat(publicSummary.data().containsKey("result")).isFalse();
+        var publicDetail = runtime.submit(new dev.aod.mcmcp.mcp.McpRuntimePort.GetAction(
+                Map.of("action_id", id.toString(), "include_result", true)),
+                dev.aod.mcmcp.mcp.RuntimeCallContext.withTimeout(
+                        java.time.Duration.ofSeconds(2)))
+                .toCompletableFuture().get();
+        assertThat(publicDetail.successful()).isTrue();
+        assertThat(publicDetail.data().get("result"))
+                .isEqualTo(Map.of("confirmed_count", 1));
+        var progress = (Map<?, ?>) payload.get("progress");
+        assertThat(progress.get("scanned_cells")).isEqualTo(2);
+        assertThat(progress.get("placed_blocks")).isEqualTo(1);
+        assertThat(progress.containsKey("broken_blocks")).isFalse();
+    }
+
+    @Test
+    void placeDeliveryAndCancelRouteToItsOwner() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("v2Jobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.PLACE_BLOCK, session, 10, Long.MAX_VALUE);
+        var request = V2PlaceArguments.parse(Map.of(
+                "x", 1, "y", 64, "z", 0, "block", "minecraft:stone"),
+                "overworld");
+        field("v2PlaceExecution").set(runtime, new V2BlockJobExecution<>(
+                store, id, session, AgentJobStore.Kind.PLACE_BLOCK, request,
+                new V2BlockJobExecution.Driver<V2PlaceArguments>() {
+                    @Override public String dimension() { return "overworld"; }
+                    @Override public V2BlockJobExecution.BeginResult begin(NavCell target,
+                            V2PlaceArguments args,
+                            java.util.function.BooleanSupplier outputAllowed) {
+                        throw new AssertionError("a cancelled place must not start");
+                    }
+                    @Override public V2BlockJobExecution.StepResult tick(long clientTick,
+                            java.util.function.BooleanSupplier outputAllowed) {
+                        throw new AssertionError("a cancelled place must not tick");
+                    }
+                    @Override public void close() { }
+                }, () -> true));
+        assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                .isEqualTo(Map.of("action_id", id.toString(), "confirmed", true));
+        var cancelled = (Map<?, ?>) invoke("cancelAgentAction",
+                new Class<?>[]{net.minecraft.client.Minecraft.class, Map.class},
+                null, Map.of("action_id", id.toString()));
+        assertThat(cancelled.get("cancel_requested")).isEqualTo(true);
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.CANCELLED);
+        assertThat(field("v2PlaceExecution").get(runtime)).isNull();
+    }
+
+    @Test
+    void interactDeliveryStatusAndCancelRouteToItsOwner() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("v2Jobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.INTERACT, session, 10, Long.MAX_VALUE);
+        installInteractExecution(store, id, session);
+
+        assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                .isEqualTo(Map.of("action_id", id.toString(), "confirmed", true));
+        store.start(id, session);
+        store.recordBlockProgress(id, 1, 1);
+        var result = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString()));
+        assertThat(result.get("kind")).isEqualTo("interact");
+        assertThat(((Map<?, ?>) result.get("progress")).get("interacted_blocks"))
+                .isEqualTo(1);
+        var cancelled = (Map<?, ?>) invoke("cancelAgentAction",
+                new Class<?>[]{net.minecraft.client.Minecraft.class, Map.class},
+                null, Map.of("action_id", id.toString()));
+        assertThat(cancelled.get("cancel_requested")).isEqualTo(true);
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.CANCELLED);
+        assertThat(field("v2InteractExecution").get(runtime)).isNull();
+    }
+
+    @Test
+    void abandonedInteractDeliveryReleasesTheJobOwner() throws Exception {
+        var session = UUID.randomUUID();
+        var store = (AgentJobStore) field("v2Jobs").get(runtime);
+        var id = store.reserve(AgentJobStore.Kind.INTERACT, session, 10, Long.MAX_VALUE);
+        installInteractExecution(store, id, session);
+
+        assertThat(invoke("abandonAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                .isEqualTo(Map.of("action_id", id.toString(), "abandoned", true));
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.FAILED);
+        assertThat(field("v2InteractExecution").get(runtime)).isNull();
+    }
+
+    private void installInteractExecution(AgentJobStore store, UUID id, UUID session)
+            throws Exception {
+        var request = V2BlockInteractArguments.parse(Map.of(
+                "target", "block", "x", 1, "y", 64, "z", 0), "overworld");
+        field("v2InteractExecution").set(runtime, new V2BlockJobExecution<>(
+                store, id, session, AgentJobStore.Kind.INTERACT, request,
+                new V2BlockJobExecution.Driver<V2BlockInteractArguments>() {
+                    @Override public String dimension() { return "overworld"; }
+                    @Override public V2BlockJobExecution.BeginResult begin(NavCell target,
+                            V2BlockInteractArguments args,
+                            java.util.function.BooleanSupplier outputAllowed) {
+                        throw new AssertionError("an unconfirmed interact must not start");
+                    }
+                    @Override public V2BlockJobExecution.StepResult tick(long clientTick,
+                            java.util.function.BooleanSupplier outputAllowed) {
+                        throw new AssertionError("a stopped interact must not tick");
+                    }
+                    @Override public void close() { }
+                }, () -> true));
+    }
+
+    @Test
+    void successiveScriptChildrenShareOneParentDeadline() throws Exception {
+        var session=UUID.randomUUID();
+        var scripts=(AgentJobStore)field("scriptJobs").get(runtime);
+        var jobs=(AgentJobStore)field("v2Jobs").get(runtime);
+        long deadline=System.nanoTime()+java.time.Duration.ofSeconds(30).toNanos();
+        var parent=scripts.reserve(AgentJobStore.Kind.SCRIPT,session,10,deadline);
+        scripts.setDeadline(parent,deadline);
+        var context=RuntimeCallContext.forScriptChild(java.time.Duration.ofSeconds(5),
+                RuntimeCallContext.EvaluationLeaseExpectation.unmanaged());
+        try {
+            for(int i=0;i<2;i++){
+                var child=(UUID)invoke("reserveV2Job",new Class<?>[]{AgentJobStore.Kind.class,UUID.class,int.class,long.class,RuntimeCallContext.class},
+                        AgentJobStore.Kind.INPUT_SEQUENCE,session,1728000,deadline,context);
+                assertThat(jobs.deadlineNanos(child)).isEqualTo(deadline);
+                jobs.abandon(child);
+            }
+        } finally { AgentInputState.global().clearActionDeadline(); }
+    }
+
+    private void installExecution(AgentJobStore store, UUID id, UUID session) throws Exception {
+        var sequence = new FiniteInputSequence(List.of(new FiniteInputSequence.Step(
+                Set.of(BoundedInputLease.Input.USE), 1, 0, 1)));
+        var driver = new InputSequenceLeaseDriver(sequence, AgentInputState.global());
+        field("v2InputExecution").set(runtime, new InputSequenceJobExecution(
+                store, id, session, driver, () -> true));
+    }
+
+    private java.lang.reflect.Field field(String name) throws Exception {
+        var field = McmcpRuntime.class.getDeclaredField(name);
+        field.setAccessible(true);
+        return field;
+    }
+
+    private Object invoke(String name, Class<?>[] types, Object... arguments) throws Exception {
+        Method method = McmcpRuntime.class.getDeclaredMethod(name, types);
+        method.setAccessible(true);
+        return method.invoke(runtime, arguments);
+    }
+}

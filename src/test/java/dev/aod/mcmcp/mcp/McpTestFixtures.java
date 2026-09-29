@@ -14,6 +14,9 @@ final class McpTestFixtures {
 
     static Map<String, Object> state() {
         var result = new LinkedHashMap<>(baseState());
+        result.put("schema_version", 2);
+        result.put("player", nullValue());
+        result.put("hotbar", nullValue());
         result.put("placement_materials", List.of());
         return Map.copyOf(result);
     }
@@ -86,6 +89,18 @@ final class McpTestFixtures {
                         "returned", 0,
                         "truncated", false),
                 "recipes", List.of()));
+        return result;
+    }
+
+    static Map<String, Object> mcpStatus() {
+        var result = new LinkedHashMap<String, Object>();
+        result.put("schema_version", 2);
+        result.put("control_mode", "off");
+        result.put("game_paused", false);
+        result.put("ready_expires_at", nullValue());
+        result.put("world_session_id", nullValue());
+        result.put("latest_frame_id", nullValue());
+        result.put("running_action_id", nullValue());
         return result;
     }
 

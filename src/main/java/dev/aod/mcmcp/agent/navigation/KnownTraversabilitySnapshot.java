@@ -86,7 +86,7 @@ public final class KnownTraversabilitySnapshot {
         for (TraversabilityEdge edge : edges.values()) {
             if (edge.destination()
                     && (edge.key().to().equals(cell)
-                            || edge.locomotion() == Locomotion.GROUND
+                            || (edge.locomotion() == Locomotion.GROUND || edge.locomotion().aerial())
                                     && edge.key().from().equals(cell))) {
                 return true;
             }

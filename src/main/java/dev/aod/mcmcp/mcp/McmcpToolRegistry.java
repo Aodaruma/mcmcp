@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.UUID;
 
-/** Fixed five-tool catalog plus the narrow bridge to the Minecraft client runtime. */
+/** Public tool catalog plus the narrow bridge to the Minecraft client runtime. */
 public final class McmcpToolRegistry {
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().serializeNulls().create();
     private static final Duration ACTION_WAIT_DISPATCH_HEADROOM = Duration.ofSeconds(2);
@@ -305,7 +305,15 @@ public final class McmcpToolRegistry {
     }
 
     private static UUID deliveryActionId(String toolName, Map<String, Object> data) {
-        if (!"agent_start_action".equals(toolName)) return null;
+        if (!"agent_move".equals(toolName)
+                && !"agent_look".equals(toolName)
+                && !"agent_break_block".equals(toolName)
+                && !"agent_place_block".equals(toolName)
+                && !"agent_interact".equals(toolName)
+                && !"agent_inventory".equals(toolName)
+                && !"agent_click".equals(toolName)
+                && !"agent_input_sequence".equals(toolName)
+                && !"agent_run_script".equals(toolName)) return null;
         Object value = data.get("action_id");
         if (!(value instanceof String actionId)) return null;
         try {
@@ -319,8 +327,17 @@ public final class McmcpToolRegistry {
         Map<String, Object> values = jsonMap(arguments);
         return switch (name) {
             case "agent_get_state" -> new McpRuntimePort.GetState(values);
+            case "agent_get_mcp_status" -> new McpRuntimePort.GetMcpStatus();
             case "agent_get_observation" -> new McpRuntimePort.GetObservation(values);
-            case "agent_start_action" -> new McpRuntimePort.StartAction(values);
+            case "agent_move" -> new McpRuntimePort.StartMove(values);
+            case "agent_look" -> new McpRuntimePort.StartLook(values);
+            case "agent_break_block" -> new McpRuntimePort.StartBreakBlock(values);
+            case "agent_place_block" -> new McpRuntimePort.StartPlaceBlock(values);
+            case "agent_interact" -> new McpRuntimePort.StartInteract(values);
+            case "agent_inventory" -> new McpRuntimePort.StartInventory(values);
+            case "agent_click" -> new McpRuntimePort.StartClick(values);
+            case "agent_input_sequence" -> new McpRuntimePort.StartInputSequence(values);
+            case "agent_run_script" -> new McpRuntimePort.StartScript(values);
             case "agent_get_action" -> new McpRuntimePort.GetAction(values);
             case "agent_cancel_action" -> new McpRuntimePort.CancelAction(values);
             default -> throw new AssertionError("Catalog and dispatch table diverged");

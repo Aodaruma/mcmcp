@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.action.AgentActionStore;
+import dev.aod.mcmcp.agent.action.AgentJobStore;
 import dev.aod.mcmcp.agent.dsl.ActionDslException;
 import dev.aod.mcmcp.mcp.McpRuntimePort.RuntimeReply;
 import dev.aod.mcmcp.observation.BlockPlanValidationException;
@@ -70,6 +71,9 @@ final class RuntimeFailures {
             return RuntimeReply.failure("task_busy", "Another action is active", true);
         }
         if (cause instanceof AgentActionStore.NotFoundException) {
+            return RuntimeReply.failure("action_not_found", "The action is not retained", false);
+        }
+        if (cause instanceof AgentJobStore.NotFoundException) {
             return RuntimeReply.failure("action_not_found", "The action is not retained", false);
         }
         if (cause instanceof RuntimeInvocationException invocation) {
