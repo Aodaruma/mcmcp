@@ -26,7 +26,7 @@ class McpPublicV2ToolsTest {
         var names = registry.listResult().getAsJsonArray("tools").asList().stream()
                 .map(tool -> tool.getAsJsonObject().get("name").getAsString()).toList();
         assertThat(names).contains("agent_run_script").doesNotContain("agent_start_action");
-        assertThat(names).hasSize(13);
+        assertThat(names).hasSize(14);
         assertThatThrownBy(() -> registry.prepareCall("agent_start_action",
                 LegacyActionSchema.inputSchema().getAsJsonArray("examples").get(0).getAsJsonObject()))
                 .isInstanceOf(McmcpToolRegistry.UnknownToolException.class);
@@ -34,11 +34,12 @@ class McpPublicV2ToolsTest {
     }
 
     @Test
-    void allEightBasicToolsAreDiscoverableAndDeliveryGated() throws Exception {
+    void allNineBasicToolsAreDiscoverableAndDeliveryGated() throws Exception {
         var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();
         var registry = registry(calls);
         var examples = Map.of(
                 "agent_move", "{\"x\":4,\"y\":65,\"z\":8}",
+                "agent_look", "{\"x\":4.5,\"y\":65.5,\"z\":8.5}",
                 "agent_break_block", "{\"x\":4,\"y\":65,\"z\":8}",
                 "agent_place_block", "{\"x\":4,\"y\":65,\"z\":8,\"block\":\"minecraft:stone\"}",
                 "agent_interact", "{\"target\":\"block\",\"x\":4,\"y\":65,\"z\":8}",
@@ -48,6 +49,7 @@ class McpPublicV2ToolsTest {
                 "agent_run_script", "{\"source\":\"move(x=4, y=65, z=8);\"}");
         var expectedTypes = Map.<String, Class<? extends McpRuntimePort.RuntimeCommand>>of(
                 "agent_move", McpRuntimePort.StartMove.class,
+                "agent_look", McpRuntimePort.StartLook.class,
                 "agent_break_block", McpRuntimePort.StartBreakBlock.class,
                 "agent_place_block", McpRuntimePort.StartPlaceBlock.class,
                 "agent_interact", McpRuntimePort.StartInteract.class,

@@ -180,8 +180,21 @@ class CoordinateGoalPlannerTest {
             assertThat(result.route()).isEmpty();
             assertThat(result.expansions()).isLessThanOrEqualTo(budget.expansions());
         }
-        assertThatThrownBy(() -> new CoordinateGoalPlanner.Budget(4097, 1, 1))
+        assertThatThrownBy(() -> new CoordinateGoalPlanner.Budget(KnownTraversabilityMap.MAX_EDGES + 1, 1, 1))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void continuedTravelCanUseAFullBoundedSessionMap() {
+        var map = map(edge(cell(0, 0), cell(1, 0)));
+        for (int x = 10; x < KnownTraversabilityMap.MAX_EDGES + 9; x++) {
+            map.observe(edge(cell(x, 2), cell(x + 1, 2)));
+        }
+        assertThat(map.snapshot().orElseThrow().edges()).hasSize(KnownTraversabilityMap.MAX_EDGES);
+        var result = plan(new CoordinateGoalPlanner(SESSION, cell(1, 0)), map, cell(0, 0));
+        assertThat(result.status()).isEqualTo(KNOWN_GOAL_ROUTE);
+        assertThat(result.route().orElseThrow().cells()).containsExactly(cell(0, 0), cell(1, 0));
+        assertThat(result.expansions()).isLessThanOrEqualTo(2);
     }
 
     @Test

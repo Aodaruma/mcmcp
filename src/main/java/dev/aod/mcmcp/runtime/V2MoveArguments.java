@@ -11,7 +11,7 @@ import java.util.Set;
 /** Coordinate goal accepted without requiring prior observation of the destination. */
 record V2MoveArguments(NavCell goal, double arrivalRadius,
         double tolerance, int maxTicks, double maxDistance, V2StopCondition stopWhen,
-        boolean clearPath, String bridgeBlock) {
+        boolean clearPath, String bridgeBlock, boolean autoReplan, boolean sneak) {
     V2MoveArguments {
         Objects.requireNonNull(goal, "goal");
         if (bridgeBlock != null && (!clearPath || !bridgeBlock.matches("minecraft:[a-z0-9_./-]{1,112}"))) {
@@ -32,7 +32,7 @@ record V2MoveArguments(NavCell goal, double arrivalRadius,
         RuntimeArguments.requireAllowedKeys(arguments, "agent_move",
                 Set.of("x", "y", "z", "direction", "distance",
                         "arrival_radius", "tolerance", "max_ticks", "max_distance",
-                        "stop_when", "clear_path", "bridge_block"));
+                        "stop_when", "clear_path", "bridge_block", "auto_replan", "sneak"));
         boolean coordinates = arguments.keySet().containsAll(Set.of("x", "y", "z"));
         boolean relative = arguments.keySet().containsAll(Set.of("direction", "distance"));
         if (coordinates == relative || arguments.containsKey("direction") != arguments.containsKey("distance")
@@ -59,7 +59,9 @@ record V2MoveArguments(NavCell goal, double arrivalRadius,
         return new V2MoveArguments(goal, arrivalRadius, tolerance, maxTicks, maxDistance,
                 arguments.containsKey("stop_when") ? V2StopCondition.parse(RuntimeArguments.objectArgument(arguments, "stop_when")) : null,
                 arguments.containsKey("clear_path") && RuntimeArguments.booleanArgument(arguments, "clear_path"),
-                arguments.containsKey("bridge_block") ? RuntimeArguments.stringArgument(arguments, "bridge_block") : null);
+                arguments.containsKey("bridge_block") ? RuntimeArguments.stringArgument(arguments, "bridge_block") : null,
+                !arguments.containsKey("auto_replan") || RuntimeArguments.booleanArgument(arguments, "auto_replan"),
+                arguments.containsKey("sneak") && RuntimeArguments.booleanArgument(arguments, "sneak"));
     }
 
     private static NavCell relativeGoal(NavCell origin, Map<String, Object> arguments) {

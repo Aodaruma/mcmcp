@@ -36,9 +36,14 @@ public final class CoordinateMoveJobExecution {
     private ObstacleDriver obstacles;
     private boolean clearing;
     private int pathReplans;
+    private boolean autoReplan = true;
+    private boolean localObservationRequired;
+    private int localObservationWaitTicks;
 
     public void stopWhen(BooleanSupplier condition) { stopCondition = Objects.requireNonNull(condition); }
     public void clearPathWith(ObstacleDriver driver) { obstacles = Objects.requireNonNull(driver); }
+    public void autoReplan(boolean enabled) { autoReplan = enabled; }
+    public void requireLocalObservation(boolean required) { localObservationRequired = required; }
 
     public CoordinateMoveJobExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
                                       NavCell goal, double tolerance, double maxDistance,
@@ -118,14 +123,14 @@ public final class CoordinateMoveJobExecution {
         }
         // The route driver can finish after currentCell was sampled for this tick. Confirm
         // arrival from the next tick's position without dispatching another movement input.
-        if (awaitingFinalPosition) {
+        if (!localObservationRequired && awaitingFinalPosition) {
             boolean arrived = reached(currentCell);
             retainTerminal(arrived ? AgentJobStore.State.SUCCEEDED
                     : AgentJobStore.State.FAILED,
                     arrived ? null : "goal_not_reached");
             return publishAfterRelease();
         }
-        if (!driver.active() && reached(currentCell)) {
+        if (!localObservationRequired && !driver.active() && reached(currentCell)) {
             retainTerminal(AgentJobStore.State.SUCCEEDED, null);
             return publishAfterRelease();
         }
@@ -134,6 +139,17 @@ public final class CoordinateMoveJobExecution {
             retainTerminal(AgentJobStore.State.FAILED, "tick_limit");
             return publishAfterRelease();
         }
+        if (localObservationRequired) {
+            if (clearing) {
+                retainTerminal(AgentJobStore.State.FAILED, "path_work_safety_interrupted");
+            } else if (localObservationWaitTicks++ == 0) {
+                replan(map, "local_safety_reobservation");
+            } else if (localObservationWaitTicks > MAX_EVIDENCE_WAIT_TICKS) {
+                retainTerminal(AgentJobStore.State.FAILED, "local_safety_unconfirmed");
+            }
+            return terminalIntent == null ? jobs.get(actionId) : publishAfterRelease();
+        }
+        localObservationWaitTicks = 0;
         if (!jobs.canDispatch(actionId, currentWorldSessionId)) {
             retainTerminal(AgentJobStore.State.FAILED, "dispatch_denied");
             return publishAfterRelease();
@@ -143,6 +159,11 @@ public final class CoordinateMoveJobExecution {
                 return clearObstacle(currentCell, clientTick, outputAllowed, map);
             }
             if (!driver.active()) {
+                if (!driver.prepare(clientTick, () -> jobs.canDispatch(actionId, currentWorldSessionId)
+                        && outputAllowed.getAsBoolean())) {
+                    jobs.recordOperation(actionId);
+                    return jobs.get(actionId);
+                }
                 if (reached(currentCell)) {
                     retainTerminal(AgentJobStore.State.SUCCEEDED, null);
                     return publishAfterRelease();
@@ -201,27 +222,8 @@ public final class CoordinateMoveJobExecution {
                     yield jobs.get(actionId);
                 }
                 case REPLAN_REQUIRED -> {
-                    driver.close();
-                    if (routeWasGoal && obstacles == null) {
-                        retainTerminal(AgentJobStore.State.FAILED, "route_replan_required");
-                        yield publishAfterRelease();
-                    }
-                    if (routeWasGoal) {
-                        var result = new java.util.LinkedHashMap<>(jobs.get(actionId).result());
-                        result.put("last_replan_reason", step.reason().name().toLowerCase(java.util.Locale.ROOT));
-                        result.put("path_replans", ++pathReplans);
-                        jobs.recordResult(actionId, result);
-                        if (pathReplans > 8) {
-                            retainTerminal(AgentJobStore.State.FAILED, "route_replan_limit");
-                            yield publishAfterRelease();
-                        }
-                        // The previous plan already marked its goal as issued. A bounded
-                        // recovery may reuse it, but only after the fresh-evidence gate below.
-                        planner = new CoordinateGoalPlanner(worldSessionId, goal, arrivalRadius);
-                    }
-                    waitingEvidence = map.edges();
-                    evidenceWaitTicks = 0;
-                    yield jobs.get(actionId);
+                    replan(map, step.reason().name().toLowerCase(java.util.Locale.ROOT));
+                    yield terminalIntent == null ? jobs.get(actionId) : publishAfterRelease();
                 }
                 case FAILED -> {
                     retainTerminal(AgentJobStore.State.FAILED,
@@ -233,6 +235,25 @@ public final class CoordinateMoveJobExecution {
             retainTerminal(AgentJobStore.State.FAILED, "movement_runtime_failed");
             return publishAfterRelease();
         }
+    }
+
+    private void replan(KnownTraversabilitySnapshot map, String reason) {
+        driver.close();
+        awaitingFinalPosition = false;
+        var result = new java.util.LinkedHashMap<>(jobs.get(actionId).result());
+        result.put("last_replan_reason", reason);
+        result.put("path_replans", pathReplans);
+        jobs.recordResult(actionId, result);
+        if (!autoReplan || pathReplans >= 8) {
+            retainTerminal(AgentJobStore.State.FAILED,
+                    autoReplan ? "route_replan_limit" : "route_replan_required");
+            return;
+        }
+        result.put("path_replans", ++pathReplans);
+        jobs.recordResult(actionId, result);
+        planner = new CoordinateGoalPlanner(worldSessionId, goal, arrivalRadius);
+        waitingEvidence = map.edges();
+        evidenceWaitTicks = 0;
     }
 
     public AgentJobStore.Snapshot cancel() {
@@ -324,6 +345,7 @@ public final class CoordinateMoveJobExecution {
     }
 
     public interface MovementDriver {
+        default boolean prepare(long clientTick, BooleanSupplier outputAllowed) { return true; }
         void begin(RoutePlan route, double tolerance);
         MinecraftActionPrimitiveExecutor.TickResult tick(KnownTraversabilitySnapshot map,
                 double remainingDistance, long clientTick, BooleanSupplier outputAllowed);

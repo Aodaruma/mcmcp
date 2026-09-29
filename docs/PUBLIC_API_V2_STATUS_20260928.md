@@ -19,6 +19,8 @@ Java 1,595件、harness 13件、admin bridge 28件とbuild、PowerShell/Python�
 
 追加指定により右クリックだけに限定せず、全行動の長時間・多回数指定を開発branchへ追加した。[引数・上限・停止契約](PUBLIC_API_V2_LONG_EXECUTION_20260929.md)と[追加検証記録](experiments/20260929_v2_long_execution.md)を参照。`f7871718…`版では短い隔離入力試験A–H（補充・取消・期限・背景継続・1,500tick）、通常profileへの実体導入・再起動後の新schemaを確認し、隔離baselineも復旧した。24時間連続実測は未実施。通常環境の収納inspect終了待ちも`227ae546…`版で修正・導入済み。作業台タブ開放時の安全な失敗・解放と、タブ閉鎖後の読み取り成功を[実機再確認](experiments/20260929_v2_storage_cleanup.md)した。
 
+2026-09-30: [設計検討メモ](PUBLIC_API_V2_NAVIGATION_FOLLOWUP_20260929.md)の後続実装として、既定の非破壊再計画（`auto_replan:false`で無効化）、停止理由の詳細化、`sneak`での姿勢準備、操作前の照準再取得、視点専用`agent_look`を追加した。公開14ツール。隔離Dockerで、途中障害の迂回と無効化時の停止、はしご上端のdust/rail、1.5/1 block通路、周期door/piston越しのlever/chestと通過、lookの取消・期限・scriptを確認した。[結果と未確認範囲](experiments/20260930_v2_navigation_docker.md)を参照。通常の現場配置を含む全形状の成功は未確認。
+
 以下は履歴。未実装一覧は当時の状態であり、現在の範囲は上の表を優先する。
 
 ## 履歴：所持収納と追加停止経路（2026-09-29）

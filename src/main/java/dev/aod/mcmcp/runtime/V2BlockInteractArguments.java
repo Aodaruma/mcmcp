@@ -14,7 +14,7 @@ record V2BlockInteractArguments(BlockWorkRegion region, String blockId, String i
                                 String expectedAfterBlockId,
                                 Map<String, String> expectedAfterProperties,
                                 int maxBlocks, int maxTicks,
-                                double maxDistance, boolean advance)
+                                double maxDistance, boolean advance, boolean sneak)
         implements V2BlockWorkRequest {
     V2BlockInteractArguments {
         Objects.requireNonNull(region, "region");
@@ -37,7 +37,7 @@ record V2BlockInteractArguments(BlockWorkRegion region, String blockId, String i
         RuntimeArguments.requireAllowedKeys(arguments, "agent_interact", Set.of(
                 "target", "x", "y", "z", "dx", "dy", "dz", "block", "item",
                 "expected_after_block", "expected_after_properties", "max_interactions",
-                "max_ticks", "max_distance", "advance"));
+                "max_ticks", "max_distance", "advance", "sneak"));
         if (!"block".equals(RuntimeArguments.stringArgument(arguments, "target"))
                 || !arguments.keySet().containsAll(Set.of("x", "y", "z"))) {
             throw new IllegalArgumentException("block interaction requires target=block and x/y/z");
@@ -57,7 +57,8 @@ record V2BlockInteractArguments(BlockWorkRegion region, String blockId, String i
                 arguments.containsKey("max_distance")
                         ? RuntimeArguments.doubleArgument(arguments, "max_distance") : 64.0D,
                 !arguments.containsKey("advance")
-                        || RuntimeArguments.booleanArgument(arguments, "advance"));
+                        || RuntimeArguments.booleanArgument(arguments, "advance"),
+                arguments.containsKey("sneak") && RuntimeArguments.booleanArgument(arguments, "sneak"));
     }
 
     boolean accepts(String currentBlockId) {

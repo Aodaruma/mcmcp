@@ -79,3 +79,5 @@ pwsh -NoProfile -File tools/eval/Test-McmcpEvalTrace.ps1 -SelfTest
 テストは一時loopback HTTP serverと架空tokenを使い、実Minecraftへ接続しません。`pwsh` がPATHにない場合は `MCMCP_TEST_PWSH` に実行ファイルのパスを設定します。
 
 Tests use temporary loopback HTTP servers and fake tokens, never Minecraft. Set `MCMCP_TEST_PWSH` if `pwsh` is not on PATH.
+
+視点専用の`agent_look`も開始後の`-WaitSeconds`待機に対応する。引数例は`{"x":4.5,"y":65.5,"z":8.5}`。移動の`auto_replan`は既定true、`sneak`は既定false。詳細は[クイックガイド](../../docs/MCMCP_Public_API_v2_クイックガイド.md)を参照。

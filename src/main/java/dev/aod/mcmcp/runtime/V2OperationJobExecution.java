@@ -31,9 +31,10 @@ final class V2OperationJobExecution implements V2JobExecution {
         this.driver = Objects.requireNonNull(driver, "driver");
         this.releaseAndVerify = Objects.requireNonNull(releaseAndVerify, "releaseAndVerify");
         var job = jobs.get(actionId);
-        operation = job.kind() == AgentJobStore.Kind.INVENTORY ? "inventory" : "interaction";
+        operation = job.kind() == AgentJobStore.Kind.INVENTORY ? "inventory"
+                : job.kind() == AgentJobStore.Kind.LOOK ? "look" : "interaction";
         if ((job.kind() != AgentJobStore.Kind.INVENTORY
-                && job.kind() != AgentJobStore.Kind.INTERACT)
+                && job.kind() != AgentJobStore.Kind.INTERACT && job.kind() != AgentJobStore.Kind.LOOK)
                 || !job.worldSessionId().equals(worldSessionId)) {
             throw new IllegalArgumentException("operation job does not match its session");
         }

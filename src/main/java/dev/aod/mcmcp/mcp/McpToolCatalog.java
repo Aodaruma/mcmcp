@@ -18,6 +18,7 @@ final class McpToolCatalog {
             "agent_get_mcp_status",
             "agent_get_observation",
             "agent_move",
+            "agent_look",
             "agent_break_block",
             "agent_place_block",
             "agent_interact",

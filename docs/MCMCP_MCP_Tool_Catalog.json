@@ -1374,7 +1374,7 @@
     {
       "name": "agent_move",
       "title": "Move to Coordinates",
-      "description": "Moves over locally known safe routes. clear_path defaults to false; when true, a blocked route may break ordinary visible blocks and, only with bridge_block, fill adjacent floor gaps. Each change needs server confirmation and fresh route evidence. stop_when ends early on a visible block, own item count, position, or screen condition. Unknown cells are never assumed safe. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply.",
+      "description": "Moves over locally known safe routes. clear_path defaults to false; when true, a blocked route may break ordinary visible blocks and, only with bridge_block, fill adjacent floor gaps. Each change needs server confirmation and fresh route evidence. stop_when ends early on a visible block, own item count, position, or screen condition. Unknown cells are never assumed safe. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply. auto_replan defaults to true; false stops on a route replan request. Replanning never grants block break/place permission.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
@@ -1543,6 +1543,16 @@
               "clear_path": {
                 "type": "boolean",
                 "default": false
+              },
+              "auto_replan": {
+                "type": "boolean",
+                "default": true,
+                "description": "Replan on fresh local evidence without enabling block edits. At most 8 retries within the original job budgets."
+              },
+              "sneak": {
+                "type": "boolean",
+                "default": false,
+                "description": "Hold normal sneak input and plan using the actual reduced player collision box."
               }
             },
             "required": [
@@ -1719,6 +1729,16 @@
               "bridge_block": {
                 "type": "string",
                 "pattern": "^minecraft:[a-z0-9_./-]{1,112}$"
+              },
+              "auto_replan": {
+                "type": "boolean",
+                "default": true,
+                "description": "Replan on fresh local evidence without enabling block edits. At most 8 retries within the original job budgets."
+              },
+              "sneak": {
+                "type": "boolean",
+                "default": false,
+                "description": "Hold normal sneak input and plan using the actual reduced player collision box."
               }
             },
             "required": [
@@ -1904,6 +1924,16 @@
               "clear_path": {
                 "type": "boolean",
                 "default": false
+              },
+              "auto_replan": {
+                "type": "boolean",
+                "default": true,
+                "description": "Replan on fresh local evidence without enabling block edits. At most 8 retries within the original job budgets."
+              },
+              "sneak": {
+                "type": "boolean",
+                "default": false,
+                "description": "Hold normal sneak input and plan using the actual reduced player collision box."
               }
             },
             "required": [
@@ -2089,6 +2119,16 @@
               "bridge_block": {
                 "type": "string",
                 "pattern": "^minecraft:[a-z0-9_./-]{1,112}$"
+              },
+              "auto_replan": {
+                "type": "boolean",
+                "default": true,
+                "description": "Replan on fresh local evidence without enabling block edits. At most 8 retries within the original job budgets."
+              },
+              "sneak": {
+                "type": "boolean",
+                "default": false,
+                "description": "Hold normal sneak input and plan using the actual reduced player collision box."
               }
             },
             "required": [
@@ -2098,6 +2138,66 @@
               "bridge_block"
             ]
           }
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "action_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "state": {
+            "const": "queued"
+          }
+        },
+        "required": [
+          "schema_version",
+          "action_id",
+          "state"
+        ],
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    {
+      "name": "agent_look",
+      "title": "Look at a world point",
+      "description": "Rotate the camera toward exact world coordinates without moving, attacking or using items. A queued finite action; completion confirms direction, not target visibility or reach. Use block center coordinates (x+0.5,y+0.5,z+0.5) when desired.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "x": {
+            "type": "number",
+            "minimum": -30000000,
+            "maximum": 30000000
+          },
+          "y": {
+            "type": "number",
+            "minimum": -20000000,
+            "maximum": 20000000
+          },
+          "z": {
+            "type": "number",
+            "minimum": -30000000,
+            "maximum": 30000000
+          },
+          "max_ticks": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 600,
+            "default": 100
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "z"
         ]
       },
       "outputSchema": {
@@ -2407,7 +2507,8 @@
               },
               "advance": {
                 "type": "boolean"
-              }
+              },
+              "sneak": {"type": "boolean", "default": false}
             },
             "required": [
               "target",
@@ -4639,6 +4740,7 @@
               "kind": {
                 "enum": [
                   "move",
+                  "look",
                   "break_block",
                   "place_block",
                   "interact",

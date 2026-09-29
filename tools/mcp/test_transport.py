@@ -16,7 +16,7 @@ TOKEN = 'fixture_' + 'x' * 43
 ACTION = '00000000-0000-4000-8000-000000000001'
 META = {'io.modelcontextprotocol/serverInfo': {'name': 'mcmcp', 'version': '0.1.0'}}
 START = {'x': 4, 'y': 65, 'z': 8}
-V2_START_TOOLS = {'agent_move', 'agent_break_block', 'agent_place_block',
+V2_START_TOOLS = {'agent_move', 'agent_look', 'agent_break_block', 'agent_place_block',
                   'agent_interact', 'agent_inventory', 'agent_click',
                   'agent_input_sequence', 'agent_run_script'}
 
@@ -111,7 +111,7 @@ class TransportTests(unittest.TestCase):
         if request['method'] == 'tools/list':
             return dict(resultType='complete', _meta=META, tools=[{'name': n} for n in
                 ['agent_get_state', 'agent_get_mcp_status', 'agent_get_observation',
-                 'agent_move', 'agent_break_block', 'agent_place_block', 'agent_interact',
+                 'agent_move', 'agent_look', 'agent_break_block', 'agent_place_block', 'agent_interact',
                  'agent_inventory', 'agent_click', 'agent_input_sequence', 'agent_run_script',
                  'agent_get_action', 'agent_cancel_action']])
         if request['params']['name'] in V2_START_TOOLS:

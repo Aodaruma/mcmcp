@@ -29,6 +29,7 @@ final class MinecraftV2BlockInteractDriver
         implements V2BlockJobExecution.Driver<V2BlockInteractArguments> {
     private static final int MAX_APPROACH_EVIDENCE_WAIT_TICKS = 80;
     private static final int MAX_CONFIRM_WAIT_TICKS = 60;
+    private static final int MAX_TARGET_WAIT_TICKS = 100;
     private static final double APPROACH_TOLERANCE = 0.35D;
 
     private final Minecraft minecraft;
@@ -54,6 +55,9 @@ final class MinecraftV2BlockInteractDriver
     private int approachEvidenceWaitTicks;
     private int crosshairWaitTicks;
     private long dispatchedTick;
+    private final java.util.UUID sneakOwner = java.util.UUID.randomUUID();
+    private dev.aod.mcmcp.routine.MovementInputLease sneakLease;
+    private long postureStartedTick;
 
     MinecraftV2BlockInteractDriver(Minecraft minecraft,
             Supplier<WorldSessionTracker.Snapshot> sessions,
@@ -116,6 +120,16 @@ final class MinecraftV2BlockInteractDriver
                 || !player.isWithinBlockInteractionRange(position, 0.0D)) {
             return V2BlockJobExecution.BeginResult.WAITING;
         }
+        if (request.sneak() && sneakLease == null) {
+            if (!outputAllowed.getAsBoolean()) return V2BlockJobExecution.BeginResult.FAILED;
+            this.target = next;
+            this.request = request;
+            postureStartedTick = session.clientTick();
+            sneakLease = dev.aod.mcmcp.routine.MovementInputLease.acquire(minecraft, sneakOwner,
+                    System.nanoTime(), java.time.Duration.ofMillis(500));
+            stage = Stage.POSTURE;
+            return V2BlockJobExecution.BeginResult.STARTED;
+        }
         var frame = observations.latestInternalFrame();
         if (frame.isEmpty()) return V2BlockJobExecution.BeginResult.WAITING;
         var reconciliation = reconciliationSignals.bindAndSnapshot(level, session.worldSessionId());
@@ -160,6 +174,23 @@ final class MinecraftV2BlockInteractDriver
                 || minecraft.player == null || minecraft.level == null) {
             return V2BlockJobExecution.StepResult.FAILED;
         }
+        if (sneakLease != null) {
+            sneakLease.setDesired(sneakOwner, java.util.Set.of(
+                    dev.aod.mcmcp.routine.MovementInputLease.MovementKey.CROUCH));
+            if (!outputAllowed.getAsBoolean() || !sneakLease.heartbeat(sneakOwner,
+                    System.nanoTime(), java.time.Duration.ofMillis(500))) return V2BlockJobExecution.StepResult.FAILED;
+        }
+        if (stage == Stage.POSTURE) {
+            if (clientTick - postureStartedTick > MAX_TARGET_WAIT_TICKS) return V2BlockJobExecution.StepResult.FAILED;
+            if (clientTick - postureStartedTick < 3 || !minecraft.player.isShiftKeyDown())
+                return V2BlockJobExecution.StepResult.RUNNING;
+            var begun = beginObservedTarget(target, request, outputAllowed);
+            return switch (begun) {
+                case FAILED -> V2BlockJobExecution.StepResult.FAILED;
+                case SKIPPED -> V2BlockJobExecution.StepResult.SKIPPED;
+                case STARTED, WAITING -> V2BlockJobExecution.StepResult.RUNNING;
+            };
+        }
         if (stage == Stage.APPROACH) return tickApproach(session, clientTick, outputAllowed);
         if (stage == Stage.FACING) {
             var result = facing.tick(minecraft, observations.requireAgentMap(session),
@@ -169,7 +200,11 @@ final class MinecraftV2BlockInteractDriver
                 return V2BlockJobExecution.StepResult.RUNNING;
             }
             if (result.status() != MinecraftActionPrimitiveExecutor.Status.SUCCEEDED) {
-                return V2BlockJobExecution.StepResult.FAILED;
+                facing.close();
+                facing = null;
+                stage = Stage.WAIT_CROSSHAIR;
+                return ++crosshairWaitTicks <= MAX_TARGET_WAIT_TICKS
+                        ? V2BlockJobExecution.StepResult.RUNNING : V2BlockJobExecution.StepResult.FAILED;
             }
             facing.close();
             facing = null;
@@ -177,10 +212,12 @@ final class MinecraftV2BlockInteractDriver
             return V2BlockJobExecution.StepResult.RUNNING;
         }
         if (stage == Stage.WAIT_CROSSHAIR) {
-            if (!crosshairOnTarget()) {
-                return ++crosshairWaitTicks <= 20
-                        ? V2BlockJobExecution.StepResult.RUNNING
-                        : V2BlockJobExecution.StepResult.FAILED;
+            if (++crosshairWaitTicks > MAX_TARGET_WAIT_TICKS) return V2BlockJobExecution.StepResult.FAILED;
+            // A door/piston may temporarily hide the target or change the observed face.
+            // Retry only aiming before dispatch, always from a new valid visible-surface ray.
+            if (!crosshairOnTarget() || !freshTargetMatchesBefore()) {
+                if (crosshairWaitTicks % 5 == 1) refreshObservedAim();
+                return V2BlockJobExecution.StepResult.RUNNING;
             }
             if (!dispatch(clientTick, outputAllowed)) {
                 return V2BlockJobExecution.StepResult.FAILED;
@@ -217,12 +254,13 @@ final class MinecraftV2BlockInteractDriver
         var level = minecraft.level;
         var player = minecraft.player;
         var position = blockPos(target);
-        if (!outputAllowed.getAsBoolean() || !crosshairOnTarget()
+        if (!outputAllowed.getAsBoolean() || !crosshairOnTarget() || !freshTargetMatchesBefore()
                 || !level.isLoaded(position)
                 || !level.getWorldBorder().isWithinBounds(position)
                 || player.blockActionRestricted(level, position,
                         minecraft.gameMode.getPlayerMode())
                 || player.getInventory().getSelectedSlot() != selectedSlot
+                || player.isShiftKeyDown() != request.sneak()
                 || !before.equals(fingerprint(level.getBlockState(position)))
                 || request.itemId() != null && !request.itemId().equals(
                         BuiltInRegistries.ITEM.getKey(player.getMainHandItem().getItem()).toString())
@@ -238,6 +276,34 @@ final class MinecraftV2BlockInteractDriver
                 || !result.consumesAction()) return false;
         dispatchedTick = clientTick;
         return true;
+    }
+
+    private java.util.Optional<V2BlockAimResolver.Result> currentAim() {
+        var session = sessions.get();
+        var frame = observations.latestInternalFrame();
+        if (frame.isEmpty()) return java.util.Optional.empty();
+        var ledger = reconciliationSignals.bindAndSnapshot(minecraft.level, session.worldSessionId());
+        return V2BlockAimResolver.resolve(frame.orElseThrow(), target, null,
+                minecraft.player.getEyePosition(), session.worldSessionId(), session.clientTick(),
+                ledger.worldRevision(), ledger.surfaceBarrierWorldRevision(target.x(), target.y(), target.z()),
+                id -> true);
+    }
+
+    private boolean freshTargetMatchesBefore() {
+        var aim = currentAim();
+        return aim.isPresent() && before.blockId().equals(aim.orElseThrow().blockId())
+                && before.equals(fingerprint(minecraft.level.getBlockState(blockPos(target))));
+    }
+
+    private void refreshObservedAim() {
+        var aim = currentAim();
+        if (aim.isEmpty()) return;
+        var current = fingerprint(minecraft.level.getBlockState(blockPos(target)));
+        if (!current.blockId().equals(aim.orElseThrow().blockId()) || !request.accepts(current.blockId())) return;
+        before = current;
+        facing = new MinecraftActionPrimitiveExecutor(McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
+        facing.beginFace(aim.orElseThrow().aim(), 60L);
+        stage = Stage.FACING;
     }
 
     private V2BlockJobExecution.StepResult tickApproach(
@@ -315,6 +381,10 @@ final class MinecraftV2BlockInteractDriver
         // Retain the prediction until any delayed OpenScreen has crossed its causal ACK barrier.
         if (menu != null) menu.releaseMenu(prediction);
         Throwable failure = null;
+        if (sneakLease != null) {
+            try { sneakLease.close(); sneakLease = null; }
+            catch (RuntimeException | LinkageError closeFailure) { failure = closeFailure; }
+        }
         if (prediction != null) {
             try {
                 prediction.close();
@@ -385,5 +455,5 @@ final class MinecraftV2BlockInteractDriver
                 BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString(), properties);
     }
 
-    private enum Stage { IDLE, APPROACH, FACING, WAIT_CROSSHAIR, CONFIRMING }
+    private enum Stage { IDLE, POSTURE, APPROACH, FACING, WAIT_CROSSHAIR, CONFIRMING }
 }

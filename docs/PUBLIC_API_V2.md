@@ -2,7 +2,7 @@
 
 今回の優先機能と試用手順は[試用メモ](PUBLIC_API_V2_TRIAL_20260929.md)を参照。実装状況・未確認事項は[進捗と再開メモ](PUBLIC_API_V2_STATUS_20260928.md)、実機結果は[基本smoke](experiments/20260928_public_api_v2_local.md)と[所持収納・使用中停止](experiments/20260929_v2_storage_stop_local.md)を参照。この設計案の完成目標、実装済み、実機確認済みの範囲を区別する。
 
-2026-09-27。利用者の追加フィードバックを反映した実装用の設計案。基準は`main`の`f7d4bf4`。2026-09-28のDraft PRでは基本行動8ツールを一組で公開catalogへ接続した。旧JSON Action DSLの開始ツールは公開catalog・受付から削除し、13ツールになった。旧DSLの入力schemaは内部実行器の回帰試験用resourceにだけ残し、本体JARには同梱しない。実ゲーム確認と不足する行動範囲が残るため、v2完成・配布済みとは扱わない。
+2026-09-27。利用者の追加フィードバックを反映した実装用の設計案。基準は`main`の`f7d4bf4`。2026-09-28のDraft PRでは基本行動8ツールを一組で公開catalogへ接続した。旧JSON Action DSLの開始ツールは公開catalog・受付から削除し、13ツールになった。2026-09-30には視点専用の`agent_look`を追加し、現在は14ツール。旧DSLの入力schemaは内部実行器の回帰試験用resourceにだけ残し、本体JARには同梱しない。実ゲーム確認と不足する行動範囲が残るため、v2完成・配布済みとは扱わない。
 
 実ゲームの主要成功・取消・危険停止は[隔離smoke test](../tools/eval/fixtures/public-api-v2/README.md)で検証する。runner／fixtureの単体検査と実ゲーム合格を区別し、対象JAR・action ID・readback・復旧を実験記録へ残す。
 
@@ -34,6 +34,7 @@ LLMは行き先、作業範囲、条件、反復の意図を伝える。MODは�
 
 | ツール | 主な指定 | MODが行うこと |
 |---|---|---|
+| `agent_look` | 小数を含む対象座標`x/y/z` | 現在位置から視点だけを合わせる。移動・クリックを伴わない |
 | `agent_move` | 座標、方向＋距離、または「対象に届く」「範囲内へ」などの到達条件。必要なら経路中の破壊・設置を許可する条件 | 段階的な探索・移動、障害の局所観測、許可された範囲内で必要な破壊・設置、到達確認 |
 | `agent_break_block` | 単一座標／直方体範囲、任意のblock条件・除外条件・最大個数 | 近づく、見えるようになったblockを確認する、適切な道具を探して選択する、通常操作で破壊する、結果を確認する |
 | `agent_place_block` | 単一座標／範囲、block/item、任意の望むstate・配置条件 | 手持ち確保、支持面・方向・接続の検討、移動・設置・照合。state未指定なら既定の設置状態を受け入れる |
@@ -73,7 +74,7 @@ entity packetにはitem使用のprediction ACKがないため、`result_item`省
 
 ## 制限付きスクリプト
 
-公開言語はJavaScript風の小さな同期言語。turtle／p5.jsのように`move(...)`、`breakBlocks(...)`、`place(...)`、`interact(...)`、`input(...)`を順に書ける。行動関数はオブジェクト引数ではなく`move(x=100, y=64, z=120)`のような名前付き引数を受ける。変数、数値・文字列・真偽値・配列・オブジェクト、`if`、回数上限付き`for`／`repeat`、利用者定義の小関数、比較を当面の対象とする。`async/await`、Promise、Node.js、module読込み、Javaへのアクセス、ネットワーク、ファイルI/Oは言語仕様に入れない。完全なECMAScriptを走らせる必要はない。
+公開言語はJavaScript風の小さな同期言語。turtle／p5.jsのように`move(...)`、`look(...)`、`breakBlocks(...)`、`place(...)`、`interact(...)`、`input(...)`を順に書ける。行動関数はオブジェクト引数ではなく`move(x=100, y=64, z=120)`のような名前付き引数を受ける。変数、数値・文字列・真偽値・配列・オブジェクト、`if`、回数上限付き`for`／`repeat`、利用者定義の小関数、比較を当面の対象とする。`async/await`、Promise、Node.js、module読込み、Javaへのアクセス、ネットワーク、ファイルI/Oは言語仕様に入れない。完全なECMAScriptを走らせる必要はない。
 
 実装済みの構文例（公開`agent_run_script`で受け付ける。移動2反復＋inventoryの実機smokeは成功したが、以下の複合例全体の実機確認ではない）:
 
@@ -134,10 +135,10 @@ snapshotの既知の安全な停止候補を目標への直線距離、同距離
 
 - `REACHED_KNOWN_GOAL`: 入力の現在地が既知の目標と一致（移動edgeなし）。`KNOWN_GOAL_ROUTE`: 既知目標までの計画で、実移動の成功ではない。`PARTIAL_WAYPOINT`: 既知中間点までの計画で、到達後に新しい観測が必要。
 - `BLOCKED / LIMIT / CANCELLED / STALE_MAP / WORLD_MISMATCH`: 経路なし。現在session/revisionとの不一致・受理済みrevisionからの巻戻り・異world/future edgeを拒否する。実行直前・各tickの再検証は呼出側に必要。
-- 1回のplanの固定上限はsnapshot edge 4,096件、候補A*呼出し64回、A*全呼出し合計2,048展開。各予算は0まで縮小可能。edge上限超過は切り捨てずLIMIT。取消・thread interruptionは列挙・探索・結果確定前で確認する。
+- 1回のplanの固定上限はsnapshot edge 8,192件（session mapの保存上限と共通）、候補A*呼出し64回、A*全呼出し合計2,048展開。各予算は0まで縮小可能。edge上限超過は切り捨てずLIMIT。取消・thread interruptionは列挙・探索・結果確定前で確認する。
 - 既知の安全な経路では、目標から一時的に遠ざかる中間点も選べる。発行した経路上のcellは同じjobで再び中間点にしない。次の中間点には前回発行後の新しいmap証拠を要求し、同じ証拠での巡回・実行失敗後の即時再発行を防ぐ。既知cell履歴は8,192件で上限停止する。未知cellへの移動、網羅的frontier探索、失敗した経路の自動再試行は未対応。
 
-内部の`StartMove`は絶対`x/y/z`、または開始時のプレイヤーcellからの`direction/distance`を受ける。後者はワールド方位の南北東西・斜め4方向・上下を1～4,096 blockで指定し、座標との混用は拒否する。任意の`arrival_radius`は0～16 blockの三次元距離で、既定の0は指定cellへの到着を要求する。正の値なら指定座標に近い安全な到達可能cellで止まれ、目標cell自体が通れない場合にも使える。到達許容幅（0.1～0.49）、最大実行tick（1,728,000、既定1,200）、総移動距離（4,096 block、既定256）も受ける。`CoordinateMoveJobExecution`が既知区間を既存の移動executorへ渡し、中間点到着後に新しい観測を待って次を計画する。部分経路の再計画要求も新証拠を待つ。最終経路完了時は入力を解放し、次のclient tickで現在cellを読み直して到達を確定する。目標への最終経路が途中で無効になれば、既定は失敗で停止する。`clear_path:true`では新しい経路証拠を待って再計画する。観測が進まない場合も有界に停止する。runtimeは配送確認、world・player・control epoch、体力、screenと局所安全、移動距離、各tickの経路証拠を確認し、取消・危険・緊急停止・world境界で入力を解放してから終端を返す。目標が未観測でも受理するが、未知地形へ踏み出すわけではない。
+内部の`StartMove`は絶対`x/y/z`、または開始時のプレイヤーcellからの`direction/distance`を受ける。後者はワールド方位の南北東西・斜め4方向・上下を1～4,096 blockで指定し、座標との混用は拒否する。任意の`arrival_radius`は0～16 blockの三次元距離で、既定の0は指定cellへの到着を要求する。正の値なら指定座標に近い安全な到達可能cellで止まれ、目標cell自体が通れない場合にも使える。到達許容幅（0.1～0.49）、最大実行tick（1,728,000、既定1,200）、総移動距離（4,096 block、既定256）も受ける。`CoordinateMoveJobExecution`が既知区間を既存の移動executorへ渡し、中間点到着後に新しい観測を待って次を計画する。部分経路の再計画要求も新証拠を待つ。最終経路完了時は入力を解放し、次のclient tickで現在cellを読み直して到達を確定する。経路が途中で無効になれば、既定の`auto_replan:true`で入力を解放し、新しい局所観測から再計画する。`auto_replan:false`なら`route_replan_required`で停止する。再計画は最大8回で、元のtick・実時間・総移動距離予算を引き継ぐ。`clear_path`の破壊許可とは独立しており、`result.path_replans`と`last_replan_reason`に回数と最後の理由を保持する。観測が進まない場合も有界に停止する。runtimeは配送確認、world・player・control epoch、体力、screenと局所安全、移動距離、各tickの経路証拠を確認し、取消・危険・緊急停止・world境界で入力を解放してから終端を返す。目標が未観測でも受理するが、未知地形へ踏み出すわけではない。
 
 座標・見えるblock state・所持item数・画面種類の`stop_when`と任意の局所障害物処理を実装済み。任意entity状態条件・複合条件、縦方向の自動施工は未対応。公開catalog/schemaとscriptへ接続済みで、基本移動・script移動の到着を実機確認した。すべての地形・停止経路の検証は残る。
 
@@ -179,3 +180,13 @@ snapshotの既知の安全な停止候補を目標への直線距離、同距離
 - 現行契約：`main/AGENTS.md`、`main/docs/MCMCP_MCP_Tool_Catalog.json`
 - [Baritoneの経路探索・長距離区間の説明](https://github.com/cabaletta/baritone/blob/1.21.4/FEATURES.md)
 - [GraalVMのJavaScript組込みと依存条件](https://www.graalvm.org/jdk25/reference-manual/embed-languages/)
+
+## 2026-09-30 移動・照準の追加
+
+`agent_look({x:4.5,y:65.5,z:8.5})`は視点だけを指定点へ向ける。`max_ticks`は既定100、最大600。共通jobの配送確認・取消・入力解放を経由し、scriptでは`look(x=4.5,y=65.5,z=8.5);`を使える。視点の向きの完了であり、対象の可視性・操作成功の証明ではない。
+
+`agent_move`の`sneak:true`は通常のかがみ入力を保持し、実際の体の高さが変わった局所観測から計画する。既定false。斜め経路も観測時の実際の姿勢の高さで通路を検査し、支持と各tickの衝突判定を維持する。1ブロック高の通路では、入口のトラップドア等を通常操作してVanillaの匍匐姿勢を作ってから移動する。ブロック操作の`agent_interact`にも`sneak`（既定false）を指定できる。
+
+動作中の設備で対象が隠れた場合、block操作は使用前に新しい観測から照準を取り直す。収納操作も開封前に視点を合わせ直し、準備未成立の理由を`result.prepare_reason`へ残す。使用・開封を送った後の未確認操作は再送しない。挟み込み、危険、画面やworldの変更は停止対象のまま。再計画を選べる公開オプションは`agent_move`に適用する。
+
+実機で確認した範囲と例は[移動・設備検証記録](experiments/20260930_v2_navigation_docker.md)を参照。

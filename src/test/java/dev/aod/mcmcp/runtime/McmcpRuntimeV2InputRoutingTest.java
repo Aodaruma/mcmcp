@@ -74,6 +74,43 @@ class McmcpRuntimeV2InputRoutingTest {
     }
 
     @Test
+    void lookDeliveryCancellationAndAbandonmentReleaseItsOwner() throws Exception {
+        for (boolean delivered : new boolean[]{true, false}) {
+            var session = UUID.randomUUID();
+            var store = (AgentJobStore) field("v2Jobs").get(runtime);
+            var id = store.reserve(AgentJobStore.Kind.LOOK, session, 100, Long.MAX_VALUE);
+            field("v2InteractExecution").set(runtime, new V2OperationJobExecution(
+                    store, id, session, new V2OperationJobExecution.Driver() {
+                        @Override public void begin(long tick, java.util.function.BooleanSupplier allowed) {
+                            throw new AssertionError("a stopped look must not start");
+                        }
+                        @Override public V2OperationJobExecution.Step tick(long tick,
+                                java.util.function.BooleanSupplier allowed) {
+                            throw new AssertionError("a stopped look must not tick");
+                        }
+                        @Override public Map<String, Object> result() { return Map.of(); }
+                        @Override public void close() { }
+                    }, () -> true));
+            if (delivered) {
+                assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                        .isEqualTo(Map.of("action_id", id.toString(), "confirmed", true));
+                var queued = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                        Map.of("action_id", id.toString()));
+                assertThat(queued.get("kind")).isEqualTo("look");
+                invoke("cancelAgentAction", new Class<?>[]{net.minecraft.client.Minecraft.class, Map.class},
+                        null, Map.of("action_id", id.toString()));
+                assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.CANCELLED);
+            } else {
+                invoke("abandonAgentActionDelivery", new Class<?>[]{UUID.class}, id);
+                assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.FAILED);
+                assertThat(invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id))
+                        .isEqualTo(Map.of("action_id", id.toString(), "confirmed", false));
+            }
+            assertThat(field("v2InteractExecution").get(runtime)).isNull();
+        }
+    }
+
+    @Test
     void moveUsesSharedDeliveryStatusAndCancelRouting() throws Exception {
         var session = UUID.randomUUID();
         var store = (AgentJobStore) field("v2Jobs").get(runtime);

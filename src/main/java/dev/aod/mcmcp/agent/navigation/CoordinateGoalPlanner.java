@@ -19,7 +19,9 @@ import java.util.function.Predicate;
  * Retain this instance for the whole job, including failed execution and fresh observations.
  */
 public final class CoordinateGoalPlanner {
-    static final int MAX_EDGES = 4_096;
+    // The session map already has this hard cap. Rejecting its second half makes
+    // ordinary continued travel fail once enough local evidence has accumulated.
+    static final int MAX_EDGES = KnownTraversabilityMap.MAX_EDGES;
     static final int MAX_CANDIDATES = 64;
     static final int MAX_EXPANSIONS = DeterministicAStar.MAX_EXPANDED_NODES;
     private static final int MAX_ISSUED_CELLS = 8_192;

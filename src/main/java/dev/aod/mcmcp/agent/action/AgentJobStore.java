@@ -231,7 +231,7 @@ public final class AgentJobStore {
     }
 
     public enum Kind {
-        MOVE, BREAK_BLOCK, PLACE_BLOCK, INTERACT, INVENTORY, CLICK, INPUT_SEQUENCE, SCRIPT
+        MOVE, LOOK, BREAK_BLOCK, PLACE_BLOCK, INTERACT, INVENTORY, CLICK, INPUT_SEQUENCE, SCRIPT
     }
 
     public enum State {

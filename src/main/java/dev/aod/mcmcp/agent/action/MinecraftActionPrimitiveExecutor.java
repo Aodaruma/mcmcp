@@ -54,6 +54,9 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
     private long lastClientTick = -1;
     private long tickStartedNanos;
     private long lastMovementHeartbeatTick = -1;
+    private boolean sneakWhileMoving;
+
+    public void sneakWhileMoving(boolean enabled) { sneakWhileMoving = enabled; }
 
     /** @param maxCameraDegreesPerTick configured degrees/second divided by 20 client ticks */
     public MinecraftActionPrimitiveExecutor(float maxCameraDegreesPerTick) {
@@ -313,7 +316,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 player.isInWater(),
                 player.getDeltaMovement().y);
         // Direct diagonal support is traversed slowly; actual per-tick collision/support guards remain active.
-        if (!state.route.edges().isEmpty() && state.edgeIndex < state.route.edges().size()
+        if (sneakWhileMoving || !state.route.edges().isEmpty() && state.edgeIndex < state.route.edges().size()
                 && state.route.edges().get(state.edgeIndex).supportedDiagonal()) {
             var crouched = desired.isEmpty() ? EnumSet.noneOf(MovementInputLease.MovementKey.class)
                     : EnumSet.copyOf(desired);

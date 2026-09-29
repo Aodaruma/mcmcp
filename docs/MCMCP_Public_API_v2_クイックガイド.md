@@ -9,6 +9,7 @@
 | `agent_get_state` | 引数なしでプレイヤー状態と手元9枠。詳細な所持品などは`sections`で指定 |
 | `agent_get_mcp_status` | MCPのON/OFF、session、最新frame、実行中actionの確認 |
 | `agent_get_observation` | 引数なしで最新のblock・entity・危険を最大64件。返らない場所は未知であり、空気とは限らない |
+| `agent_look` | 小数を含む`x/y/z`へ視点だけを向ける |
 | `agent_move` | 座標または方向へ移動。未観測の目的地も指定でき、MODが局所観測しながら進む |
 | `agent_break_block` | Vanillaの指定座標・直方体を破壊。条件は任意、`advance:true`で接近しながら続ける |
 | `agent_place_block` | Vanillaの指定blockを座標・直方体へ設置。向きなどの`properties`は任意 |
@@ -22,7 +23,7 @@
 
 ## 開始・確認・取消
 
-行動8ツールは共通のjobを返します。開始応答の`state:"queued"`は完了ではありません。同じIDを`agent_get_action`に渡し、terminalまで確認します。`wait_timeout_ms:25000`は最大25秒待ち、時間内に終わらなくても現在の進行を返します。
+行動9ツールは共通のjobを返します。開始応答の`state:"queued"`は完了ではありません。同じIDを`agent_get_action`に渡し、terminalまで確認します。`wait_timeout_ms:25000`は最大25秒待ち、時間内に終わらなくても現在の進行を返します。
 
 ```json
 {"x":4,"y":65,"z":8}
@@ -92,3 +93,15 @@ menuは次の操作全体で開封から閉鎖までを行います。`clicks`�
 scriptも明示して最大24時間・1,728,000 callsへ拡張できます。親と子の期限の早い方で停止し、操作ごとに総期限は延長しません。`agent_get_action`の`progress.remaining_seconds`と`stop_reason`で残り時間と終了理由を確認できます。開始後のLLM監視は実行条件ではありません。
 
 [詳しい上限・既定値・停止条件](PUBLIC_API_V2_LONG_EXECUTION_20260929.md)を参照してください。この追加は以前の`03c7943f…`版にはありません。新JARでは短い隔離試験で期限・取消・材料補充・背景継続・1,500tickを確認済みです。通常profile導入後の運用と24時間連続実測は別途確認します。
+
+## 経路再計画・狭い通路・視点操作
+
+移動中に経路が変わったときは、既定で新しい局所観測から再計画します。`auto_replan:false`で停止に変更できます。再計画は最大8回で、時間・距離の予算は延長しません。結果の`path_replans`と`last_replan_reason`で確認できます。障害物の破壊は従来どおり`clear_path:true`を明示したときだけです。
+
+- かがんで通る: `agent_move({x:10,y:65,z:8,sneak:true})`
+- 入口のトラップドアをかがみながら操作: `agent_interact({target:"block",x:4,y:66,z:8,block:"minecraft:oak_trapdoor",sneak:true})`
+- 視点だけを向ける: `agent_look({x:8.5,y:67.5,z:3.5})`。scriptでは`look(x=8.5,y=67.5,z=3.5);`
+
+1ブロック高の通路は、トラップドア等で実際に匍匐姿勢へ移ってから進みます。稼働中のドアやピストン越しの操作は、安全に対象が見えるタイミングで照準を合わせます。閉塞が続く場合や危険な挟み込みでは有限で停止します。
+
+はしご上端のダスト・レール、狭い通路、設備越しのレバー・収納を隔離Dockerで検証しています。[検証範囲と結果](experiments/20260930_v2_navigation_docker.md)を参照してください。

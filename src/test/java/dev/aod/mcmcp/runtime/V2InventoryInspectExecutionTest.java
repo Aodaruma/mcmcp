@@ -39,7 +39,7 @@ class V2InventoryInspectExecutionTest {
     }
 
     @ParameterizedTest
-    @EnumSource(value = AgentJobStore.Kind.class, names = {"INVENTORY", "INTERACT"})
+    @EnumSource(value = AgentJobStore.Kind.class, names = {"INVENTORY", "INTERACT", "LOOK"})
     void readbackWaitsForDeliveryAndRetainsResultAfterRelease(AgentJobStore.Kind kind) {
         var jobs = new AgentJobStore();
         var session = UUID.randomUUID();
@@ -63,7 +63,7 @@ class V2InventoryInspectExecutionTest {
     }
 
     @ParameterizedTest
-    @EnumSource(value = AgentJobStore.Kind.class, names = {"INVENTORY", "INTERACT"})
+    @EnumSource(value = AgentJobStore.Kind.class, names = {"INVENTORY", "INTERACT", "LOOK"})
     void cancellationAndUnsafeWorldNeverReadInventory(AgentJobStore.Kind kind) {
         var jobs = new AgentJobStore();
         var session = UUID.randomUUID();

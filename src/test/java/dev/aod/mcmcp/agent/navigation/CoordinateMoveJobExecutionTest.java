@@ -164,7 +164,7 @@ class CoordinateMoveJobExecutionTest {
     }
 
     @Test
-    void invalidatedFinalRouteFailsWithoutReissuingMovement() {
+    void disabledReplanFailsWithoutReissuingMovementAndRetainsReason() {
         var map = map(edge(cell(0), cell(1)));
         var store = new AgentJobStore();
         var id = store.reserve(MOVE, SESSION, 10, 100);
@@ -172,16 +172,19 @@ class CoordinateMoveJobExecutionTest {
                 MinecraftActionPrimitiveExecutor.Status.REPLAN_REQUIRED,
                 MinecraftActionPrimitiveExecutor.Reason.DESTINATION_SAFETY_UNVERIFIED));
         var execution = execution(store, id, cell(1), driver, () -> true);
+        execution.autoReplan(false);
         store.confirm(id, 1);
         assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION,
                 0, 1, 1, true, 0, () -> true).state())
                 .isEqualTo(AgentJobStore.State.FAILED);
         assertThat(store.get(id).failure()).isEqualTo("route_replan_required");
+        assertThat(store.get(id).result()).containsEntry("last_replan_reason", "destination_safety_unverified")
+                .containsEntry("path_replans", 0);
         assertThat(driver.routes).hasSize(1);
     }
 
     @Test
-    void optionalPathWorkReplansOnlyAfterFreshEvidenceAndStillObeysTickLimit() {
+    void defaultNonDestructiveMoveReplansOnlyAfterFreshEvidenceAndStillObeysTickLimit() {
         var map = map(edge(cell(0), cell(1)));
         var store = new AgentJobStore();
         var id = store.reserve(MOVE, SESSION, 10, 100);
@@ -189,7 +192,6 @@ class CoordinateMoveJobExecutionTest {
                 MinecraftActionPrimitiveExecutor.Status.REPLAN_REQUIRED,
                 MinecraftActionPrimitiveExecutor.Reason.DESTINATION_SAFETY_UNVERIFIED), RUNNING_STEP);
         var execution = execution(store, id, cell(1), driver, () -> true);
-        execution.clearPathWith(new FakeObstacles());
         store.confirm(id, 1);
         assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION,
                 0, 1, 1, true, 0, () -> true).state()).isEqualTo(RUNNING);
@@ -314,6 +316,72 @@ class CoordinateMoveJobExecutionTest {
         assertThat(execution.tick(map,cell(1),SESSION,0,2,later,true,1,()->true).state()).isEqualTo(RUNNING);
         assertThat(execution.tick(map,cell(1),SESSION,0,3,later+1,true,1,()->true).state()).isEqualTo(SUCCEEDED);
         assertThat(driver.routes).hasSize(1);
+    }
+
+    @Test
+    void repeatedFreshInvalidationsStopAfterEightReplansWithoutObstaclePermission() {
+        var map = map(edge(cell(0), cell(1)));
+        var store = new AgentJobStore();
+        var id = store.reserve(MOVE, SESSION, 100, 100);
+        var replan = new MinecraftActionPrimitiveExecutor.TickResult(
+                MinecraftActionPrimitiveExecutor.Status.REPLAN_REQUIRED,
+                MinecraftActionPrimitiveExecutor.Reason.ROUTE_EDGE_CHANGED);
+        var driver = new FakeDriver(java.util.Collections.nCopies(9, replan)
+                .toArray(MinecraftActionPrimitiveExecutor.TickResult[]::new));
+        var execution = execution(store, id, cell(1), driver, () -> true);
+        store.confirm(id, 1);
+        for (int tick = 1; tick <= 9; tick++) {
+            map.observe(freshEdge(cell(0), cell(1), tick));
+            execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0, tick, tick, true, 0, () -> true);
+        }
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.FAILED);
+        assertThat(store.get(id).failure()).isEqualTo("route_replan_limit");
+        assertThat(store.get(id).result()).containsEntry("path_replans", 8)
+                .containsEntry("last_replan_reason", "route_edge_changed");
+        assertThat(driver.routes).hasSize(9);
+    }
+
+    @Test
+    void localSafetyReobservationReleasesMovementAndCancellationDoesNotRestartIt() {
+        var map = map(edge(cell(0), cell(1)));
+        var store = new AgentJobStore();
+        var id = store.reserve(MOVE, SESSION, 100, 100);
+        var driver = new FakeDriver(RUNNING_STEP);
+        var execution = execution(store, id, cell(1), driver, () -> true);
+        store.confirm(id, 1);
+        execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0, 1, 1, true, 0, () -> true);
+        execution.requireLocalObservation(true);
+        execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0, 2, 2, true, 0, () -> true);
+        assertThat(driver.active).isFalse();
+        assertThat(driver.ticks).isEqualTo(1);
+        assertThat(store.get(id).result()).containsEntry("last_replan_reason", "local_safety_reobservation");
+        execution.cancel();
+        execution.requireLocalObservation(false);
+        map.observe(freshEdge(cell(0), cell(1), 3));
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0,
+                3, 3, true, 0, () -> true).state()).isEqualTo(CANCELLED);
+        assertThat(driver.ticks).isEqualTo(1);
+    }
+
+    @Test
+    void localSafetyWaitCannotRenewOriginalDeadline() {
+        var map = map(edge(cell(0), cell(1)));
+        var store = new AgentJobStore();
+        var id = store.reserve(MOVE, SESSION, 10, 100);
+        var execution = execution(store, id, cell(1), new FakeDriver(), () -> true);
+        store.confirm(id, 1);
+        execution.requireLocalObservation(true);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0,
+                1, 1, true, 0, () -> true).state()).isEqualTo(RUNNING);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0,
+                11, 11, true, 0, () -> true).failure()).isEqualTo("tick_limit");
+    }
+
+    private static TraversabilityEdge freshEdge(NavCell from, NavCell to, long tick) {
+        var edge = edge(from, to);
+        return new TraversabilityEdge(SESSION, edge.key(), edge.status(), edge.targetSupport(),
+                edge.clearance(), edge.transition(), edge.fluid(), edge.hazard(), edge.provenance(),
+                from, tick, 0);
     }
 
     private static KnownTraversabilityMap map(TraversabilityEdge... edges) {

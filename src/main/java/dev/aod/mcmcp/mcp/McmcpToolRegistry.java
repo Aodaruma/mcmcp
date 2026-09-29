@@ -306,6 +306,7 @@ public final class McmcpToolRegistry {
 
     private static UUID deliveryActionId(String toolName, Map<String, Object> data) {
         if (!"agent_move".equals(toolName)
+                && !"agent_look".equals(toolName)
                 && !"agent_break_block".equals(toolName)
                 && !"agent_place_block".equals(toolName)
                 && !"agent_interact".equals(toolName)
@@ -329,6 +330,7 @@ public final class McmcpToolRegistry {
             case "agent_get_mcp_status" -> new McpRuntimePort.GetMcpStatus();
             case "agent_get_observation" -> new McpRuntimePort.GetObservation(values);
             case "agent_move" -> new McpRuntimePort.StartMove(values);
+            case "agent_look" -> new McpRuntimePort.StartLook(values);
             case "agent_break_block" -> new McpRuntimePort.StartBreakBlock(values);
             case "agent_place_block" -> new McpRuntimePort.StartPlaceBlock(values);
             case "agent_interact" -> new McpRuntimePort.StartInteract(values);

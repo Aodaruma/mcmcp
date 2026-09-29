@@ -22,6 +22,19 @@ class V2MoveArgumentsTest {
         assertThat(request.maxDistance()).isEqualTo(120.0D);
         assertThat(request.tolerance()).isEqualTo(0.25D);
         assertThat(request.arrivalRadius()).isZero();
+        assertThat(request.autoReplan()).isTrue();
+        assertThat(request.sneak()).isFalse();
+    }
+
+    @Test
+    void retryAndSneakOptionsAreIndependentOfWorldMutationPermission() {
+        var request = V2MoveArguments.parse(Map.of("x", 20, "y", 64, "z", -20,
+                "auto_replan", false, "sneak", true), ORIGIN);
+        assertThat(request.autoReplan()).isFalse();
+        assertThat(request.sneak()).isTrue();
+        assertThat(request.clearPath()).isFalse();
+        assertThatThrownBy(() -> V2MoveArguments.parse(Map.of("x", 20, "y", 64, "z", -20,
+                "auto_replan", "false"), ORIGIN)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
