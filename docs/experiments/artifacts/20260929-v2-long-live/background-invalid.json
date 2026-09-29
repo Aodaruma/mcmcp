@@ -1,0 +1,10 @@
+{
+  "start_cli_exited": "2026-09-29T05:36:44.721891Z",
+  "gui_release_verified": false,
+  "duration_seconds": 20,
+  "background_continuation_verified": false,
+  "status": "invalid_trial",
+  "phase": "G",
+  "focus_lost_at": "2026-09-29T05:37:13.858Z",
+  "reason": "focus_transition_after_job_deadline"
+}

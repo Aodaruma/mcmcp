@@ -1,6 +1,6 @@
 # v2 長時間入力：短い隔離実機試験の準備
 
-**準備・静的検査のみ。実ゲームの合格記録ではない。** 候補は製品commit `633caff0d69562a63b187e7aa22bb8fe5060cf1a`、JAR SHA-256 `f787171893dff9ea3027fb9139c28ad28f8dad0b05ffcc375b8fa304bc9b2e7b`。このfixtureの追加で製品JARは変更しない。[仕様](../../../../docs/PUBLIC_API_V2_LONG_EXECUTION_20260929.md)と[検証記録](../../../../docs/experiments/20260929_v2_long_execution.md)も参照。
+候補は製品commit `633caff0d69562a63b187e7aa22bb8fe5060cf1a`、JAR SHA-256 `f787171893dff9ea3027fb9139c28ad28f8dad0b05ffcc375b8fa304bc9b2e7b`。このfixtureの追加で製品JARは変更しない。2026-09-29に短い隔離実機A–Hを確認した。[仕様](../../../../docs/PUBLIC_API_V2_LONG_EXECUTION_20260929.md)と、無効run・GUI観測の限界を含む[検証記録](../../../../docs/experiments/20260929_v2_long_execution.md)を参照。本手順を配置しただけで新しいrunを合格にはしない。
 
 既存の `MCMCP-V2-Local-20260928` profileと、前回の専用 `New World` を使う。前回終了時にprofileは試験前へ復旧済みなので、試験後のprivate退避から専用worldを戻す準備が必要。通常「くらふとぶ！」profileやサーバーをfixtureとして使用しない。操作開始の新しい合図を得てから、利用者指定の差し替え担当が停止・backup・配置・GUI起動をまとめて行う。
 
@@ -9,7 +9,7 @@
 1. 停止した隔離profileのsave全体、MOD、設定を別途backupし、相対path・file数・hashを記録する。前回の退避を上書きしない。
 2. ネイティブPrismが読む物理profileを確認する。表示上のAppDataパスだけではCodexの仮想化領域と区別できない。実体側の候補JAR hash、重複製品JAR不在を確認する。
 3. 前回の隔離worldを復元する場合、同じworldへ旧fixtureの変更も含まれるため、今回もsave全体をbaselineへ復旧する。この試験にfixture-admin JAR・admin tokenは不要。通常profileへの導入物は製品JARのみ。
-4. このディレクトリの `datapack` を隔離worldの `datapacks/v2-long` として配置する。自動起動するload/tick tagはない。pack metadataは前回26.2で使用した `107.1` を引き継ぐが、新functionのゲーム内読み込み・構文確認は未実施。
+4. このディレクトリの `datapack` を隔離worldの `datapacks/v2-long` として配置する。自動起動するload/tick tagはない。pack metadataは26.2で使用した `107.1`。今回の隔離試験でfunctionの読み込みと実行を確認した。
 5. 隔離profileをGUI起動。T0前に `/reload` し、function読込エラーがないことを確認する。試験中のchat・inventory画面は停止条件になるため、下記の準備コマンドは各jobの開始前だけ実行する。
 6. MCP ON後、fresh `agent_get_mcp_status` のworld session、control `ready`、running actionなしを確認する。`agent_get_state` のschema 2、位置 `(200.5,201,200.5)`、体力、選択slot、offhandを確認する。前回のsession IDは再利用しない。`-Check`はtool名/数の検査であり、拡張schemaの照合を代替しない。
 7. 通常の公開MCP接続先と隔離ゲームの接続先を混同しない。endpoint・隔離profileのtokenファイル・fresh sessionを組にして照合し、不一致ならjobを開始しない。同時に両ゲームを起動しない。

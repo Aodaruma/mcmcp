@@ -61,6 +61,6 @@ repositoryのworktreeでPowerShell 7.4以上を使います。tokenの値は貼�
 - 自動障害物処理は水平の局所処理です。液体処理、階段・縦穴、任意形状の自動施工は含みません。
 - 設置面が他のblockで遮られる配置では、安全に停止する場合があります。施工順や立ち位置を変えて対応してください。
 - 道具の耐久・Silk Touch／Fortune条件、破壊dropや消費材料の詳細台帳、全MOD組合せ・通信遅延の検証は残っています。
-- この導入済みJARの入力列は合計1,200 tick、scriptは最大72,000 tickです。[全行動の長時間・多回数実行](PUBLIC_API_V2_LONG_EXECUTION_20260929.md)を開発branchへ追加しましたが、新JARの実機検証・通常profileへの導入はまだです。
+- この導入済みJARの入力列は合計1,200 tick、scriptは最大72,000 tickです。[全行動の長時間・多回数実行](PUBLIC_API_V2_LONG_EXECUTION_20260929.md)を開発branchへ追加し、新JARで短い隔離入力試験を確認しました。通常profileへの新JAR導入は別途確認待ちです。
 
 引数の詳細は[クイックガイド](MCMCP_Public_API_v2_クイックガイド.md)と[Tool Catalog](MCMCP_MCP_Tool_Catalog.json)を参照してください。[実機試験記録](experiments/20260929_v2_trial_local.md)には9フェーズの結果、失敗からの修正、検証環境の復旧をまとめています。

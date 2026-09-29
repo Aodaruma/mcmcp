@@ -1,6 +1,6 @@
 # 公開API v2：長時間・多回数実行（2026-09-29）
 
-**開発branchの追加実装。通常profileへは未導入、今回の実機試験・24時間連続実測は未実施。** 右クリックだけに限定せず、利用者指定により移動・破壊・設置・操作・所持品・入力・scriptの上限を見直した。新しいJARの実体配置と再起動後API確認は差し替え担当が行う。以前の`03c7943f…`版には以下の拡張はない。
+**開発branchの追加実装。短い隔離入力試験は確認済み。通常profile導入・24時間連続実測は未確認。** 右クリックだけに限定せず、利用者指定により移動・破壊・設置・操作・所持品・入力・scriptの上限を見直した。新しいJARの実体配置と再起動後API確認は差し替え担当が行う。以前の`03c7943f…`版には以下の拡張はない。
 
 ## 引数と上限
 
@@ -47,16 +47,16 @@ block範囲4,096 cell、入力列64 step、menuクリック16件、短い確認�
 
 ## 時間と停止
 
-`agent_get_action`の`progress`へ`elapsed_seconds`、`remaining_seconds`、`max_duration_seconds`を追加した。`stop_reason`は通常完了の`completed`、秒指定inputの期限到達`duration_elapsed`、失敗・取消理由を返す。実行中はnull。inputの`result.phase`は`holding`または`waiting_for_item`。受付の`queued`は実行成功ではない。
+`agent_get_action`の`progress`へ`elapsed_seconds`、`remaining_seconds`、`max_duration_seconds`を追加した。`stop_reason`は通常完了の`completed`、秒指定inputの期限到達`duration_elapsed`、失敗・取消理由を返す。実行中はnull。inputの`result.phase`は`holding`または`waiting_for_item`。terminalでも最後のphaseが残る場合があるため、継続中かは`state`・`stop_reason`・controlで判定する。受付の`queued`は実行成功ではない。
 
 秒指定inputは指定期限または入力列完了で正常終了し、それ以外のjobが作業未完で期限に達した場合は`duration_limit`（scriptは`script_timeout`）で停止する。期限付きinputの正常終了は、粉の設置数やコンクリート生成数を保証しない。キー解放で発生する通常のゲーム効果も巻き戻さない。
 
 期限には単調な実時間を使い、ゲームpauseを除外する入力leaseの時計とは分離した。tick停止後の再開でも、期限切れの入力を新たに発行する前に停止する。入力消費側でも期限を検査するため、古い所有状態やlease再発行だけでは入力を復活できない。Esc（ゲームが受け取ったもの）、OFF、取消、画面・world境界、危険、runtime異常での停止と、解放確認後のterminal公開を維持する。解放失敗時は終了処理を再試行する。
 
-ゲーム切断・JVM再起動後の自動再接続・再開はしない。OSスリープ中は作業できない。ゲームpause中は入力を止め、総期限を延長しない。非アクティブ化や省電力で画面遷移・lease失効等の停止条件に達した場合は停止する。別アプリへOS入力は送らないが、このMOD構成で非アクティブのまま継続できるかは実機確認が残る。
+ゲーム切断・JVM再起動後の自動再接続・再開はしない。OSスリープ中は作業できない。ゲームpause中は入力を止め、総期限を延長しない。非アクティブ化や省電力で画面遷移・lease失効等の停止条件に達した場合は停止する。別アプリへOS入力は送らない。隔離singleplayerの`pauseOnLostFocus:false`では背景中の20秒継続を確認したが、通常profileのMOD構成や長時間の背景運転は別途確認が必要。
 
 ## 自動試験と残る確認
 
 旧上限を超える1,500 tickの入力・1,500回のscript、121秒後に確認できる移動とblock施工、引数と公開schemaの拡張を回帰試験へ追加。時刻注入で24時間境界、期限後の再発行防止、親子の期限共有、入力解放待ち、取消との競合、補充・補充期限切れ・異なるitem・姿勢変化を確認する。
 
-検査結果・対象JARは[変更検証記録](experiments/20260929_v2_long_execution.md)へ記録する。短い隔離実機での粉設置・補充・取消、CLI終了後と非アクティブ時の継続、通常profile導入後の公開schema確認はこれから行う。24時間実運転を自動試験で代用して「実測済み」とは記録しない。
+検査結果・対象JARは[変更検証記録](experiments/20260929_v2_long_execution.md)を参照。短い隔離実機で粉設置・補充・取消・期限、CLI終了後と非アクティブ時の継続、旧上限超えの1,500tick（約75秒）を確認した。移動・施工・scriptを最大予算で動かす実測、通常profile導入後の運用と24時間実運転は残る。短い試験を24時間の「実測済み」とは記録しない。
