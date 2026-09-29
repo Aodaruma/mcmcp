@@ -7,6 +7,7 @@ import java.util.UUID;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 
@@ -80,9 +81,16 @@ final class SophisticatedStorageAccess implements StorageAccess {
 
         @Override
         public boolean matches(KnownMenuProfileSupport.Context menu) {
-            if (!profileHash().equals(menu.profile().profileHash())) return false;
+            return profileHash().equals(menu.profile().profileHash())
+                    && matchesOpenedMenu(menu.menu(), menu.player());
+        }
+
+        @Override
+        public boolean matchesOpenedMenu(AbstractContainerMenu menu, Player player) {
+            if (!KnownMenuProfileSupport.storageProviderAvailable()
+                    || !menu.getClass().getName().equals(ROOT + "common.gui.BackpackContainer")) return false;
             try {
-                Object context = menu.menu().getClass().getMethod("getBackpackContext").invoke(menu.menu());
+                Object context = menu.getClass().getMethod("getBackpackContext").invoke(menu);
                 Class<?> type = Class.forName(ROOT + "common.gui.BackpackContext$Item");
                 if (context.getClass() != type) return false;
                 var handlerField = type.getDeclaredField("handlerName");
@@ -91,7 +99,7 @@ final class SophisticatedStorageAccess implements StorageAccess {
                         || !handler().equals(handlerField.get(context)) || !"".equals(identifierField.get(context))) return false;
                 int expectedSlot = slot == 38 ? 2 : slot == 40 ? 0 : slot;
                 if ((int) type.getMethod("getBackpackSlotIndex").invoke(context) != expectedSlot) return false;
-                Object wrapper = type.getMethod("getBackpackWrapper", Player.class).invoke(context, menu.player());
+                Object wrapper = type.getMethod("getBackpackWrapper", Player.class).invoke(context, player);
                 ItemStack opened = (ItemStack) wrapper.getClass().getMethod("getBackpack").invoke(wrapper);
                 return SophisticatedStorageAccess.identity(opened).filter(identity::equals).isPresent();
             } catch (ReflectiveOperationException | RuntimeException ignored) {

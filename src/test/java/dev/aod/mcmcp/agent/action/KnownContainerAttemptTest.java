@@ -20,6 +20,27 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class KnownContainerAttemptTest {
     @Test
+    void cleanupDiagnosticsRetainCauseAndExcludeUnrelatedEvidenceAfterRelease() {
+        var port = new FakePort();
+        port.holdPending = true;
+        port.releaseFailuresRemaining = 1;
+        port.extraBasis = Map.of("phase", "releasing", "failure", "storage_layout_unsupported",
+                "awaiting_open_evidence", false, "private_details", "not public");
+        var operation = new KnownContainerAttempt(port, request(), 1, 101);
+        port.tick = 1;
+        operation.tick(1);
+        assertThatThrownBy(operation::close).isInstanceOf(IllegalStateException.class);
+        assertThat(operation.progressEvidence()).containsEntry("release_pending", true)
+                .containsEntry("failure", "storage_layout_unsupported")
+                .doesNotContainKeys("private_details", "open_count", "container_clicks");
+        operation.close();
+        assertThat(operation.progressEvidence()).containsEntry("phase", "terminal")
+                .containsEntry("release_confirmed", true).containsEntry("release_pending", false)
+                .containsEntry("failure", "storage_layout_unsupported");
+        assertThat(port.retires).isEqualTo(1);
+    }
+
+    @Test
     void storageTransferRetainsConfirmedPrefixAndUnknownTailOnceOnCancellation() {
         var port = new FakePort();
         port.holdPending = true;

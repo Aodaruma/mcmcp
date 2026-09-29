@@ -172,11 +172,25 @@ public final class KnownMenuProfileSupport {
                 : backpackContext(minecraft.player, screen, menu, snapshot, runtime);
     }
 
-    static boolean synchronizedMenuMatches(
+    public static boolean synchronizedMenuMatches(
             ContainerSyncSignals.Snapshot ledger,
             UUID worldSessionId,
             AbstractContainerMenu menu) {
         return synchronizedMenuMatches(ledger, worldSessionId, menu, false);
+    }
+
+    /** Opening identity is sufficient for cleanup, never for reading or moving contents. */
+    public static boolean freshOpenedMenuMatches(ContainerSyncSignals.Snapshot ledger,
+            UUID worldSessionId, AbstractContainerMenu menu, long afterRevision) {
+        if (ledger == null || !ledger.sameSession(worldSessionId) || ledger.lastOpenScreen() == null) {
+            return false;
+        }
+        var open = ledger.lastOpenScreen();
+        return worldSessionId.equals(open.worldSessionId())
+                && open.packetLedgerRevision() > afterRevision
+                && open.containerId() == menu.containerId
+                && ScreenOwnershipSignals.registeredMenuTypeId(menu)
+                        .filter(open.menuTypeId()::equals).isPresent();
     }
 
     private static boolean synchronizedMenuMatches(

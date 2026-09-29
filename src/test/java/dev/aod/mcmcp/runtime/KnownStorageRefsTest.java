@@ -46,6 +46,8 @@ class KnownStorageRefsTest {
         public boolean stillPresent(Minecraft minecraft) { return true; }
         public void open(Minecraft minecraft) { throw new AssertionError("reference resolution must not open"); }
         public boolean matches(KnownMenuProfileSupport.Context context) { return false; }
+        public boolean matchesOpenedMenu(net.minecraft.world.inventory.AbstractContainerMenu menu,
+                net.minecraft.world.entity.player.Player player) { return false; }
     }
 
     @Test

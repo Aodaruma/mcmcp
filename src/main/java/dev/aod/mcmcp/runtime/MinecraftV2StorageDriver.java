@@ -111,6 +111,7 @@ final class MinecraftV2StorageDriver implements V2OperationJobExecution.Driver {
         result.put("operation", request.inspect() ? "inspect" : "transfer");
         result.put("target", "storage");
         result.put("storage_slot", request.storageSlot());
+        if (attempt != null) result.put("storage_progress", attempt.progressEvidence());
         if (storageItem != null) result.put("storage_item", storageItem);
         if (request.item() != null) result.put("item", request.item());
         if (request.inspect()) {
