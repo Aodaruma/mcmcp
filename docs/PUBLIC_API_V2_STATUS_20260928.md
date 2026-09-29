@@ -17,7 +17,7 @@ Java 1,595件、harness 13件、admin bridge 28件とbuild、PowerShell/Python�
 
 残る主な機能は、任意MODのmenu／収納provider、クラフト・取引・独自ボタン、複合条件・任意entity状態条件、縦方向の障害物施工、高度な道具選択、詳細effect台帳、menuを開いたままのscript合成。新品backpackの自動初期化は未対応。収納の遅延同期・応答待ち取消、全MOD組合せ、PR全体の独立レビューは追加検証として残る。PR #85はDraftを維持し、main統合・タグ・Release公開はしていない。
 
-追加指定により右クリックだけに限定せず、全行動の長時間・多回数指定を開発branchへ追加した。[引数・上限・停止契約](PUBLIC_API_V2_LONG_EXECUTION_20260929.md)と[追加検証記録](experiments/20260929_v2_long_execution.md)を参照。新JARでは短い隔離入力試験A–H（補充・取消・期限・背景継続・1,500tick）を確認済み。通常profile導入・その構成での運用・24時間連続実測は未確認で、前述の導入済みJARとは区別する。
+追加指定により右クリックだけに限定せず、全行動の長時間・多回数指定を開発branchへ追加した。[引数・上限・停止契約](PUBLIC_API_V2_LONG_EXECUTION_20260929.md)と[追加検証記録](experiments/20260929_v2_long_execution.md)を参照。`f7871718…`版では短い隔離入力試験A–H（補充・取消・期限・背景継続・1,500tick）、通常profileへの実体導入・再起動後の新schemaを確認し、隔離baselineも復旧した。24時間連続実測は未実施。通常環境の収納inspect終了待ちも`227ae546…`版で修正・導入済み。作業台タブ開放時の安全な失敗・解放と、タブ閉鎖後の読み取り成功を[実機再確認](experiments/20260929_v2_storage_cleanup.md)した。
 
 以下は履歴。未実装一覧は当時の状態であり、現在の範囲は上の表を優先する。
 

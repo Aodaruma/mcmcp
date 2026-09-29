@@ -104,7 +104,8 @@
   "fixture_stop_executed": true,
   "final_control": "off",
   "final_running_action": null,
-  "normal_profile_installed": false,
-  "baseline_restoration_confirmed": false,
-  "twenty_four_hour_continuous_run": false
+  "normal_profile_installed": true,
+  "baseline_restoration_confirmed": true,
+  "twenty_four_hour_continuous_run": false,
+  "deployment_evidence": "deployment.json"
 }

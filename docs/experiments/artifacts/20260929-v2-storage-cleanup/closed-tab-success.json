@@ -1,0 +1,41 @@
+{
+  "configuration_change": "Operator closed the open crafting upgrade tab through the normal GUI, then closed the screen and restored selected slot 5.",
+  "same_storage_slot": 8,
+  "same_storage_item": "sophisticatedbackpacks:netherite_backpack",
+  "jar_sha256": "227ae54631d1b09f3fbd75f617bfcd03c1eaf348cef48f4b0e6416ea516a597c",
+  "action": {
+    "schema_version": 2,
+    "action_id": "75985008-c996-41a2-8875-011b8d49fa2e",
+    "kind": "inventory",
+    "state": "succeeded",
+    "progress": {
+      "completed_operations": 5,
+      "max_operations": 400,
+      "elapsed_seconds": 0.2488562,
+      "remaining_seconds": 119.751105,
+      "max_duration_seconds": 119.9999612
+    },
+    "stop_reason": "completed",
+    "cancel_requested": false,
+    "failure": null,
+    "result": {
+      "storage_item": "sophisticatedbackpacks:netherite_backpack",
+      "storage_progress": {
+        "release_confirmed": true,
+        "release_fault": false,
+        "awaiting_open_evidence": false,
+        "release_pending": false,
+        "phase": "terminal"
+      },
+      "storage_slot": 8,
+      "operation": "inspect",
+      "complete": true,
+      "target": "storage",
+      "contents_redacted": true,
+      "observed_nonempty_slot_entries": 89
+    }
+  },
+  "storage_contents_confirmed": true,
+  "transfers_executed": 0,
+  "powder_placed": 0
+}

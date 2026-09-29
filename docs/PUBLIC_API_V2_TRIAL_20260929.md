@@ -4,13 +4,15 @@ Minecraft 26.2 / NeoForge 26.2.0.59 / Java 25向けの試用版です。mainへ�
 
 ## 導入済みJAR
 
-このPCのPrismLauncher **「くらふとぶ！-v01.2」**には、2026-09-29に差し替え担当が実体側へv2を導入し、Prism GUIからの再起動・再接続後に公開13ツールとschema 2を確認しています。[訂正・確認記録](experiments/artifacts/20260929-v2-trial/installation-correction.json)
+このPCのPrismLauncher **「くらふとぶ！-v01.2」**には、2026-09-29に長時間拡張版を導入し、15:15～15:19 JSTに収納終了処理の修正版へ更新しました。差し替え担当が実体配置とPrism GUIからの再起動・再接続後に公開13ツール、schema 2、inputの上限86,400秒を確認しています。[最新の導入記録](experiments/artifacts/20260929-v2-storage-cleanup/deployment.json)、[長時間版の導入・隔離環境の復旧記録](experiments/artifacts/20260929-v2-long-live/deployment.json)
 
 - 導入先: profile内の`minecraft/mods/mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar`
-- 実体側の旧版: SHA-256 `f4b6b782d99cfb94e6aef8143211c08de02045be51e26f81b2fc09ea4a4ee1bc`。差し替え担当が別名でバックアップ済みです。
-- 新JARのSHA-256: `03c7943f7fcd78f06021db2224a5df5b47fd77a2bc98bd99c32c5a930fadece1`
+- 実体側の直前の版: SHA-256 `f787171893dff9ea3027fb9139c28ad28f8dad0b05ffcc375b8fa304bc9b2e7b`。差し替え担当が別名でバックアップ済みです。
+- 導入確認済みJARのSHA-256: `227ae54631d1b09f3fbd75f617bfcd03c1eaf348cef48f4b0e6416ea516a597c`
 
-**初回の導入完了報告を訂正します。** Codexからの通常AppDataパスは仮想化領域の`LocalCache/Roaming`へ転送されており、初回のhash確認はネイティブPrismが読む実体への導入を証明していませんでした。初回の`mcmcp-backups/20260929-public-api-v2/`と旧版hash `ca47984f…`も、その仮想化領域での記録です。[初回receipt（確認範囲を訂正）](experiments/artifacts/20260929-v2-trial/installation.json)
+通常環境の収納inspectが終了しない問題も修正しました。作業台タブが開いている場合は約3.2秒で失敗・画面解放・待機復帰し、通常UIでタブを閉じると同じ収納の内容取得が約0.25秒で成功しました。[収納の追加記録](experiments/20260929_v2_storage_cleanup.md)を参照してください。導入成功を全MOD組合せの機能確認とは扱いません。
+
+**初回の導入完了報告を訂正します。** Codexからの通常AppDataパスは仮想化領域の`LocalCache/Roaming`へ転送されており、初回のhash確認はネイティブPrismが読む実体への導入を証明していませんでした。初回の`mcmcp-backups/20260929-public-api-v2/`と旧版hash `ca47984f…`も、その仮想化領域での記録です。[初回receipt（確認範囲を訂正）](experiments/artifacts/20260929-v2-trial/installation.json)。その後の実体側`f4b6b782…`から`03c7943f…`への差し替えは[訂正・確認記録](experiments/artifacts/20260929-v2-trial/installation-correction.json)に残しています。
 
 以後は、ファイルハンドルからの物理パス確認・実体側hash・重複製品JAR確認に加え、再起動後の公開API確認までを導入完了条件とします。差し替え・再起動・再接続・MCP ONは指定の差し替え担当が行います。実体側の起動と短いAPI試験は確認済みですが、全MOD機能の互換性を網羅した検証ではありません。
 
@@ -61,6 +63,6 @@ repositoryのworktreeでPowerShell 7.4以上を使います。tokenの値は貼�
 - 自動障害物処理は水平の局所処理です。液体処理、階段・縦穴、任意形状の自動施工は含みません。
 - 設置面が他のblockで遮られる配置では、安全に停止する場合があります。施工順や立ち位置を変えて対応してください。
 - 道具の耐久・Silk Touch／Fortune条件、破壊dropや消費材料の詳細台帳、全MOD組合せ・通信遅延の検証は残っています。
-- この導入済みJARの入力列は合計1,200 tick、scriptは最大72,000 tickです。[全行動の長時間・多回数実行](PUBLIC_API_V2_LONG_EXECUTION_20260929.md)を開発branchへ追加し、新JARで短い隔離入力試験を確認しました。通常profileへの新JAR導入は別途確認待ちです。
+- [全行動の長時間・多回数実行](PUBLIC_API_V2_LONG_EXECUTION_20260929.md)は明示最大1,728,000 tick／24時間です。短い既定値は維持しています。短い隔離入力8試験と通常profileへの導入を確認しましたが、24時間連続実測は未実施です。
 
 引数の詳細は[クイックガイド](MCMCP_Public_API_v2_クイックガイド.md)と[Tool Catalog](MCMCP_MCP_Tool_Catalog.json)を参照してください。[実機試験記録](experiments/20260929_v2_trial_local.md)には9フェーズの結果、失敗からの修正、検証環境の復旧をまとめています。

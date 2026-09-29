@@ -52,6 +52,8 @@
 
 所持する収納itemなら`target:"storage",storage_slot:2`を指定します。`storage_slot`はプレイヤー所持枠です。収納間の数量移送には`operation:"transfer",direction:"take"`または`"store"`と`item,count`を指定します。収納providerは現在Sophisticated Backpacks 3.25.90／Core 1.4.99の検証済みJARに対応。他MODにはprovider／同期profileの追加が必要です。新品backpackは通常UIで一度開いて個体IDを初期化してください。初期化済みのhotbar slot 2でinspect・store3・take2と再開封照合を実機確認しました。数量確認・部分結果・終了処理は共通化しています。
 
+収納の作業台等のupgradeタブは、通常UIで閉じてからAPI操作してください。開いたタブで停止できなかった問題は修正し、失敗時の解放とタブ閉鎖後の読み取り成功を[実機確認](experiments/20260929_v2_storage_cleanup.md)しました。`result.storage_progress`に開封・同期・対応layout・解放待ちの状態を記録します。`complete:false`や`release_pending:true`のまま同じ操作を再送しないでください。
+
 `agent_run_script`の`source`には、次のような同期scriptを渡せます。
 
 ```js

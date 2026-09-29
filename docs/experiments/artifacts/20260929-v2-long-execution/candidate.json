@@ -26,7 +26,8 @@
   "source_checks": "tools/check-source.ps1 -SkipJava -PythonExecutable python",
   "in_game_verified": true,
   "twenty_four_hour_continuous_run": false,
-  "normal_profile_installed": false,
+  "normal_profile_installed": true,
   "in_game_verification_scope": "Short isolated input trials A-H; duration/cancel/refill/background/1500 ticks. Not a 24-hour run or full long-budget movement/script validation.",
-  "in_game_evidence": "../20260929-v2-long-live/summary.json"
+  "in_game_evidence": "../20260929-v2-long-live/summary.json",
+  "deployment_evidence": "../20260929-v2-long-live/deployment.json"
 }

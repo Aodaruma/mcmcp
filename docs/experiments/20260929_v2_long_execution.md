@@ -62,10 +62,18 @@ Gの[初回](artifacts/20260929-v2-long-live/background-invalid.json)は画面�
 
 画面観測はAPI判定と分けた。A/B/Cは終了後の通常画面と待機表示、D/E/Fは上記のslot個数とfixture設置数を目視したが、それぞれの画像ファイルは未保存。Gの復帰後の通常立ち姿、Hの開始前・保持中・終了後の姿勢はprivate画像に保存した。H終了直後のcaptureは古い保持姿勢・青表示が残ったため解放証拠から除外し、F3で描画更新後の通常立ち姿・待機表示を確認した。Shift/Escで解除して成功に見せる操作はしていない。公開APIに物理キー内部状態はなく、その直接測定を合格条件として偽装しない。runner既定の`gui_release_verified:false`を書き換えず、[一覧のGUI観測欄](artifacts/20260929-v2-long-live/summary.json)へ別記した。アバター等を含む画像は自動公開しない。
 
-全Action終了後、`/function v2_long:stop`を実行し、元の一人称・F3非表示へ戻してMCP OFF。14:47:48 JSTの[引き渡し記録](artifacts/20260929-v2-long-live/final-handoff.json)は同じsession、`off / game_paused:true / running_action_id:null`、体力20・空のhotbar。GUI操作権を依頼元へ返した。ゲーム保存終了、今回baseline復旧、通常profile導入は差し替え担当の後続工程であり、この引き渡しだけでは完了としない。
+全Action終了後、`/function v2_long:stop`を実行し、元の一人称・F3非表示へ戻してMCP OFF。14:47:48 JSTの[引き渡し記録](artifacts/20260929-v2-long-live/final-handoff.json)は同じsession、`off / game_paused:true / running_action_id:null`、体力20・空のhotbar。GUI操作権を依頼元へ返した。
+
+## 通常profileへの導入と隔離環境の復旧
+
+差し替え担当がゲーム保存終了・JVM停止後、今回のnative隔離profileを全ファイルhash照合付きで退避した。native側は試験前の不在状態へ復旧し、元の仮想化側baselineは12ファイルのhash一致を確認。14:51 JSTに通常「くらふとぶ！-v01.2」の実体JARを`f7871718…`へ置換した。直前の`03c7943f…`をbackupし、ファイルハンドルからの物理パス、新JARのhash一致、製品JAR 1個を確認した。
+
+Prism GUIから再起動・再接続し、14:53 JSTに新session `dd09bf38-fa1a-4679-b0dd-7440293cf02d`、公開13ツール・schema 2を確認。input_sequenceのschema全体がcatalogと一致し、duration最大86,400秒、refill最大300秒・既定30秒を維持した。14:54 JSTにPrismを前景へ切り替えても`ready / game_paused:false / running_action_id:null`だった。[公開用の導入・復旧receipt](artifacts/20260929-v2-long-live/deployment.json)はprivate path・token・通常worldの位置を含まない。この時点で通常環境の粉設置は実行していない。
+
+その後の通常収納inspectでは終了待ちの問題を報告された。[修正と再確認の記録](20260929_v2_storage_cleanup.md)へ分けて追跡する。ここでの導入完了を、通常MOD構成の全機能合格とは扱わない。
 
 ## 残る確認・導入
 
-**短い隔離入力試験は確認済み。通常profile導入・そのMOD構成での運用・24時間連続実測は未確認。** 拡張した移動距離上限・長い移動/施工・scriptの最大予算を実ゲームで全て走らせたものではない。OSスリープ中の稼働や任意MODによる背景tick抑制を保証しない。局所安全・短い確認待ち等で最大時間より早く停止することがある。
+**短い隔離入力試験と通常profileへの導入を確認済み。通常構成での運用確認と24時間連続実測は残る。** 拡張した移動距離上限・長い移動/施工・scriptの最大予算を実ゲームで全て走らせたものではない。OSスリープ中の稼働や任意MODによる背景tick抑制を保証しない。局所安全・短い確認待ち等で最大時間より早く停止することがある。
 
-候補JARとhashは用意済み。現場の状態確認・実機の時間帯・JAR差し替えは担当間で調整する。前回のAppData仮想化による導入誤判定は[試用メモ](../PUBLIC_API_V2_TRIAL_20260929.md)と[保守手順](../MAINTENANCE.md)を訂正した。今後は実体配置確認と再起動後の公開schema確認まで揃えて導入完了とする。main統合・タグ・Release公開は行わない。
+現場の状態確認・実機の時間帯・JAR差し替えは担当間で調整する。前回のAppData仮想化による導入誤判定は[試用メモ](../PUBLIC_API_V2_TRIAL_20260929.md)と[保守手順](../MAINTENANCE.md)を訂正した。実体配置確認と再起動後の公開schema確認まで揃えて導入完了とする。main統合・タグ・Release公開は行わない。
