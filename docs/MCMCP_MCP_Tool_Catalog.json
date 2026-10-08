@@ -1375,7 +1375,7 @@
     {
       "name": "agent_move",
       "title": "Move to Coordinates",
-      "description": "Moves over locally known safe routes. clear_path defaults to false; when true, a blocked route may break ordinary visible blocks and, only with bridge_block, fill adjacent floor gaps. Each change needs server confirmation and fresh route evidence. stop_when ends early on a visible block, own item count, position, or screen condition. Unknown cells are never assumed safe. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply. auto_replan defaults to true; false stops on a route replan request. Replanning never grants block break/place permission. Creative and spectator modes with vanilla flight permission support automatic takeoff and three-dimensional air routes, including controlled descent across unsupported drops. Creative routes avoid collisions; spectator routes follow vanilla no-clip. Air routes remain locally observed, loaded, bounded and cancellable; sneak is a ground-posture option.",
+      "description": "Moves over locally known safe routes. clear_path defaults to false; when true, a blocked route may break ordinary visible blocks and, only with bridge_block, fill adjacent floor gaps. Each change needs server confirmation and fresh route evidence. stop_when ends early on a visible block, own item count, position, or screen condition. Unknown cells are never assumed safe. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply. auto_replan defaults to true; false stops on a route replan request. Replanning never grants block break/place permission. Creative and spectator modes with vanilla flight permission support automatic takeoff and three-dimensional air routes, including controlled descent across unsupported drops. Creative routes avoid collisions; spectator routes follow vanilla no-clip. Air routes remain locally observed, loaded, bounded and cancellable; sneak is a ground-posture option. stop_when supports all/any/not, visible entity flags/distance and player health/food/air; unknown stays unknown under negation. Conditions are limited to depth 8 and 64 nodes. Supports observed water corridors with low-air surface retreat, and local routes while riding controlled boats, minecarts or saddled tame horses. Vehicle inertia is checked at arrival; cancellation releases input but cannot forcibly stop a vehicle. Air retreat ends the requested movement with an explicit failure reason.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
@@ -1413,133 +1413,7 @@
                 "maximum": 4096
               },
               "stop_when": {
-                "oneOf": [
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "position"
-                      },
-                      "x": {
-                        "type": "integer"
-                      },
-                      "y": {
-                        "type": "integer"
-                      },
-                      "z": {
-                        "type": "integer"
-                      },
-                      "radius": {
-                        "type": "number",
-                        "minimum": 0.1,
-                        "maximum": 16,
-                        "default": 0.75
-                      }
-                    },
-                    "required": [
-                      "x",
-                      "y",
-                      "z"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "block"
-                      },
-                      "x": {
-                        "type": "integer"
-                      },
-                      "y": {
-                        "type": "integer"
-                      },
-                      "z": {
-                        "type": "integer"
-                      },
-                      "block": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
-                      },
-                      "properties": {
-                        "type": "object",
-                        "maxProperties": 32,
-                        "propertyNames": {
-                          "pattern": "^[a-z0-9_]{1,64}$"
-                        },
-                        "additionalProperties": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 64,
-                          "pattern": "^[a-z0-9_./-]+$"
-                        }
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "x",
-                      "y",
-                      "z",
-                      "block"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "item"
-                      },
-                      "item": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
-                      },
-                      "count": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 1000000,
-                        "default": 1
-                      },
-                      "comparison": {
-                        "enum": [
-                          "at_least",
-                          "at_most",
-                          "equals"
-                        ],
-                        "default": "at_least"
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "item"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "screen"
-                      },
-                      "screen": {
-                        "enum": [
-                          "none",
-                          "container",
-                          "inventory",
-                          "chat"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "screen"
-                    ]
-                  }
-                ]
+                "$ref": "#/$defs/condition"
               },
               "clear_path": {
                 "type": "boolean",
@@ -1596,133 +1470,7 @@
                 "maximum": 4096
               },
               "stop_when": {
-                "oneOf": [
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "position"
-                      },
-                      "x": {
-                        "type": "integer"
-                      },
-                      "y": {
-                        "type": "integer"
-                      },
-                      "z": {
-                        "type": "integer"
-                      },
-                      "radius": {
-                        "type": "number",
-                        "minimum": 0.1,
-                        "maximum": 16,
-                        "default": 0.75
-                      }
-                    },
-                    "required": [
-                      "x",
-                      "y",
-                      "z"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "block"
-                      },
-                      "x": {
-                        "type": "integer"
-                      },
-                      "y": {
-                        "type": "integer"
-                      },
-                      "z": {
-                        "type": "integer"
-                      },
-                      "block": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
-                      },
-                      "properties": {
-                        "type": "object",
-                        "maxProperties": 32,
-                        "propertyNames": {
-                          "pattern": "^[a-z0-9_]{1,64}$"
-                        },
-                        "additionalProperties": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 64,
-                          "pattern": "^[a-z0-9_./-]+$"
-                        }
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "x",
-                      "y",
-                      "z",
-                      "block"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "item"
-                      },
-                      "item": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
-                      },
-                      "count": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 1000000,
-                        "default": 1
-                      },
-                      "comparison": {
-                        "enum": [
-                          "at_least",
-                          "at_most",
-                          "equals"
-                        ],
-                        "default": "at_least"
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "item"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "screen"
-                      },
-                      "screen": {
-                        "enum": [
-                          "none",
-                          "container",
-                          "inventory",
-                          "chat"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "screen"
-                    ]
-                  }
-                ]
+                "$ref": "#/$defs/condition"
               },
               "clear_path": {
                 "const": true
@@ -1794,133 +1542,7 @@
                 "maximum": 4096
               },
               "stop_when": {
-                "oneOf": [
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "position"
-                      },
-                      "x": {
-                        "type": "integer"
-                      },
-                      "y": {
-                        "type": "integer"
-                      },
-                      "z": {
-                        "type": "integer"
-                      },
-                      "radius": {
-                        "type": "number",
-                        "minimum": 0.1,
-                        "maximum": 16,
-                        "default": 0.75
-                      }
-                    },
-                    "required": [
-                      "x",
-                      "y",
-                      "z"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "block"
-                      },
-                      "x": {
-                        "type": "integer"
-                      },
-                      "y": {
-                        "type": "integer"
-                      },
-                      "z": {
-                        "type": "integer"
-                      },
-                      "block": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
-                      },
-                      "properties": {
-                        "type": "object",
-                        "maxProperties": 32,
-                        "propertyNames": {
-                          "pattern": "^[a-z0-9_]{1,64}$"
-                        },
-                        "additionalProperties": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 64,
-                          "pattern": "^[a-z0-9_./-]+$"
-                        }
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "x",
-                      "y",
-                      "z",
-                      "block"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "item"
-                      },
-                      "item": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
-                      },
-                      "count": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 1000000,
-                        "default": 1
-                      },
-                      "comparison": {
-                        "enum": [
-                          "at_least",
-                          "at_most",
-                          "equals"
-                        ],
-                        "default": "at_least"
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "item"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "screen"
-                      },
-                      "screen": {
-                        "enum": [
-                          "none",
-                          "container",
-                          "inventory",
-                          "chat"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "screen"
-                    ]
-                  }
-                ]
+                "$ref": "#/$defs/condition"
               },
               "clear_path": {
                 "type": "boolean",
@@ -1986,133 +1608,7 @@
                 "maximum": 4096
               },
               "stop_when": {
-                "oneOf": [
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "position"
-                      },
-                      "x": {
-                        "type": "integer"
-                      },
-                      "y": {
-                        "type": "integer"
-                      },
-                      "z": {
-                        "type": "integer"
-                      },
-                      "radius": {
-                        "type": "number",
-                        "minimum": 0.1,
-                        "maximum": 16,
-                        "default": 0.75
-                      }
-                    },
-                    "required": [
-                      "x",
-                      "y",
-                      "z"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "block"
-                      },
-                      "x": {
-                        "type": "integer"
-                      },
-                      "y": {
-                        "type": "integer"
-                      },
-                      "z": {
-                        "type": "integer"
-                      },
-                      "block": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
-                      },
-                      "properties": {
-                        "type": "object",
-                        "maxProperties": 32,
-                        "propertyNames": {
-                          "pattern": "^[a-z0-9_]{1,64}$"
-                        },
-                        "additionalProperties": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 64,
-                          "pattern": "^[a-z0-9_./-]+$"
-                        }
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "x",
-                      "y",
-                      "z",
-                      "block"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "item"
-                      },
-                      "item": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
-                      },
-                      "count": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 1000000,
-                        "default": 1
-                      },
-                      "comparison": {
-                        "enum": [
-                          "at_least",
-                          "at_most",
-                          "equals"
-                        ],
-                        "default": "at_least"
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "item"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "screen"
-                      },
-                      "screen": {
-                        "enum": [
-                          "none",
-                          "container",
-                          "inventory",
-                          "chat"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "screen"
-                    ]
-                  }
-                ]
+                "$ref": "#/$defs/condition"
               },
               "clear_path": {
                 "const": true
@@ -2139,7 +1635,246 @@
               "bridge_block"
             ]
           }
-        ]
+        ],
+        "$defs": {
+          "condition": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "position"
+                  },
+                  "x": {
+                    "type": "integer"
+                  },
+                  "y": {
+                    "type": "integer"
+                  },
+                  "z": {
+                    "type": "integer"
+                  },
+                  "radius": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "maximum": 16,
+                    "default": 0.75
+                  }
+                },
+                "required": ["x", "y", "z"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "block"
+                  },
+                  "x": {
+                    "type": "integer"
+                  },
+                  "y": {
+                    "type": "integer"
+                  },
+                  "z": {
+                    "type": "integer"
+                  },
+                  "block": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                  },
+                  "properties": {
+                    "type": "object",
+                    "maxProperties": 32,
+                    "propertyNames": {
+                      "pattern": "^[a-z0-9_]{1,64}$"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9_./-]+$"
+                    }
+                  }
+                },
+                "required": ["type", "x", "y", "z", "block"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "item"
+                  },
+                  "item": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000,
+                    "default": 1
+                  },
+                  "comparison": {
+                    "enum": ["at_least", "at_most", "equals"],
+                    "default": "at_least"
+                  }
+                },
+                "required": ["type", "item"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "screen"
+                  },
+                  "screen": {
+                    "enum": ["none", "container", "inventory", "chat"]
+                  }
+                },
+                "required": ["type", "screen"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "all"
+                  },
+                  "conditions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 16,
+                    "items": {
+                      "$ref": "#/$defs/condition"
+                    }
+                  }
+                },
+                "required": ["type", "conditions"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "any"
+                  },
+                  "conditions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 16,
+                    "items": {
+                      "$ref": "#/$defs/condition"
+                    }
+                  }
+                },
+                "required": ["type", "conditions"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "not"
+                  },
+                  "condition": {
+                    "$ref": "#/$defs/condition"
+                  }
+                },
+                "required": ["type", "condition"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "player"
+                  },
+                  "property": {
+                    "enum": ["on_fire", "in_water", "passenger", "on_ground"]
+                  },
+                  "value": {
+                    "type": "boolean"
+                  },
+                  "comparison": {
+                    "enum": ["equals"]
+                  }
+                },
+                "required": ["type", "property", "value"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "player"
+                  },
+                  "property": {
+                    "enum": ["health", "food", "air"]
+                  },
+                  "value": {
+                    "type": "number"
+                  },
+                  "comparison": {
+                    "enum": ["equals", "at_least", "at_most"]
+                  }
+                },
+                "required": ["type", "property", "value"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "entity"
+                  },
+                  "entity_ref": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{24}$"
+                  },
+                  "property": {
+                    "enum": ["on_fire", "in_water", "passenger", "on_ground", "baby"]
+                  },
+                  "value": {
+                    "type": "boolean"
+                  },
+                  "comparison": {
+                    "enum": ["equals"]
+                  }
+                },
+                "required": ["type", "property", "value", "entity_ref"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "entity"
+                  },
+                  "entity_ref": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{24}$"
+                  },
+                  "property": {
+                    "enum": ["distance"]
+                  },
+                  "value": {
+                    "type": "number"
+                  },
+                  "comparison": {
+                    "enum": ["equals", "at_least", "at_most"]
+                  }
+                },
+                "required": ["type", "property", "value", "entity_ref"]
+              }
+            ]
+          }
+        }
       },
       "outputSchema": {
         "type": "object",
@@ -2227,7 +1962,7 @@
     {
       "name": "agent_break_block",
       "title": "Break Blocks",
-      "description": "Breaks one cell or a signed inclusive box of Vanilla blocks. Filters are optional; advance approaches through known safe cells and confirms each break. Never replays an uncertain mutation. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply.",
+      "description": "Breaks one cell or a signed inclusive box of registered blocks. Filters are optional; advance approaches through known safe cells and confirms each break. Never replays an uncertain mutation. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply. Registered MOD blocks use ordinary survival destruction with tool, hardness, local safety and server update checks; no namespace allowlist.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -2258,7 +1993,7 @@
             "uniqueItems": true,
             "items": {
               "type": "string",
-              "pattern": "^minecraft:[a-z0-9_./-]+$",
+              "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
               "maxLength": 128
             }
           },
@@ -2269,7 +2004,7 @@
             "uniqueItems": true,
             "items": {
               "type": "string",
-              "pattern": "^minecraft:[a-z0-9_./-]+$",
+              "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
               "maxLength": 128
             }
           },
@@ -2434,7 +2169,7 @@
     {
       "name": "agent_interact",
       "title": "Interact",
-      "description": "Uses a block, held item, observed entity, or coordinate menu through ordinary game input. Blocks and entities can be approached with advance (default true); entities must remain visible and valid. Menu operations atomically open, inspect, optionally shift-click whole stacks in Vanilla generic chest/dispenser, hopper or shulker storage menus under exact slot/item/count conditions, then close. Menu crafting output, partial transfers, cursor pickup and custom buttons are not supported. Job results distinguish accepted use from server-confirmed effects. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply. operation=smelt runs an empty furnace, blast furnace or smoker with an exact newly recovered output count, known recipe and fuel consumption budget; up to 64 smelts per job. operation=brew runs one validated standard potion transition for 1..3 bottles using input/output item+potion identities and an ingredient. Both prepare exact material stacks in empty player slots, approach the station, load, wait, recover and verify server evidence. Processing can continue after cancellation; partial results do not promise rollback. Existing operation-omitted calls keep their behavior.",
+      "description": "Uses a block, held item, observed entity, or coordinate menu through ordinary game input. Blocks and entities can be approached with advance (default true); entities must remain visible and valid. Menu operations atomically open, inspect, optionally shift-click whole stacks in Vanilla generic chest/dispenser, hopper or shulker storage menus under exact slot/item/count conditions, then close. Menu crafting output, partial transfers, cursor pickup and custom buttons are not supported. Job results distinguish accepted use from server-confirmed effects. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply. operation=smelt runs an empty furnace, blast furnace or smoker with an exact newly recovered output count, known recipe and fuel consumption budget; up to 64 smelts per job. operation=brew runs one validated standard potion transition for 1..3 bottles using input/output item+potion identities and an ingredient. Both prepare exact material stacks in empty player slots, approach the station, load, wait, recover and verify server evidence. Processing can continue after cancellation; partial results do not promise rollback. Existing operation-omitted calls keep their behavior. entity operation=mount confirms server passenger attachment using empty hand; vehicle operation=dismount requires a stationary supported vehicle and locally checked landing space.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
@@ -2599,6 +2334,9 @@
                 "minimum": 0,
                 "maximum": 4096,
                 "default": 64
+              },
+              "operation": {
+                "const": "use"
               }
             },
             "required": [
@@ -2911,6 +2649,63 @@
               "output",
               "ingredient"
             ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "target": {
+                "const": "entity"
+              },
+              "entity_ref": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{24}$"
+              },
+              "entity_type": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1728000,
+                "default": 1200
+              },
+              "advance": {
+                "type": "boolean",
+                "default": true
+              },
+              "max_distance": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 4096,
+                "default": 64
+              },
+              "operation": {
+                "const": "mount"
+              }
+            },
+            "required": ["target", "entity_ref", "operation"]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "target": {
+                "const": "vehicle"
+              },
+              "operation": {
+                "const": "dismount"
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1728000,
+                "default": 100
+              }
+            },
+            "required": ["target", "operation"]
           }
         ]
       },
@@ -2940,7 +2735,7 @@
     {
       "name": "agent_inventory",
       "title": "Inspect and Move Inventory",
-      "description": "Inspects, swaps or drops player inventory. With target=container and x/y/z, approaches a chest, barrel or copper chest. With target=storage and storage_slot, opens a carried storage item through its supported provider. Inspect reads contents; transfer takes or stores an exact count. Mutations require server confirmation and retain partial results on cancellation. Current transfers require a plan within 14 pickup clicks. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply.",
+      "description": "Inspects, swaps or drops player inventory. With target=container and x/y/z, approaches a chest, barrel or copper chest. With target=storage and storage_slot, opens a carried storage item through its supported provider. Inspect reads contents; transfer takes or stores an exact count. Mutations require server confirmation and retain partial results on cancellation. Current transfers require a plan within 14 pickup clicks. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply. sort/consolidate preserve component variants and confirm each transfer; default scope is 9..35. move also supports armor slots 36..39 and offhand 40, subject to vanilla slot restrictions.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
@@ -3005,12 +2800,12 @@
               "source_slot": {
                 "type": "integer",
                 "minimum": 0,
-                "maximum": 35
+                "maximum": 40
               },
               "destination_slot": {
                 "type": "integer",
                 "minimum": 0,
-                "maximum": 35
+                "maximum": 40
               },
               "item": {
                 "type": "string",
@@ -3282,6 +3077,62 @@
               "item",
               "count"
             ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "const": "sort"
+              },
+              "slots": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 36,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 35
+                },
+                "description": "Default main inventory slots 9..35; list order defines sorting order."
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1728000,
+                "default": 2400
+              }
+            },
+            "required": ["operation"]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "const": "consolidate"
+              },
+              "slots": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 36,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 35
+                },
+                "description": "Default main inventory slots 9..35; list order defines sorting order."
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1728000,
+                "default": 2400
+              }
+            },
+            "required": ["operation"]
           }
         ]
       },
@@ -3311,7 +3162,7 @@
     {
       "name": "agent_craft",
       "title": "Plan and Execute Crafting",
-      "description": "Plans or executes a bounded number of newly crafted items in the player 2x2 grid or an approached crafting table. Obtain recipe_ref and recipe_fingerprint from agent_get_state query. count means new output items; max_crafts limits recipe executions. Non-multiple counts require allow_surplus=true. Supports known deterministic shaped/shapeless recipes using default-component materials, including ordinary container remainders. Consult recipe_query.v2_craft_supported and plan for suitability. Uses only player inventory, confirms each output from server payloads, and never repeats uncertain dispatches. plan uses current known inventory without opening a screen; execution rechecks station, materials and capacity. Returns a delivery-gated action_id; use agent_get_action with include_result and agent_cancel_action. Component-sensitive recipes and recursive crafting are not supported in this initial slice. Returned containers are checked for capacity and recovered before completion.",
+      "description": "Plans or executes a bounded number of newly crafted items in the player 2x2 grid or an approached crafting table. Obtain recipe_ref and recipe_fingerprint from agent_get_state query. count means new output items; max_crafts limits recipe executions. Non-multiple counts require allow_surplus=true. Supports known deterministic shaped/shapeless recipes using item-ID ingredients, including component-bearing materials, including ordinary container remainders. Consult recipe_query.v2_craft_supported and plan for suitability. Uses only player inventory, confirms each output from server payloads, and never repeats uncertain dispatches. plan uses current known inventory without opening a screen; execution rechecks station, materials and capacity. Returns a delivery-gated action_id; use agent_get_action with include_result and agent_cancel_action. Component-sensitive recipes and recursive crafting are not supported . Returned containers are checked for capacity and recovered before completion. Ordinary pickup grid placement accepts component-bearing ingredients when the published recipe accepts their item IDs; preserves unconsumed variants and checks actual remainder components. Special/data-copying output recipes remain unsupported.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -3593,7 +3444,7 @@
     {
       "name": "agent_input_sequence",
       "title": "Run Finite Input Sequence",
-      "description": "Runs bounded logical keys and mouse actions in simultaneous or sequential steps. Releases all owned input on completion, cancellation, and safety stop. stop_when supports position, currently visible block state, own inventory count, and screen type; unknown blocks never satisfy a condition. Explicit steps total at most 1728000 ticks; inputs with duration_seconds holds any logical inputs for at most 86400 real seconds. Optional item guards stationary use only: same selected slot/item, empty offhand, position within 0.25 blocks and view within 2 degrees. Empty material releases use and waits 30 seconds by default (1..300), within the original deadline. No automatic reconnect or restart.",
+      "description": "Runs bounded logical keys and mouse actions in simultaneous or sequential steps. Releases all owned input on completion, cancellation, and safety stop. stop_when supports position, currently visible block state, own inventory count, and screen type; unknown blocks never satisfy a condition. Explicit steps total at most 1728000 ticks; inputs with duration_seconds holds any logical inputs for at most 86400 real seconds. Optional item guards stationary use only: same selected slot/item, empty offhand, position within 0.25 blocks and view within 2 degrees. Empty material releases use and waits 30 seconds by default (1..300), within the original deadline. No automatic reconnect or restart. stop_when supports all/any/not, visible entity flags/distance and player health/food/air; unknown stays unknown under negation. Conditions are limited to depth 8 and 64 nodes.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
@@ -3651,133 +3502,7 @@
                 }
               },
               "stop_when": {
-                "oneOf": [
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "position"
-                      },
-                      "x": {
-                        "type": "integer"
-                      },
-                      "y": {
-                        "type": "integer"
-                      },
-                      "z": {
-                        "type": "integer"
-                      },
-                      "radius": {
-                        "type": "number",
-                        "minimum": 0.1,
-                        "maximum": 16,
-                        "default": 0.75
-                      }
-                    },
-                    "required": [
-                      "x",
-                      "y",
-                      "z"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "block"
-                      },
-                      "x": {
-                        "type": "integer"
-                      },
-                      "y": {
-                        "type": "integer"
-                      },
-                      "z": {
-                        "type": "integer"
-                      },
-                      "block": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
-                      },
-                      "properties": {
-                        "type": "object",
-                        "maxProperties": 32,
-                        "propertyNames": {
-                          "pattern": "^[a-z0-9_]{1,64}$"
-                        },
-                        "additionalProperties": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 64,
-                          "pattern": "^[a-z0-9_./-]+$"
-                        }
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "x",
-                      "y",
-                      "z",
-                      "block"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "item"
-                      },
-                      "item": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
-                      },
-                      "count": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 1728000,
-                        "default": 1
-                      },
-                      "comparison": {
-                        "enum": [
-                          "at_least",
-                          "at_most",
-                          "equals"
-                        ],
-                        "default": "at_least"
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "item"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "screen"
-                      },
-                      "screen": {
-                        "enum": [
-                          "none",
-                          "container",
-                          "inventory",
-                          "chat"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "screen"
-                    ]
-                  }
-                ]
+                "$ref": "#/$defs/condition"
               },
               "max_distance": {
                 "type": "number",
@@ -3825,133 +3550,7 @@
                 "default": 48
               },
               "stop_when": {
-                "oneOf": [
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "position"
-                      },
-                      "x": {
-                        "type": "integer"
-                      },
-                      "y": {
-                        "type": "integer"
-                      },
-                      "z": {
-                        "type": "integer"
-                      },
-                      "radius": {
-                        "type": "number",
-                        "minimum": 0.1,
-                        "maximum": 16,
-                        "default": 0.75
-                      }
-                    },
-                    "required": [
-                      "x",
-                      "y",
-                      "z"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "block"
-                      },
-                      "x": {
-                        "type": "integer"
-                      },
-                      "y": {
-                        "type": "integer"
-                      },
-                      "z": {
-                        "type": "integer"
-                      },
-                      "block": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
-                      },
-                      "properties": {
-                        "type": "object",
-                        "maxProperties": 32,
-                        "propertyNames": {
-                          "pattern": "^[a-z0-9_]{1,64}$"
-                        },
-                        "additionalProperties": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 64,
-                          "pattern": "^[a-z0-9_./-]+$"
-                        }
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "x",
-                      "y",
-                      "z",
-                      "block"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "item"
-                      },
-                      "item": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
-                      },
-                      "count": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 1728000,
-                        "default": 1
-                      },
-                      "comparison": {
-                        "enum": [
-                          "at_least",
-                          "at_most",
-                          "equals"
-                        ],
-                        "default": "at_least"
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "item"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "screen"
-                      },
-                      "screen": {
-                        "enum": [
-                          "none",
-                          "container",
-                          "inventory",
-                          "chat"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "screen"
-                    ]
-                  }
-                ]
+                "$ref": "#/$defs/condition"
               }
             },
             "required": [
@@ -3983,133 +3582,7 @@
                 "default": 48
               },
               "stop_when": {
-                "oneOf": [
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "position"
-                      },
-                      "x": {
-                        "type": "integer"
-                      },
-                      "y": {
-                        "type": "integer"
-                      },
-                      "z": {
-                        "type": "integer"
-                      },
-                      "radius": {
-                        "type": "number",
-                        "minimum": 0.1,
-                        "maximum": 16,
-                        "default": 0.75
-                      }
-                    },
-                    "required": [
-                      "x",
-                      "y",
-                      "z"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "block"
-                      },
-                      "x": {
-                        "type": "integer"
-                      },
-                      "y": {
-                        "type": "integer"
-                      },
-                      "z": {
-                        "type": "integer"
-                      },
-                      "block": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
-                      },
-                      "properties": {
-                        "type": "object",
-                        "maxProperties": 32,
-                        "propertyNames": {
-                          "pattern": "^[a-z0-9_]{1,64}$"
-                        },
-                        "additionalProperties": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 64,
-                          "pattern": "^[a-z0-9_./-]+$"
-                        }
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "x",
-                      "y",
-                      "z",
-                      "block"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "item"
-                      },
-                      "item": {
-                        "type": "string",
-                        "maxLength": 128,
-                        "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
-                      },
-                      "count": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 1728000,
-                        "default": 1
-                      },
-                      "comparison": {
-                        "enum": [
-                          "at_least",
-                          "at_most",
-                          "equals"
-                        ],
-                        "default": "at_least"
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "item"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "type": {
-                        "const": "screen"
-                      },
-                      "screen": {
-                        "enum": [
-                          "none",
-                          "container",
-                          "inventory",
-                          "chat"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "screen"
-                    ]
-                  }
-                ]
+                "$ref": "#/$defs/condition"
               },
               "item": {
                 "type": "string",
@@ -4129,7 +3602,246 @@
               "item"
             ]
           }
-        ]
+        ],
+        "$defs": {
+          "condition": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "position"
+                  },
+                  "x": {
+                    "type": "integer"
+                  },
+                  "y": {
+                    "type": "integer"
+                  },
+                  "z": {
+                    "type": "integer"
+                  },
+                  "radius": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "maximum": 16,
+                    "default": 0.75
+                  }
+                },
+                "required": ["x", "y", "z"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "block"
+                  },
+                  "x": {
+                    "type": "integer"
+                  },
+                  "y": {
+                    "type": "integer"
+                  },
+                  "z": {
+                    "type": "integer"
+                  },
+                  "block": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                  },
+                  "properties": {
+                    "type": "object",
+                    "maxProperties": 32,
+                    "propertyNames": {
+                      "pattern": "^[a-z0-9_]{1,64}$"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z0-9_./-]+$"
+                    }
+                  }
+                },
+                "required": ["type", "x", "y", "z", "block"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "item"
+                  },
+                  "item": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1000000,
+                    "default": 1
+                  },
+                  "comparison": {
+                    "enum": ["at_least", "at_most", "equals"],
+                    "default": "at_least"
+                  }
+                },
+                "required": ["type", "item"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "screen"
+                  },
+                  "screen": {
+                    "enum": ["none", "container", "inventory", "chat"]
+                  }
+                },
+                "required": ["type", "screen"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "all"
+                  },
+                  "conditions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 16,
+                    "items": {
+                      "$ref": "#/$defs/condition"
+                    }
+                  }
+                },
+                "required": ["type", "conditions"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "any"
+                  },
+                  "conditions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 16,
+                    "items": {
+                      "$ref": "#/$defs/condition"
+                    }
+                  }
+                },
+                "required": ["type", "conditions"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "not"
+                  },
+                  "condition": {
+                    "$ref": "#/$defs/condition"
+                  }
+                },
+                "required": ["type", "condition"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "player"
+                  },
+                  "property": {
+                    "enum": ["on_fire", "in_water", "passenger", "on_ground"]
+                  },
+                  "value": {
+                    "type": "boolean"
+                  },
+                  "comparison": {
+                    "enum": ["equals"]
+                  }
+                },
+                "required": ["type", "property", "value"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "player"
+                  },
+                  "property": {
+                    "enum": ["health", "food", "air"]
+                  },
+                  "value": {
+                    "type": "number"
+                  },
+                  "comparison": {
+                    "enum": ["equals", "at_least", "at_most"]
+                  }
+                },
+                "required": ["type", "property", "value"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "entity"
+                  },
+                  "entity_ref": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{24}$"
+                  },
+                  "property": {
+                    "enum": ["on_fire", "in_water", "passenger", "on_ground", "baby"]
+                  },
+                  "value": {
+                    "type": "boolean"
+                  },
+                  "comparison": {
+                    "enum": ["equals"]
+                  }
+                },
+                "required": ["type", "property", "value", "entity_ref"]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "entity"
+                  },
+                  "entity_ref": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{24}$"
+                  },
+                  "property": {
+                    "enum": ["distance"]
+                  },
+                  "value": {
+                    "type": "number"
+                  },
+                  "comparison": {
+                    "enum": ["equals", "at_least", "at_most"]
+                  }
+                },
+                "required": ["type", "property", "value", "entity_ref"]
+              }
+            ]
+          }
+        }
       },
       "outputSchema": {
         "type": "object",
@@ -4157,7 +3869,7 @@
     {
       "name": "agent_run_script",
       "title": "Run Restricted Action Script",
-      "description": "Runs a bounded synchronous JavaScript-like action script with keyword arguments, variables, functions, branches, and finite loops. No host, file, network, module, async, or arbitrary Java access. Explicit limits: 1728000 duration ticks (24 real hours), 1728000 calls, 10000000 iterations, 100000000 work. Defaults remain 24000/1000/10000/100000. Each child shares the original parent wall deadline; no automatic retries or restart.",
+      "description": "Runs a bounded synchronous JavaScript-like action script with keyword arguments, variables, functions, branches, and finite loops. No arbitrary host paths, filesystem writes, network, modules, async, eval or Java access. Explicit limits: 1728000 duration ticks (24 real hours), 1728000 calls, 10000000 iterations, 100000000 work. Defaults remain 24000/1000/10000/100000. Each child shares the original parent wall deadline; no automatic retries or restart. source_file is an alternative to inline source. Register immutable JSON/CSV files in data_files and access them with read_json(name=\"...\") or read_csv(name=\"...\"). Default aggregate resource limit 32 MiB is configurable up to 256 MiB. Data fields and list indices are readable; no eval, imports, OS or network. observe(kind=\"player\"|\"item\"|\"block\"|\"entity\"|\"condition\"|\"screen\", ...) returns known/value. Action calls return a result with success; on_failure=\"continue\" only continues an explicitly safe failed child.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -4187,10 +3899,43 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 1728000
+          },
+          "source_file": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "UTF-8 source under configured script_resource_root; slash-separated relative path, no links or traversal."
+          },
+          "data_files": {
+            "type": "object",
+            "maxProperties": 32,
+            "propertyNames": {
+              "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "format": {
+                  "enum": ["json", "csv"]
+                }
+              },
+              "required": ["path", "format"]
+            }
           }
         },
-        "required": [
-          "source"
+        "oneOf": [
+          {
+            "required": ["source"]
+          },
+          {
+            "required": ["source_file"]
+          }
         ]
       },
       "outputSchema": {
@@ -4216,7 +3961,6 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema"
       }
     },
-
     {
       "name": "agent_get_action",
       "title": "Get MCMCP Action",

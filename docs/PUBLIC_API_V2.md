@@ -1,5 +1,7 @@
 # MCMCP公開API v2：改訂案
 
+> 材料データ、MOD破壊、水中／乗り物、整理、条件・外部ファイルの追加実装は[2026-10-09の追加ガイド](PUBLIC_API_V2_PRIORITIES_20261009.md)を参照。今回の実機最終検証は準備中。
+
 今回の優先機能と試用手順は[試用メモ](PUBLIC_API_V2_TRIAL_20260929.md)を参照。実装状況・未確認事項は[進捗と再開メモ](PUBLIC_API_V2_STATUS_20260928.md)、実機結果は[基本smoke](experiments/20260928_public_api_v2_local.md)と[所持収納・使用中停止](experiments/20260929_v2_storage_stop_local.md)を参照。この設計案の完成目標、実装済み、実機確認済みの範囲を区別する。
 
 2026-10-09に生産系の最初の実装を追加した。`agent_craft` の手元2×2・作業台3×3、`agent_interact` の製錬・単工程醸造、`agent_inventory(operation:"move")` の数量移送を公開する。現在は15ツール。[生産系の使い方と制限](PUBLIC_API_V2_PRODUCTION_20261009.md)と[承認された設計・残りの実装順序](PUBLIC_API_V2_PRODUCTION_PLAN_20261009.md)を参照。取引・金床・エンチャント等はまだ公開していない。
@@ -47,7 +49,7 @@ LLMは行き先、作業範囲、条件、反復の意図を伝える。MODは�
 | `agent_input_sequence` | 同時・順次のsteps、押下tick、間隔、反復数、停止条件 | 複数入力の単一所有、有限実行と解放 |
 | `agent_run_script` | 下記の制限言語のsourceと総予算 | 関数・変数・分岐・反復で複数の基本行動を組み立てて進める |
 
-Draft PRで公開した範囲は、moveの座標／方向、Vanillaのbreak/place、block state変更・手持ちitem使用・観測したentityへの通常使用のinteract、プレイヤーinventoryのinspect/swap/drop、座標指定のVanilla収納と対応providerの所持収納のinspect/transfer、world内の有限click、9種類の論理入力、制限付きscriptである。swapはmain inventoryの1 stackとhotbarの指定枠を交換し、両slotのserver更新を確認する。moveの明示許可による局所障害物処理、遠方entityへの接近、4種類の停止条件、複数cell設置、menuの開封・照合と限定収納のShiftクリック、PC側施工checkpointを追加した。任意MOD収納や任意GUI操作は未対応。v2の`get_action`は進行数を既定で返す。`include_result:true`を指定すると、block作業では確定セル座標と確認済みの変更前後block stateを直近最大128件、総数・保持開始番号・打切り有無とともに返す。block破壊のdrop・消費item等を含む詳細effectは未実装。実ゲームでの成功・取消・危険停止を確認するまでDraftを維持する。
+Draft PRで公開した範囲は、moveの座標／方向、登録MODを含むbreak／Vanillaのplace、block state変更・手持ちitem使用・観測したentityへの通常使用のinteract、プレイヤーinventoryのinspect/swap/drop、座標指定のVanilla収納と対応providerの所持収納のinspect/transfer、world内の有限click、9種類の論理入力、制限付きscriptである。swapはmain inventoryの1 stackとhotbarの指定枠を交換し、両slotのserver更新を確認する。moveの明示許可による局所障害物処理、遠方entityへの接近、基本4種類と複合・player/entityの停止条件、複数cell設置、menuの開封・照合と限定収納のShiftクリック、PC側施工checkpointを追加した。任意MOD収納や任意GUI操作は未対応。v2の`get_action`は進行数を既定で返す。`include_result:true`を指定すると、block作業では確定セル座標と確認済みの変更前後block stateを直近最大128件、総数・保持開始番号・打切り有無とともに返す。block破壊のdrop・消費item等を含む詳細effectは未実装。実ゲームでの成功・取消・危険停止を確認するまでDraftを維持する。
 
 これらの一呼出しは共通の`action_id`を返す。現在の開始応答は`queued`と`action_id`を返す。完了までは同じIDを照会する。`agent_get_action({action_id})`は**その一件**の進行、成功／失敗を短く返す。確定した変更と途中までの結果は`include_result:true`で明示要求する。`agent_cancel_action({action_id})`は**その一件**の停止を要求する。たとえば範囲指定の`agent_break_block(advance:true)`が坑道を掘り進めている間も、同じIDで進行を見て中止できる。中止は既に壊したblockを戻さない。名前は既存互換のため残し、v2では共通の「作業結果・中止」ツールとして説明する。
 
@@ -77,7 +79,7 @@ entity packetにはitem使用のprediction ACKがないため、`result_item`省
 
 ## 制限付きスクリプト
 
-公開言語はJavaScript風の小さな同期言語。turtle／p5.jsのように`move(...)`、`look(...)`、`breakBlocks(...)`、`place(...)`、`interact(...)`、`input(...)`を順に書ける。行動関数はオブジェクト引数ではなく`move(x=100, y=64, z=120)`のような名前付き引数を受ける。変数、数値・文字列・真偽値・配列・オブジェクト、`if`、回数上限付き`for`／`repeat`、利用者定義の小関数、比較を当面の対象とする。`async/await`、Promise、Node.js、module読込み、Javaへのアクセス、ネットワーク、ファイルI/Oは言語仕様に入れない。完全なECMAScriptを走らせる必要はない。
+公開言語はJavaScript風の小さな同期言語。turtle／p5.jsのように`move(...)`、`look(...)`、`breakBlocks(...)`、`place(...)`、`interact(...)`、`input(...)`を順に書ける。行動関数はオブジェクト引数ではなく`move(x=100, y=64, z=120)`のような名前付き引数を受ける。変数、数値・文字列・真偽値・配列・オブジェクト、`if`、回数上限付き`for`／`repeat`、利用者定義の小関数、比較を当面の対象とする。`async/await`、Promise、Node.js、module読込み、Javaへのアクセス、ネットワーク、任意のファイルI/Oは言語仕様に入れない。明示登録した外部source・JSON/CSVの読取りは追加ガイドの契約で提供する。完全なECMAScriptを走らせる必要はない。
 
 実装済みの構文例（公開`agent_run_script`で受け付ける。移動2反復＋inventoryの実機smokeは成功したが、以下の複合例全体の実機確認ではない）:
 
@@ -118,7 +120,7 @@ for (let i=0; i<count; i++) {
 | 反復 | 全loop合計10,000回。bodyへ入る直前に加算。repeatの回数式は一度だけ評価し、非負整数かつ残反復予算以内でなければ開始前に拒否。forは条件を毎回評価し、trueでも残予算0なら停止 |
 | 命令 | sink呼出し1,000回。呼出し直前に加算し、失敗した呼出しも含む。完了成功数は別に保持 |
 
-loop・関数呼出しを事前展開せず、ASTを直接評価する。関数内のloopもwork・反復・sink呼出しの全体予算を共有し、関数呼出しごとにリセットしない。helper自体はsink呼出数・成功数に加算せず、workで制限する。文字列はsource由来で増殖演算を持たず、collection slotや変数への格納回数もwork上限以内。collection参照を深くcopy/serializeしない。注入sink側でも共有・深いcollectionを無制限に展開せず、命令引数のschema（不足・余分を含む）・大きさを検証する必要がある。
+loop・関数呼出しを事前展開せず、ASTを直接評価する。関数内のloopもwork・反復・sink呼出しの全体予算を共有し、関数呼出しごとにリセットしない。helper自体はsink呼出数・成功数に加算せず、workで制限する。文字列はsourceまたは有界な登録データ由来で増殖演算を持たず、collection slotや変数への格納回数もwork上限以内。collection参照を深くcopy/serializeしない。注入sink側でも共有・深いcollectionを無制限に展開せず、命令引数のschema（不足・余分を含む）・大きさを検証する必要がある。
 
 結果は`SUCCESS / INVALID / LIMIT / CANCELLED / FAILED`、消費work・反復数・呼出数・成功数を返す。sinkの失敗・例外・取消で直ちに停止し、再送しない。取消signalとthread interruptionをparseのtoken境界、AST・呼出しgraph検証、評価node、loop、sink前後で確認する。sinkにも取消signalを渡す。同期sink自体を強制中断したり、wall-clock deadlineを保証する仕組みはこの増分にはなく、sinkが待機中も取消と有限期限に協調することが前提。
 

@@ -50,6 +50,8 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
     private boolean dispatched;
     private boolean clientConsumed;
     private String failure;
+    private long passengerRevision = -1;
+    private boolean mountConfirmed;
 
     MinecraftV2EntityInteractDriver(Minecraft minecraft, Supplier<WorldSessionTracker.Snapshot> sessions,
             AgentObservations observations, V2EntityInteractArguments request, Entity entity,
@@ -71,12 +73,15 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
         begun = true;
         player = minecraft.player;
         level = minecraft.level;
+        var passengers = VehiclePassengerSignals.global().snapshot(entity);
+        passengerRevision = passengers == null ? -1 : passengers.revision();
         if (!minecraft.isSameThread() || !outputAllowed.getAsBoolean() || !contextValid()
                 || player.isHandsBusy() || !targetValid()) {
             failure = "entity_unavailable";
             return;
         }
-        selection = new V2HeldItemSelection(minecraft, session, request.item());
+        selection = new V2HeldItemSelection(minecraft, session,
+                request.operation().equals("mount") ? "minecraft:air" : request.item());
         if (!selection.begin(tick, true)) failure = "item_not_available";
     }
 
@@ -87,6 +92,12 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
             return fail("entity_context_changed");
         }
         if (dispatched) {
+            if (request.operation().equals("mount")) {
+                var passengers = VehiclePassengerSignals.global().snapshot(entity);
+                mountConfirmed = passengers != null && passengers.revision() > passengerRevision
+                        && passengers.passengers().contains(player.getId()) && player.getVehicle() == entity;
+                return mountConfirmed ? V2OperationJobExecution.Step.CONFIRMED : V2OperationJobExecution.Step.RUNNING;
+            }
             captureStack();
             // Entity interactions have no prediction ACK. Never report a fabricated server ACK.
             boolean complete = confirmed(clientConsumed, request.resultItem(), held);
@@ -217,12 +228,14 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
     public Map<String, Object> result() {
         var result = new LinkedHashMap<String, Object>();
         result.put("target", "entity");
+        result.put("operation", request.operation());
+        if (request.operation().equals("mount")) result.put("mount_confirmed", mountConfirmed);
         result.put("entity_ref", request.ref());
         result.put("dispatched", dispatched);
         result.put("client_consumed", clientConsumed);
-        result.put("confirmation", held != null && held.after() != null ? "server_held_item"
+        result.put("confirmation", mountConfirmed ? "server_passengers" : held != null && held.after() != null ? "server_held_item"
                 : dispatched ? "client_dispatch" : "none");
-        result.put("effect_confirmed", held != null && held.changed());
+        result.put("effect_confirmed", mountConfirmed || held != null && held.changed());
         if (selection != null) {
             result.put("inventory_layout_may_have_changed", selection.layoutMayHaveChanged());
             if (selection.slot() >= 0) result.put("slot", selection.slot());
@@ -236,6 +249,8 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
     private void closeFacing() {
         if (facing != null) { facing.close(); facing = null; }
     }
+
+    public boolean allowsRiding() { return request.operation().equals("mount") && (player == null || !player.isPassenger() || player.getVehicle() == entity); }
 
     @Override
     public void close() {

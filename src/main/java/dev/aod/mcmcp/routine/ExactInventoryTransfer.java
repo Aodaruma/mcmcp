@@ -43,6 +43,27 @@ public final class ExactInventoryTransfer {
     }
 
     /** Plans everything before any click; capacity/count/click failure never causes a partial start. */
+    public static Optional<ExactInventoryTransfer> swap(List<StackFingerprint> initial, int source,
+            int destination, List<Integer> capacities) {
+        if (source < 0 || destination < 0 || source == destination || source >= initial.size()
+                || destination >= initial.size() || capacities.size() != initial.size()) return Optional.empty();
+        var from = initial.get(source);
+        var to = initial.get(destination);
+        if (from.empty() || from.count() > capacities.get(destination)
+                || to.count() > capacities.get(source) || !to.empty() && sameItem(from, to)) return Optional.empty();
+        var slots = new ArrayList<>(initial);
+        var clicks = new ArrayList<Click>();
+        slots.set(source, StackFingerprint.EMPTY);
+        clicks.add(new Click(source, 0, List.copyOf(slots), from, 0, false));
+        slots.set(destination, from);
+        clicks.add(new Click(destination, 0, List.copyOf(slots), to, 0, to.empty()));
+        if (!to.empty()) {
+            slots.set(source, to);
+            clicks.add(new Click(source, 0, List.copyOf(slots), StackFingerprint.EMPTY, 0, true));
+        }
+        return Optional.of(new ExactInventoryTransfer(initial, clicks, capacities, List.of(source, destination)));
+    }
+
     public static Optional<ExactInventoryTransfer> plan(
             List<StackFingerprint> initial, List<Integer> sources, List<Integer> destinations,
             String item, int defaultHash, boolean defaultOnly,
@@ -252,13 +273,11 @@ public final class ExactInventoryTransfer {
     List<Click> clicks() { return clicks; }
 
     private static boolean sameItem(StackFingerprint left, StackFingerprint right) {
-        return left.itemId().equals(right.itemId())
-                && left.itemAndComponentsHash() == right.itemAndComponentsHash();
+        return left.sameItem(right);
     }
 
     private static StackFingerprint withCount(StackFingerprint stack, int count) {
-        return count == 0 ? StackFingerprint.EMPTY
-                : new StackFingerprint(stack.itemId(), count, stack.itemAndComponentsHash());
+        return stack.withCount(count);
     }
 
     public record Click(int slot, int button, List<StackFingerprint> slots, StackFingerprint cursor,

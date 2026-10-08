@@ -46,7 +46,7 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
         if (mode != Locomotion.aerialMode(minecraft.player))
             throw new IllegalStateException("navigation mode changed");
         if (mode.aerial()) return prepareFlight(clientTick, remainingDistance, outputAllowed);
-        if (!request.sneak()) return true;
+        if (!request.sneak() || minecraft.player.isInWater()) return true;
         if (!outputAllowed.getAsBoolean()) return false;
         if (posture == null) {
             posture = MovementInputLease.acquire(minecraft, owner, System.nanoTime(), HORIZON);
@@ -92,7 +92,7 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
             executor.beginNavigate(route, tolerance);
             return;
         }
-        if (!route.edges().isEmpty()) {
+        if (!route.edges().isEmpty() && route.edges().stream().noneMatch(edge -> edge.locomotion() == Locomotion.WATER)) {
             var from = route.cells().getFirst();
             var next = route.cells().get(1);
             if (from.x() != next.x() || from.z() != next.z()) {
@@ -136,6 +136,14 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
 
     @Override
     public boolean active() { return executor.active(); }
+
+    public boolean arrived(dev.aod.mcmcp.agent.navigation.NavCell goal, double radius, double tolerance) {
+        var player = minecraft.player;
+        double horizontal = Math.hypot(player.getX() - goal.x() - 0.5D, player.getZ() - goal.z() - 0.5D);
+        double y = goal.y() + (mode.aerial() ? Locomotion.FLIGHT_FEET_OFFSET : 0);
+        return horizontal <= radius + tolerance && Math.abs(player.getY() - y) <= radius + 0.21D
+                && (player.isInWater() || mode.aerial() || player.onGround() || player.onClimbable());
+    }
 
     private void releasePosture() {
         if (posture != null) { posture.close(); posture = null; }

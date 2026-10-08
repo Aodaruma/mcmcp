@@ -1,12 +1,16 @@
 # 公開API v2：進捗と再開メモ（2026-09-28）
 
-## 最新の設計整理（2026-10-09）
+## 優先項目の追加実装（2026-10-09、実機検証待ち）
+
+利用者指定のクラフト材料データ、4 MOD破壊、5 水中／乗り物、6 整理、8 条件・scriptを実装した。外部source・JSON/CSVと147,456セルの設計図分割・再開も追加した。Java 1,671＋harness 14＋admin bridge 28＝1,713件が成功。隔離Dockerは候補priorities-r2で起動し、実機操作は利用者によるMCP有効化待ち。[使い方と対応範囲](PUBLIC_API_V2_PRIORITIES_20261009.md)、[検証記録](experiments/20261009_v2_priorities_docker.md)。以下のproduction-r6の合格記録は変更前のもの。通常profile導入、main統合・タグ・Releaseは未実施。
+
+## 先行の生産系実装（2026-10-09、production-r6時点）
 
 [生産系ツールの設計案と実装順序](PUBLIC_API_V2_PRODUCTION_PLAN_20261009.md)を承認後、`agent_craft`、`agent_interact` の `smelt`／`brew`、`agent_inventory` の正確な数量移送を実装した。公開15ツール。固定引数のscriptからも共通jobへ接続する。[利用方法・制限](PUBLIC_API_V2_PRODUCTION_20261009.md)を参照。
 
 最終候補production-r6で9ケース・24 jobを確認。手元2×2・作業台3×3、ケーキとバケツ回収、鉄の製錬、通常／残燃料での醸造、投入後取消、クラフト取消、数量移送の期限停止、script接続が合格。Java等1,694件とsource checksも成功。元world・設定・JARの65ファイルをhash一致で復旧済み。[実験記録と未確認範囲](experiments/20261009_v2_production_docker.md)を参照。通常profileへのJAR置換は保留を維持する。
 
-残りはデータ付き材料・連鎖クラフト、複数工程醸造、取引・金床・エンチャント、MODブロック破壊、水中・乗り物、装備を含む整理、MOD収納、条件・script、保存・再開。creative作業対応は別枠。実装済み／実ゲーム合格／通常profile導入を区別する。
+この時点の未実装項目のうち、材料データ・MOD破壊・水中／乗り物・整理・複合条件／scriptは上記の追加実装へ進んだ。連鎖クラフト、複数工程醸造、取引・金床・エンチャント、全MOD収納への一般対応、script実行位置の永続化は残る。creative作業対応は別枠。実装済み／実ゲーム合格／通常profile導入を区別する。
 
 ## 最新更新：飛行・降下（2026-09-30）
 

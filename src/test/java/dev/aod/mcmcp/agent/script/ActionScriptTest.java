@@ -26,6 +26,36 @@ class ActionScriptTest {
     }
 
     @Test
+    void observationNumbersAndActionResultsCanDriveBranches() {
+        Sink observed = new Sink() {
+            public Outcome execute(Command c, java.util.function.BooleanSupplier cancel) { sent.add(c); return Outcome.SUCCESS; }
+            public Map<String,Object> result() { return Map.of("result", Map.of("confirmed_count", 1)); }
+            public Map<String,Object> observe(Map<String,Object> args, java.util.function.BooleanSupplier cancel) {
+                return Map.of("known", true, "value", Map.of("air", 80));
+            }
+        };
+        var result = ActionScript.run("let p=observe(kind=\"player\"); if(p.known && p.value.air==80){let r=move(); if(r.success && r.result.confirmed_count==1){place();}}",
+                Set.of("move", "place", "observe"), observed, () -> false, DEFAULT_BUDGET);
+        assertThat(result.status()).isEqualTo(Status.SUCCESS);
+        assertThat(sent).extracting(Command::name).containsExactly("move", "place");
+    }
+
+    @Test
+    void uncertainFailureStopsEvenWhenContinueWasRequested() {
+        for(boolean safe : List.of(false,true)) {
+            sent.clear();
+            Sink failing = new Sink() {
+                public Outcome execute(Command c, java.util.function.BooleanSupplier cancel) { sent.add(c); return c.name().equals("move") ? Outcome.FAILURE : Outcome.SUCCESS; }
+                public boolean mayContinueAfterFailure() { return safe; }
+            };
+            var result=ActionScript.run("let r=move(on_failure=\"continue\"); if(!r.success){place();}", COMMANDS, failing, () -> false, DEFAULT_BUDGET);
+            assertThat(result.status()).isEqualTo(safe ? Status.SUCCESS : Status.FAILED);
+            assertThat(sent).hasSize(safe ? 2 : 1);
+            assertThat(sent.getFirst().arguments()).doesNotContainKey("on_failure");
+        }
+    }
+
+    @Test
     void helpersComposeWithForwardCallsNamedArgumentsAndIndependentLocals() {
         var result = run("""
                 let x=90;
@@ -69,7 +99,6 @@ class ActionScriptTest {
             "if(false){function f(){}}",
             "function f(){return;}",
             "function f(){return 1;}",
-            "function f(){} let x=f();",
             "function f(){} f(1);"
     })
     void invalidHelperGraphsAreRejectedBeforeAnySinkCommand(String source) {

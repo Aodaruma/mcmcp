@@ -17,8 +17,8 @@ public final class CoordinateMoveJobExecution {
     private final AgentJobStore jobs;
     private final UUID actionId;
     private final UUID worldSessionId;
-    private final NavCell goal;
-    private final double arrivalRadius;
+    private NavCell goal;
+    private double arrivalRadius;
     private final double tolerance;
     private final double maxDistance;
     private CoordinateGoalPlanner planner;
@@ -39,6 +39,21 @@ public final class CoordinateMoveJobExecution {
     private boolean autoReplan = true;
     private boolean localObservationRequired;
     private int localObservationWaitTicks;
+    private String divertedReason;
+
+    public boolean diverted() { return divertedReason != null; }
+    public void divertTo(NavCell destination, String reason) {
+        if (diverted() || terminalIntent != null || jobs.get(actionId).cancelRequested()) return;
+        driver.close();
+        jobs.recordResult(actionId, Map.of("diverted", true, "diversion_reason", reason,
+                "original_goal", Map.of("x", goal.x(), "y", goal.y(), "z", goal.z())));
+        goal = destination;
+        arrivalRadius = 0;
+        divertedReason = reason;
+        planner = new CoordinateGoalPlanner(worldSessionId, goal);
+        awaitingFinalPosition = false;
+        waitingEvidence = null;
+    }
 
     public void stopWhen(BooleanSupplier condition) { stopCondition = Objects.requireNonNull(condition); }
     public void clearPathWith(ObstacleDriver driver) { obstacles = Objects.requireNonNull(driver); }
@@ -155,6 +170,18 @@ public final class CoordinateMoveJobExecution {
             return publishAfterRelease();
         }
         try {
+            if (driver.selfPlanning()) {
+                var step = driver.tickGoal(goal, map, Math.max(0, maxDistance - travelled), clientTick,
+                        () -> jobs.canDispatch(actionId, currentWorldSessionId) && outputAllowed.getAsBoolean());
+                jobs.recordOperation(actionId);
+                jobs.recordResult(actionId, driver.result());
+                if (step.status() == MinecraftActionPrimitiveExecutor.Status.RUNNING) return jobs.get(actionId);
+                retainTerminal(step.status() == MinecraftActionPrimitiveExecutor.Status.SUCCEEDED
+                        ? AgentJobStore.State.SUCCEEDED : AgentJobStore.State.FAILED,
+                        step.status() == MinecraftActionPrimitiveExecutor.Status.SUCCEEDED ? null
+                                : "movement_" + step.reason().name().toLowerCase(java.util.Locale.ROOT));
+                return publishAfterRelease();
+            }
             if (clearing) {
                 return clearObstacle(currentCell, clientTick, outputAllowed, map);
             }
@@ -179,8 +206,12 @@ public final class CoordinateMoveJobExecution {
                         () -> jobs.get(actionId).cancelRequested() || !outputAllowed.getAsBoolean());
                 switch (planned.status()) {
                     case REACHED_KNOWN_GOAL -> {
-                        retainTerminal(AgentJobStore.State.SUCCEEDED, null);
-                        return publishAfterRelease();
+                        if (reached(currentCell)) {
+                            retainTerminal(AgentJobStore.State.SUCCEEDED, null);
+                            return publishAfterRelease();
+                        }
+                        routeWasGoal = true;
+                        driver.begin(planned.route().orElseThrow(), tolerance);
                     }
                     case KNOWN_GOAL_ROUTE, PARTIAL_WAYPOINT -> {
                         routeWasGoal = planned.status() == CoordinateGoalPlanner.Status.KNOWN_GOAL_ROUTE;
@@ -283,17 +314,19 @@ public final class CoordinateMoveJobExecution {
 
     private void retainTerminal(AgentJobStore.State state, String failure) {
         if (terminalIntent != null) return;
-        terminalIntent = state;
-        terminalFailure = failure;
+        terminalIntent = state == AgentJobStore.State.SUCCEEDED && diverted() ? AgentJobStore.State.FAILED : state;
+        terminalFailure = state == AgentJobStore.State.SUCCEEDED && diverted() ? divertedReason : failure;
     }
 
     private boolean reached(NavCell cell) {
-        return cell.distanceTo(goal) <= arrivalRadius;
+        return cell.distanceTo(goal) <= arrivalRadius && driver.arrived(goal, arrivalRadius, tolerance);
     }
 
     private AgentJobStore.Snapshot publishAfterRelease() {
         try {
             driver.close();
+            if (jobs.get(actionId).state() == AgentJobStore.State.RUNNING && !driver.result().isEmpty())
+                jobs.recordResult(actionId, driver.result());
             if (obstacles != null) {
                 try { obstacles.close(); }
                 finally { captureObstacleResult(); }
@@ -345,6 +378,11 @@ public final class CoordinateMoveJobExecution {
     }
 
     public interface MovementDriver {
+        default boolean selfPlanning() { return false; }
+        default MinecraftActionPrimitiveExecutor.TickResult tickGoal(NavCell goal, KnownTraversabilitySnapshot map,
+                double remaining, long tick, BooleanSupplier allowed) { throw new UnsupportedOperationException(); }
+        default Map<String, Object> result() { return Map.of(); }
+        default boolean arrived(NavCell goal, double radius, double tolerance) { return true; }
         default boolean prepare(long clientTick, double remainingDistance, BooleanSupplier outputAllowed) { return true; }
         void begin(RoutePlan route, double tolerance);
         MinecraftActionPrimitiveExecutor.TickResult tick(KnownTraversabilitySnapshot map,

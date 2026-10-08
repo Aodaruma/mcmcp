@@ -170,9 +170,7 @@ final class MinecraftV2InventoryDropDriver implements V2OperationJobExecution.Dr
             return V2OperationJobExecution.Step.FAILED;
         }
         inFlightCount = entireStack ? remaining : 1;
-        expected = entireStack ? StackFingerprint.EMPTY
-                : new StackFingerprint(before.itemId(), before.count() - 1,
-                        before.itemAndComponentsHash());
+        expected = entireStack ? StackFingerprint.EMPTY : before.withCount(before.count() - 1);
         beforeRevision = sync.bindAndSnapshot(level, session).revision();
         dispatchedTick = clientTick;
         stage = Stage.AWAITING_ACK; // A throwing send is uncertain and must not be retried.

@@ -11,7 +11,7 @@ import java.util.Map;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
-/** Shares ordinary recipe-book crafting between the player grid and an owned workbench. */
+/** Shares packet-confirmed grid placement between the player grid and an owned workbench. */
 final class MinecraftV2CraftDriver implements V2OperationJobExecution.Driver {
     private final Minecraft minecraft;
     private final Supplier<WorldSessionTracker.Snapshot> sessions;
@@ -57,11 +57,12 @@ final class MinecraftV2CraftDriver implements V2OperationJobExecution.Driver {
             failure = "inventory_menu_unavailable";
             return;
         }
-        var snapshot = new ContainerSyncSignals.ContainerSnapshot(session.worldSessionId(), 0,
-                "mcmcp:player_inventory", player.inventoryMenu.getStateId(),
-                player.inventoryMenu.slots.stream().map(slot -> ContainerSyncSignals.StackFingerprint.fromServerPacket(slot.getItem())).toList(),
-                ContainerSyncSignals.StackFingerprint.EMPTY, tick, 0);
-        plan = V2CraftPlan.create(request, recipe.view(), V2CraftWork.defaultItems(minecraft, player.inventoryMenu, snapshot));
+        var snapshot = PlayerMenuSyncSignals.global().snapshot(minecraft);
+        if (!V2CraftWork.matchesLive(player.inventoryMenu, snapshot)) {
+            failure = "inventory_server_snapshot_required";
+            return;
+        }
+        plan = V2CraftPlan.create(request, recipe.view(), V2CraftWork.craftItems(minecraft, player.inventoryMenu, snapshot));
         if (plan.failure() == null && !canStoreProduction()) {
             plan = new V2CraftPlan(plan.item(), plan.outputPerCraft(), plan.crafts(), plan.produced(),
                     plan.materials(), "craft_output_capacity");
@@ -166,37 +167,35 @@ final class MinecraftV2CraftDriver implements V2OperationJobExecution.Driver {
 
     private boolean canStoreProduction() {
         var stacks = new java.util.ArrayList<net.minecraft.world.item.ItemStack>();
-        for (int i = 0; i < 36; i++) stacks.add(player.getInventory().getItem(i).copy());
+        // Match both crafting menus' source order, including component-specific remainders.
+        for (int i = 9; i < 36; i++) stacks.add(player.getInventory().getItem(i).copy());
+        for (int i = 0; i < 9; i++) stacks.add(player.getInventory().getItem(i).copy());
         var output = V2CraftWork.prototype(plan.item());
-        var available = new LinkedHashMap<String, Integer>();
-        for (var stack : stacks) {
-            var fingerprint = ContainerSyncSignals.StackFingerprint.fromServerPacket(stack);
-            if (!fingerprint.empty() && fingerprint.itemAndComponentsHash() == V2CraftWork.defaultHash(fingerprint.itemId())) {
-                available.merge(fingerprint.itemId(), fingerprint.count(), Math::addExact);
+        var requirements = V2CraftGridPlacement.requirements(recipe);
+        for (int craft = 0; craft < plan.crafts(); craft++) {
+            var available = new LinkedHashMap<String, Integer>();
+            for (var stack : stacks) {
+                var fingerprint = ContainerSyncSignals.StackFingerprint.fromServerPacket(stack);
+                if (!fingerprint.empty()) available.merge(fingerprint.itemId(), fingerprint.count(), Math::addExact);
             }
-        }
-        var batches = V2CraftPlan.allocateBatches(recipe.view().ingredients(), plan.crafts(), available);
-        if (batches == null) return false;
-        for (var materials : batches) {
-            for (var material : materials.entrySet()) {
-                int left = material.getValue();
+            var materials = V2CraftGridPlacement.select(requirements, available, plan.crafts() - craft);
+            if (materials == null) return false;
+            var remainders = new java.util.ArrayList<net.minecraft.world.item.ItemStack>();
+            for (var material : materials) {
+                boolean found = false;
                 for (var stack : stacks) {
                     var fingerprint = ContainerSyncSignals.StackFingerprint.fromServerPacket(stack);
-                    if (!fingerprint.itemId().equals(material.getKey())
-                            || fingerprint.itemAndComponentsHash() != V2CraftWork.defaultHash(material.getKey())) continue;
-                    int take = Math.min(left, stack.getCount());
-                    stack.shrink(take);
-                    left -= take;
+                    if (stack.isEmpty() || !fingerprint.itemId().equals(material)) continue;
+                    var remainder = stack.getCraftingRemainder();
+                    if (remainder != null) remainders.add(remainder.create());
+                    stack.shrink(1);
+                    found = true;
+                    break;
                 }
-                if (left != 0) return false;
+                if (!found) return false;
             }
             if (!V2CraftWork.store(stacks, output.copyWithCount(plan.outputPerCraft()))) return false;
-            for (var material : materials.entrySet()) {
-                var remainder = V2CraftWork.remainder(material.getKey());
-                if (remainder.isEmpty()) continue;
-                remainder.setCount(Math.multiplyExact(remainder.getCount(), material.getValue()));
-                if (!V2CraftWork.store(stacks, remainder)) return false;
-            }
+            for (var remainder : remainders) if (!V2CraftWork.store(stacks, remainder)) return false;
         }
         return true;
     }
@@ -207,13 +206,7 @@ final class MinecraftV2CraftDriver implements V2OperationJobExecution.Driver {
         if (work == null || !work.dispatched() || minecraft.player != player || minecraft.level != level) return;
         if (player.containerMenu != player.inventoryMenu) throw new IllegalStateException("craft inventory ownership changed");
         var snapshot = PlayerMenuSyncSignals.global().snapshot(minecraft);
-        work.reconcile(player.inventoryMenu, snapshot);
-        // Wait for the placed ingredients, not an unrelated slot/cursor packet. Once seen,
-        // closing menu 0 must change that nonempty grid before we accept empty-grid proof.
-        if (!closeSent && work.preparing() && !work.preparationObserved(player.inventoryMenu, snapshot)) {
-            releaseWait = "recipe_placement_not_confirmed";
-            throw new IllegalStateException("craft placement must settle before grid release");
-        }
+        work.observeBeforeClose(player.inventoryMenu, snapshot);
         if (V2CraftWork.gridEmpty(snapshot, 4) && V2CraftWork.matchesLive(player.inventoryMenu, snapshot)
                 && (!work.hasPending() || snapshot.packetLedgerRevision() > work.dispatchRevision())
                 && (!closeSent || snapshot.packetLedgerRevision() > closeRevision)) { releaseWait = null; return; }

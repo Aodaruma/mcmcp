@@ -19,8 +19,37 @@ import java.util.LinkedHashMap;
 /** Current local rays, own inventory and screen; never reads behind an occluding block. */
 final class V2LocalConditions implements V2StopCondition.Context {
     private final Minecraft minecraft;
-    V2LocalConditions(Minecraft minecraft) { this.minecraft = minecraft; }
+    private final java.util.function.Function<String, net.minecraft.world.entity.Entity> entities;
+    V2LocalConditions(Minecraft minecraft) { this(minecraft, ref -> null); }
+    V2LocalConditions(Minecraft minecraft, java.util.function.Function<String, net.minecraft.world.entity.Entity> entities) {
+        this.minecraft = minecraft;
+        this.entities = entities;
+    }
     public Vec3 position() { return minecraft.player.position(); }
+
+    public java.util.Map<String, Object> player() {
+        var player = minecraft.player;
+        var result = observedEntity(player);
+        result.put("health", player.getHealth());
+        result.put("food", player.getFoodData().getFoodLevel());
+        result.put("air", player.getAirSupply());
+        result.put("x", player.getX()); result.put("y", player.getY()); result.put("z", player.getZ());
+        return result;
+    }
+    public java.util.Map<String, Object> entity(String ref) {
+        var entity = entities.apply(ref);
+        if (entity == null) return null;
+        var result = observedEntity(entity);
+        result.put("distance", minecraft.player.distanceTo(entity));
+        if (entity instanceof net.minecraft.world.entity.AgeableMob mob) result.put("baby", mob.isBaby());
+        return result;
+    }
+    private static LinkedHashMap<String, Object> observedEntity(net.minecraft.world.entity.Entity entity) {
+        var result = new LinkedHashMap<String, Object>();
+        result.put("on_fire", entity.isOnFire()); result.put("in_water", entity.isInWater());
+        result.put("passenger", entity.isPassenger()); result.put("on_ground", entity.onGround());
+        return result;
+    }
 
     public BlockStateFingerprint visibleBlock(int x, int y, int z) {
         var position = new BlockPos(x, y, z);

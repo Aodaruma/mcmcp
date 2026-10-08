@@ -19,6 +19,11 @@ public final class ScriptJobExecution implements Runnable {
 
         /** Request that the currently running game command stop and release its inputs. */
         void cancelActive();
+        default Map<String, Object> result() { return Map.of(); }
+        default boolean mayContinueAfterFailure() { return false; }
+        default Map<String, Object> observe(Map<String, Object> arguments, BooleanSupplier cancelled) {
+            throw new IllegalArgumentException("script observations unavailable");
+        }
     }
 
     private final AgentJobStore jobs;
@@ -33,6 +38,14 @@ public final class ScriptJobExecution implements Runnable {
     private final java.util.function.LongSupplier clock;
     private volatile ActionScript.Result result;
     private volatile String unexpectedFailure;
+    private Map<String, ScriptResources.Resource> resources = Map.of();
+
+    public ScriptJobExecution withResources(Map<String, ScriptResources.Resource> resources) {
+        if (jobs.get(actionId).state() != AgentJobStore.State.UNCONFIRMED)
+            throw new IllegalStateException("resources must be bound before delivery");
+        this.resources = Map.copyOf(resources);
+        return this;
+    }
 
     public ScriptJobExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
                               String source, Set<String> commands,
@@ -73,7 +86,8 @@ public final class ScriptJobExecution implements Runnable {
         try {
             if (jobs.get(actionId).state() != AgentJobStore.State.QUEUED) return;
             jobs.start(actionId, worldSessionId);
-            result = ActionScript.run(source, commands, (command, cancelled) -> {
+            result = ActionScript.run(source, commands, new ActionScript.Sink() {
+              public ActionScript.Outcome execute(ActionScript.Command command, BooleanSupplier cancelled) {
                 if (aborted() || !jobs.canDispatch(actionId, worldSessionId)) {
                     return ActionScript.Outcome.CANCELLED;
                 }
@@ -87,7 +101,13 @@ public final class ScriptJobExecution implements Runnable {
                     case FAILURE -> ActionScript.Outcome.FAILURE;
                     case CANCELLED -> ActionScript.Outcome.CANCELLED;
                 };
-            }, this::aborted, budget);
+              }
+              public Map<String, Object> result() { return runner.result(); }
+              public boolean mayContinueAfterFailure() { return runner.mayContinueAfterFailure(); }
+              public Map<String, Object> observe(Map<String, Object> args, BooleanSupplier cancelled) {
+                  return runner.observe(args, cancelled);
+              }
+            }, this::aborted, budget, resources);
         } catch (RuntimeException | LinkageError failure) {
             unexpectedFailure = "script_runtime_failed";
             runner.cancelActive();
@@ -142,6 +162,9 @@ public final class ScriptJobExecution implements Runnable {
             details.put("iterations", result.iterations());
             details.put("calls", result.calls());
             details.put("completed_commands", job.completedOperations());
+            details.put("resources", resources.entrySet().stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
+                    Map.Entry::getKey, entry -> Map.of("format", entry.getValue().format(), "sha256", entry.getValue().sha256()))));
+            if (!result.detail().isEmpty()) details.put("detail", result.detail());
             jobs.recordResult(actionId, details);
         }
         try {

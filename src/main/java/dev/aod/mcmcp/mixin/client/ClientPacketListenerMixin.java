@@ -41,6 +41,13 @@ public abstract class ClientPacketListenerMixin {
         FrameDisplaySyncSignals.global().closeLevel(this.level);
         HotbarPayloadSyncSignals.global().closeLevel(this.level);
         InventorySwapSignals.global().closeLevel(this.level);
+        dev.aod.mcmcp.runtime.VehiclePassengerSignals.global().clear(this.level);
+    }
+
+    @Inject(method = "handleSetEntityPassengersPacket", at = @At("TAIL"), require = 1, expect = 1)
+    private void mcmcp$vehiclePassengers(net.minecraft.network.protocol.game.ClientboundSetPassengersPacket packet, CallbackInfo callback) {
+        if (this.level == Minecraft.getInstance().level)
+            dev.aod.mcmcp.runtime.VehiclePassengerSignals.global().record(this.level, packet.getVehicle(), packet.getPassengers());
     }
 
     @Inject(method = "handleSetEntityData", at = @At("TAIL"), require = 1, expect = 1)

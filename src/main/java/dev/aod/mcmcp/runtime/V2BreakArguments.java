@@ -74,7 +74,7 @@ record V2BreakArguments(BlockWorkRegion region, Set<String> includeBlocks,
         var ids = new LinkedHashSet<String>();
         for (Object value : list) {
             if (!(value instanceof String id)
-                    || !id.matches("minecraft:[a-z0-9_./-]{1,112}")
+                    || id.length() > 128 || !id.matches("[a-z0-9_.-]+:[a-z0-9_./-]+")
                     || !ids.add(id)) {
                 throw new IllegalArgumentException(key + " contains an invalid or duplicate block ID");
             }

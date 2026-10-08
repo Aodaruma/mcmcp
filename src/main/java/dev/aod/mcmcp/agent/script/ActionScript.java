@@ -17,6 +17,7 @@ final class ActionScript {
     static final int MAX_DEPTH = 64;
     static final int MAX_CALL_DEPTH = 16;
     static final Budget DEFAULT_BUDGET = new Budget(100_000, 10_000, 1_000);
+    static final Set<String> BUILTINS = Set.of("read_json", "read_csv", "length", "number");
 
     record Budget(int work, int iterations, int calls) {
         Budget {
@@ -31,12 +32,24 @@ final class ActionScript {
         Command { arguments = Collections.unmodifiableMap(new LinkedHashMap<>(arguments)); }
     }
     /** Must return only on completion; must cooperate with cancellation while waiting. No retries. */
-    interface Sink { Outcome execute(Command command, BooleanSupplier cancelled); }
+    interface Sink {
+        Outcome execute(Command command, BooleanSupplier cancelled);
+        default Map<String, Object> result() { return Map.of(); }
+        default boolean mayContinueAfterFailure() { return false; }
+        default Map<String, Object> observe(Map<String, Object> args, BooleanSupplier cancelled) {
+            throw new Stop(Status.INVALID, "Observation unavailable");
+        }
+    }
     record Result(Status status, int work, int iterations, int calls, int completed, String detail) {}
 
     static Result run(String source, Set<String> commands, Sink sink, BooleanSupplier cancelled, Budget budget) {
+        return run(source, commands, sink, cancelled, budget, Map.of());
+    }
+
+    static Result run(String source, Set<String> commands, Sink sink, BooleanSupplier cancelled, Budget budget,
+            Map<String, ScriptResources.Resource> resources) {
         Objects.requireNonNull(sink);
-        var execution = new Execution(budget, cancelled, sink);
+        var execution = new Execution(budget, cancelled, sink, resources);
         try {
             execution.checkCancelled();
             var parser = new ActionScriptParser(source, Set.copyOf(commands), cancelled);
@@ -73,11 +86,13 @@ final class ActionScript {
         int work, iterations, calls, completed;
         int callDepth;
         Map<String, ActionScriptParser.Node> functions = Map.of();
+        final Map<String, ScriptResources.Resource> resources;
 
-        Execution(Budget budget, BooleanSupplier cancelled, Sink sink) {
+        Execution(Budget budget, BooleanSupplier cancelled, Sink sink, Map<String, ScriptResources.Resource> resources) {
             this.budget = Objects.requireNonNull(budget);
             this.cancelled = Objects.requireNonNull(cancelled);
             this.sink = sink;
+            this.resources = Map.copyOf(resources);
         }
         Result result(Status status, String detail) {
             return new Result(status, work, iterations, calls, completed, detail);
@@ -104,6 +119,20 @@ final class ActionScript {
                 case "function" -> null;
                 case "literal" -> node.value();
                 case "variable" -> scope.owner(node.text()).values.get(node.text());
+                case "access" -> {
+                    Object target = eval(children.getFirst(), scope);
+                    Object key = eval(children.get(1), scope);
+                    if (target instanceof Map<?, ?> map && key instanceof String name) {
+                        if (!map.containsKey(name)) throw new Stop(Status.INVALID, "Missing data field");
+                        yield map.get(name);
+                    }
+                    if (target instanceof java.util.List<?> list && key instanceof Number index) {
+                        double value = index.doubleValue();
+                        if (value < 0 || value != Math.rint(value) || value >= list.size()) throw new Stop(Status.INVALID, "Array index out of bounds");
+                        yield list.get((int) value);
+                    }
+                    throw new Stop(Status.INVALID, "Data field or array index required");
+                }
                 case "array" -> {
                     var values = new ArrayList<Object>();
                     for (var child : children) values.add(eval(child, scope));
@@ -157,6 +186,7 @@ final class ActionScript {
                     var args = new LinkedHashMap<String, Object>();
                     for (var arg : children) args.put(arg.text(), eval(arg.children().getFirst(), scope));
                     checkCancelled();
+                    if (BUILTINS.contains(node.text())) yield builtin(node.text(), args);
                     var function = functions.get(node.text());
                     if (function != null) {
                         if (callDepth == MAX_CALL_DEPTH) throw new Stop(Status.LIMIT, "Function call depth limit");
@@ -172,6 +202,10 @@ final class ActionScript {
                     }
                     if (calls == budget.calls()) throw new Stop(Status.LIMIT, "Call limit");
                     calls++;
+                    if (node.text().equals("observe")) yield sink.observe(Collections.unmodifiableMap(args), this::isCancelled);
+                    Object failurePolicy = args.remove("on_failure");
+                    if (failurePolicy != null && !Set.of("stop", "continue").contains(failurePolicy))
+                        throw new Stop(Status.INVALID, "Invalid on_failure policy");
                     Outcome outcome;
                     try {
                         outcome = sink.execute(new Command(node.text(), args), this::isCancelled);
@@ -182,8 +216,11 @@ final class ActionScript {
                     if (outcome == Outcome.SUCCESS) completed++;
                     checkCancelled();
                     if (outcome == Outcome.CANCELLED) throw new Stop(Status.CANCELLED, "Command cancelled");
-                    if (outcome != Outcome.SUCCESS) throw new Stop(Status.FAILED, "Command failed");
-                    yield null;
+                    if (outcome != Outcome.SUCCESS && !("continue".equals(failurePolicy) && sink.mayContinueAfterFailure()))
+                        throw new Stop(Status.FAILED, "Command failed");
+                    var response = new LinkedHashMap<String, Object>(sink.result());
+                    response.put("success", outcome == Outcome.SUCCESS);
+                    yield Collections.unmodifiableMap(response);
                 }
                 case "unary" -> {
                     Object value = eval(children.getFirst(), scope);
@@ -216,6 +253,33 @@ final class ActionScript {
                 default -> throw new AssertionError(node.kind());
             };
         }
+
+        private Object builtin(String name, Map<String, Object> args) {
+            String key = name.startsWith("read_") ? "name" : "value";
+            if (!args.keySet().equals(Set.of(key))) throw new Stop(Status.INVALID, "Invalid data function arguments");
+            Object value = args.get(key);
+            return switch (name) {
+                case "read_json", "read_csv" -> {
+                    if (!(value instanceof String resourceName)) throw new Stop(Status.INVALID, "Resource name required");
+                    var resource = resources.get(resourceName);
+                    if (resource == null || !name.equals("read_" + resource.format())) throw new Stop(Status.INVALID, "Registered resource unavailable");
+                    yield resource.value();
+                }
+                case "length" -> {
+                    if (value instanceof java.util.List<?> list) yield (double) list.size();
+                    if (value instanceof Map<?, ?> map) yield (double) map.size();
+                    if (value instanceof String text) yield (double) text.length();
+                    throw new Stop(Status.INVALID, "Collection or string required");
+                }
+                case "number" -> {
+                    if (value instanceof Number n) yield finite(n.doubleValue());
+                    if (!(value instanceof String text) || text.length() > 128) throw new Stop(Status.INVALID, "Numeric data required");
+                    try { yield finite(Double.parseDouble(text)); }
+                    catch (NumberFormatException failure) { throw new Stop(Status.INVALID, "Invalid numeric data"); }
+                }
+                default -> throw new AssertionError(name);
+            };
+        }
     }
 
     private static boolean bool(Object value) {
@@ -227,11 +291,11 @@ final class ActionScript {
         if (left instanceof java.util.List<?> || left instanceof Map<?, ?>
                 || right instanceof java.util.List<?> || right instanceof Map<?, ?>)
             throw new Stop(Status.INVALID, "Equality requires scalar values");
-        if (left instanceof Double a && right instanceof Double b) return a.doubleValue() == b.doubleValue();
+        if (left instanceof Number a && right instanceof Number b) return a.doubleValue() == b.doubleValue();
         return Objects.equals(left, right);
     }
     private static double number(Object value) {
-        if (value instanceof Double d) return d;
+        if (value instanceof Number n) return finite(n.doubleValue());
         throw new Stop(Status.INVALID, "Number required");
     }
     static double finite(double value) {

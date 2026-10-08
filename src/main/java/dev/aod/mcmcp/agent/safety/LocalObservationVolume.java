@@ -1218,12 +1218,13 @@ public final class LocalObservationVolume {
                 record.neutralizeAgentHorizontal(), record.locomotion(), true);
     }
 
-    /** Only ordinary source water is admitted; flowing water and bubble columns stay unknown. */
+    /** Water plants and currents use their real collision/fluid state; bubble columns need a separate controller. */
     private static boolean waterAtFeet(ClientLevel level, Point origin, AABB box) {
         var feet = feetBlock(box);
         return insideRadius(origin, feet.getX(), feet.getY(), feet.getZ())
-                && level.isLoaded(feet) && level.getBlockState(feet).is(Blocks.WATER)
-                && level.getFluidState(feet).isSource();
+                && level.isLoaded(feet) && level.getFluidState(feet).is(FluidTags.WATER)
+                && !level.getBlockState(feet).is(Blocks.BUBBLE_COLUMN)
+                && level.getBlockState(feet).getCollisionShape(level, feet).isEmpty();
     }
 
     /** A bounded surface exit may briefly lift the feet above water before reaching the bank. */
@@ -1243,7 +1244,7 @@ public final class LocalObservationVolume {
                     Mth.floor(region.maxZ - 1.0E-6D))) {
                 var state = level.getBlockState(pos);
                 if (state.isAir()) continue;
-                if (!state.is(Blocks.WATER) || !state.getFluidState().isSource()) return false;
+                if (!state.getFluidState().is(FluidTags.WATER) || state.is(Blocks.BUBBLE_COLUMN)) return false;
             }
         }
         return true;

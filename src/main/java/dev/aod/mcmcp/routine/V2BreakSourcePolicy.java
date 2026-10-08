@@ -5,7 +5,7 @@ import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.Objects;
 
-/** v2 attack source rule: any explicitly targeted, registered vanilla non-air block. */
+/** v2 attack source rule: any explicitly targeted, registered non-air block. */
 public final class V2BreakSourcePolicy {
     private V2BreakSourcePolicy() { }
 
@@ -14,7 +14,7 @@ public final class V2BreakSourcePolicy {
         if (state.isAir()) return false;
         var block = state.getBlock();
         var id = BuiltInRegistries.BLOCK.getKey(block);
-        return id != null && "minecraft".equals(id.getNamespace())
+        return id != null
                 && BuiltInRegistries.BLOCK.get(id)
                         .map(holder -> holder.value() == block).orElse(false);
     }
@@ -22,7 +22,7 @@ public final class V2BreakSourcePolicy {
     public static void requireLiveState(BlockState state) {
         if (!allowsLiveState(state)) {
             throw new IllegalArgumentException(
-                    "v2 break target must be a registered vanilla non-air block");
+                    "v2 break target must be a registered non-air block");
         }
     }
 }

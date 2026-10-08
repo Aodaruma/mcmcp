@@ -139,7 +139,8 @@ final class MinecraftV2BreakDriver
             return V2BlockJobExecution.BeginResult.WAITING;
         }
         if (!request.accepts(currentBlockId)) return V2BlockJobExecution.BeginResult.SKIPPED;
-        if (!V2BreakSourcePolicy.allowsLiveState(state)) {
+        if (!V2BreakSourcePolicy.allowsLiveState(state)
+                || state.getDestroySpeed(level, position) < 0) {
             return V2BlockJobExecution.BeginResult.FAILED;
         }
         if (!outputAllowed.getAsBoolean()) return V2BlockJobExecution.BeginResult.FAILED;

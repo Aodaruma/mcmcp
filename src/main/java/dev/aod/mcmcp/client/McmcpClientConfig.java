@@ -30,6 +30,12 @@ public final class McmcpClientConfig {
             .comment("Maximum MCP HTTP request body size in bytes")
             .defineInRange(
                     "max_request_bytes", DEFAULT_MAX_REQUEST_BYTES, 1_024, 65_536);
+    private static final ModConfigSpec.ConfigValue<String> SCRIPT_RESOURCE_ROOT = BUILDER
+            .comment("Trusted local script/data directory, relative to the game directory or an absolute local path")
+            .define("script_resource_root", "mcmcp/scripts");
+    private static final ModConfigSpec.IntValue SCRIPT_RESOURCE_MIB = BUILDER
+            .comment("Total source and JSON/CSV input per script, independent of HTTP and execution budgets")
+            .defineInRange("script_resource_max_mib", 32, 1, 256);
     private static final ModConfigSpec.IntValue HUD_OFFSET_X = BUILDER
             .comment("Horizontal pixel offset from the right edge for the MCMCP status UI")
             .defineInRange("hud_offset_x", DEFAULT_HUD_OFFSET, 0, 2048);
@@ -119,6 +125,8 @@ public final class McmcpClientConfig {
     public static int maxRequestBytes() {
         return MAX_REQUEST_BYTES.get();
     }
+    public static String scriptResourceRoot() { return SCRIPT_RESOURCE_ROOT.get(); }
+    public static long scriptResourceMaxBytes() { return SCRIPT_RESOURCE_MIB.get() * 1_048_576L; }
 
     public static int hudOffsetX() {
         return HUD_OFFSET_X.get();

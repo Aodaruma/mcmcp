@@ -1,5 +1,24 @@
 # MCMCP Phase 1–5 test fixture
 
+## v2 priorities fixture (2026-10-09)
+
+The additional `-Dmcmcp.fixture.v2Priorities=true` flag enables fixed test preparation through
+`config/mcmcp-v2-priorities/request.txt`. Write a fresh integer followed by a colon and one of
+`components`, `cake`, `cancel`, `blueprint`, `inventory`, `water`, `water_air`, `boat`, `minecart`, `horse`, `mod_break`, or `report`.
+The receipt is written to `receipt.json`. This accepts no commands, paths, coordinates or item IDs.
+It uses the same private integrated-server owner checks below. Production JARs do not include it.
+
+These cases replace blocks in **300,100,300 through 320,108,320**, remove tagged fixture vehicles,
+and replace the player's inventory, position, mode and effects. Back up the entire disposable world
+and profile settings first, then restore them after testing. `report` only reads server inventory,
+cursor, position and air. Submit new setup requests only when the previous public job has terminated.
+Setup never enables MCP: the user must press the game's normal status button before the smoke runner.
+Run `tools/eval/Invoke-McmcpV2PrioritiesSmoke.ps1` with the matching case, explicit world session and
+a fresh artifact directory. `water` supplies water breathing; `water_air` starts underwater with 120 air,
+so run its retreat test immediately. `cake`/`cancel` use the existing production smoke cases.
+
+## Original fixed arenas
+
 This source set is a destructive development fixture, not part of the production mod. It is
 enabled only by `-Dmcmcp.testHarness=true` (the Gradle `harnessClient` run supplies this).
 Its common entrypoint only registers a server-side GameTest; the command entrypoint is physically

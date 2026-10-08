@@ -6,7 +6,7 @@ import java.util.Map;
 sealed interface V2InventoryRequest
         permits V2InventoryInspectArguments, V2InventoryDropArguments,
                 V2InventorySwapArguments, V2InventoryContainerArguments, V2InventoryStorageArguments,
-                V2CraftArguments, V2InventoryMoveArguments {
+                V2CraftArguments, V2InventoryMoveArguments, V2InventorySortArguments {
     int maxTicks();
 
     static V2InventoryRequest parse(Map<String, Object> arguments) {
@@ -17,6 +17,7 @@ sealed interface V2InventoryRequest
             case "drop" -> V2InventoryDropArguments.parse(arguments);
             case "swap" -> V2InventorySwapArguments.parse(arguments);
             case "move" -> V2InventoryMoveArguments.parse(arguments);
+            case "sort", "consolidate" -> V2InventorySortArguments.parse(arguments);
             default -> throw new IllegalArgumentException("inventory operation is not supported yet");
         };
     }

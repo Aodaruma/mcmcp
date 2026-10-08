@@ -56,6 +56,10 @@ final class CatalogSchemaValidator {
             String path,
             int depth,
             List<ValidationFailure> failures) {
+        if (depth > 64) {
+            addFailure(failures, path, "catalog nesting limit", depth);
+            return;
+        }
         if (failures.size() >= MAX_REPORTED_FAILURES) {
             return;
         }
@@ -246,6 +250,7 @@ final class CatalogSchemaValidator {
     private static ValidationFailure validate(
             JsonObject root, JsonObject schema, JsonElement value, String path, int depth,
             boolean report) {
+        if (depth > 64) return failure(path, "catalog nesting limit", depth, report);
         if (schema.has("$ref")) {
             JsonObject referenced = resolve(root, schema.get("$ref").getAsString());
             if (referenced == null) {

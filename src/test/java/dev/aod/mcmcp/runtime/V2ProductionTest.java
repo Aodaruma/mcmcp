@@ -26,7 +26,8 @@ class V2ProductionTest {
         assertThat(V2InventoryRequest.parse(Map.of("operation", "move", "source_slot", 0, "destination_slot", 9,
                 "item", "minecraft:coal", "count", 1))).isInstanceOf(V2InventoryMoveArguments.class);
         assertThatThrownBy(() -> new V2InventoryMoveArguments(0, 0, "minecraft:coal", 1, 400)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new V2InventoryMoveArguments(0, 36, "minecraft:coal", 1, 400)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(new V2InventoryMoveArguments(0, 40, "minecraft:coal", 1, 400).destination()).isEqualTo(40);
+        assertThatThrownBy(() -> new V2InventoryMoveArguments(0, 41, "minecraft:coal", 1, 400)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test void productionBeginsOnceAndRetainsReleaseEvidenceThroughCancellation() {

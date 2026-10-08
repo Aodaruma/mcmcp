@@ -1,6 +1,6 @@
 #requires -Version 7.4
 [CmdletBinding()]
-param([string]$PlanPath,[string]$CheckpointPath,[string]$TokenPath,
+param([string]$PlanPath,[string]$CheckpointPath,[string]$TokenPath,[string]$ExpectedPlanHash,
     [string]$Endpoint='http://127.0.0.1:8765/mcp',
     [ValidateRange(1,16384)][int]$MaxSteps=64,
     [ValidateRange(1,86400)][int]$MaxSeconds=900,
@@ -88,6 +88,7 @@ function Resolve-V2ConstructionPending($Checkpoint,[string]$Resolution) {
 function Invoke-V2ConstructionRun {
     if([string]::IsNullOrWhiteSpace($PlanPath) -or [string]::IsNullOrWhiteSpace($CheckpointPath)){throw 'plan_and_checkpoint_required'}
     $plan=Read-V2ConstructionPlan $PlanPath
+    if($ExpectedPlanHash -and $plan.hash -cne $ExpectedPlanHash){throw 'construction_plan_changed'}
     $fullCheckpoint=[IO.Path]::GetFullPath($CheckpointPath)
     if($fullCheckpoint -eq [IO.Path]::GetFullPath($PlanPath)){throw 'checkpoint_must_not_replace_plan'}
     # One process owns the ledger. The lock contains no credentials and persists harmlessly after exit.

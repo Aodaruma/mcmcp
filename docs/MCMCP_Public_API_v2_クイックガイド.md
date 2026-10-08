@@ -1,5 +1,7 @@
 # 公開API v2 クイックガイド
 
+> 材料データ、MOD破壊、水中／乗り物、整理、条件・外部ファイルの追加実装は[2026-10-09の追加ガイド](PUBLIC_API_V2_PRIORITIES_20261009.md)を参照。今回の実機最終検証は準備中。
+
 開発中のv2用。[基本操作](experiments/20260928_public_api_v2_local.md)と[所持収納・使用中停止](experiments/20260929_v2_storage_stop_local.md)の実機smokeを通過しました。未実装機能と追加検証は[進捗メモ](PUBLIC_API_V2_STATUS_20260928.md)を参照し、配布済みv1と区別してください。旧`agent_start_action`／JSON Action DSLは公開しません。
 
 ## 公開ツール
@@ -11,11 +13,11 @@
 | `agent_get_observation` | 引数なしで最新のblock・entity・危険を最大64件。返らない場所は未知であり、空気とは限らない |
 | `agent_look` | 小数を含む`x/y/z`へ視点だけを向ける |
 | `agent_move` | 座標または方向へ移動。未観測の目的地も指定でき、MODが局所観測しながら進む |
-| `agent_break_block` | Vanillaの指定座標・直方体を破壊。条件は任意、`advance:true`で接近しながら続ける |
+| `agent_break_block` | 登録MODを含む指定座標・直方体を通常破壊。条件は任意、`advance:true`で接近しながら続ける |
 | `agent_place_block` | Vanillaの指定blockを座標・直方体へ設置。向きなどの`properties`は任意 |
 | `agent_interact` | block・item・観測したentityへの操作と、menuの開封・内容取得・Vanillaのスタック移動、製錬・単工程醸造 |
 | `agent_craft` | 手元2×2・作業台3×3の計画／製作・戻り容器の回収。[生産系ガイド](PUBLIC_API_V2_PRODUCTION_20261009.md) |
-| `agent_inventory` | 所持品の確認・hotbarとの交換・数量移送・投棄、対応収納の確認・数量移送 |
+| `agent_inventory` | 所持品の確認・整理・hotbarとの交換・装備を含む数量移送・投棄、対応収納の確認・数量移送 |
 | `agent_click` | 左・右・中クリックを有限回実行。意味的な作業成功までは保証しない |
 | `agent_input_sequence` | 論理キー／マウスを同時・順番に入力。時間・間隔・反復・到達停止条件を指定 |
 | `agent_run_script` | 名前付き引数、変数、条件分岐、有限loop、小関数で行動を組み合わせる |

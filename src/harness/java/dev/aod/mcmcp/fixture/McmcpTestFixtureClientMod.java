@@ -25,5 +25,6 @@ public final class McmcpTestFixtureClientMod {
         NeoForge.EVENT_BUS.addListener(FixtureCombinedWheatScenario::onServerStopped);
         FixturePhase3Autorun.installIfRequested(NeoForge.EVENT_BUS);
         FixturePhase5Autorun.installIfRequested(NeoForge.EVENT_BUS);
+        FixtureV2Priorities.install();
     }
 }

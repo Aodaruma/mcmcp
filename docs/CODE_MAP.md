@@ -32,6 +32,8 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 | Toolの必須field・公開説明・診断 | [`mcp/`](../src/main/java/dev/aod/mcmcp/mcp/)、Tool Catalog | schema・固定catalog hash・transport test |
 | DSLの構文・分岐・有限予算 | [`agent/dsl/`](../src/main/java/dev/aod/mcmcp/agent/dsl/) | parser / validator / compiler / cursor test、Action DSLガイド |
 | v2 scriptの構文・逐次sink・有限予算 | [`agent/script/`](../src/main/java/dev/aod/mcmcp/agent/script/) | ActionScriptTest、ScriptJobExecutionTest、[公開API v2](PUBLIC_API_V2.md)。`agent_run_script`から基本行動の共通jobへ接続 |
+| v2外部データ・大規模blueprint | [`ScriptResources`](../src/main/java/dev/aod/mcmcp/agent/script/ScriptResources.java)、[`tools/building/`](../tools/building/) | ScriptResourcesTest、test_v2_blueprint.py、Test-McmcpBuildingBlueprint.ps1、[追加機能ガイド](PUBLIC_API_V2_PRIORITIES_20261009.md) |
+| v2材料データ・整理・水中・乗り物 | runtimeのV2CraftGridPlacement、MinecraftV2InventorySortDriver、WaterNavigationSafety、MinecraftV2VehicleDriver | V2PriorityFeaturesTest、ExactInventoryTransferTest、Invoke-McmcpV2PrioritiesSmoke.ps1 |
 | 行動の経路・照準・計画コスト | [`AgentPrimitivePlanner`](../src/main/java/dev/aod/mcmcp/agent/action/AgentPrimitivePlanner.java) と同packageのplanner | AgentPrimitivePlannerTest、該当operation test |
 | HTTPからclient tickへ渡す処理 | [`runtime/`](../src/main/java/dev/aod/mcmcp/runtime/) のMcmcpRuntime、ClientCommandInbox | deadline・world session・cancel・evaluation lease test |
 | 観測・配送TTL・再観測 | [`agent/observation/`](../src/main/java/dev/aod/mcmcp/agent/observation/)、runtime/ActionEvidence | frame/delivery/revision/fog recovery test |

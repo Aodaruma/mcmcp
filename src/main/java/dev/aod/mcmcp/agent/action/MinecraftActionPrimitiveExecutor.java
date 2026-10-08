@@ -329,7 +329,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 player.getDeltaMovement().y);
         // Direct diagonal support is traversed slowly; actual per-tick collision/support guards remain active.
         if (locomotion.aerial()) desired = state.flightInputs.apply(desired, clientTick);
-        if (!locomotion.aerial() && (sneakWhileMoving || !state.route.edges().isEmpty() && state.edgeIndex < state.route.edges().size()
+        if (locomotion != Locomotion.WATER && !locomotion.aerial() && (sneakWhileMoving || !state.route.edges().isEmpty() && state.edgeIndex < state.route.edges().size()
                 && state.route.edges().get(state.edgeIndex).supportedDiagonal())) {
             var crouched = desired.isEmpty() ? EnumSet.noneOf(MovementInputLease.MovementKey.class)
                     : EnumSet.copyOf(desired);

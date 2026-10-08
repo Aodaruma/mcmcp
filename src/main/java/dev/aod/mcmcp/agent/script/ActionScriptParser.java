@@ -31,7 +31,9 @@ final class ActionScriptParser {
         if (source == null) throw new Stop(Status.INVALID, "Source required");
         if (source.length() > MAX_SOURCE) throw new Stop(Status.LIMIT, "Source limit");
         this.source = source;
-        this.commands = commands;
+        var available = new HashSet<>(commands);
+        available.addAll(ActionScript.BUILTINS);
+        this.commands = Set.copyOf(available);
         this.cancelled = cancelled;
         advance();
     }
@@ -169,20 +171,9 @@ final class ActionScriptParser {
                 expect(";");
                 return result;
             }
-            expect("(");
-            var args = new ArrayList<Node>();
-            var names = new HashSet<String>();
-            if (!is(")")) {
-                do {
-                    String key = identifier();
-                    if (!names.add(key)) invalid("Duplicate argument: " + key);
-                    expect("=");
-                    args.add(node("argument", key, null, expression(0)));
-                } while (take(","));
-            }
-            expect(")");
+            Node call = call(name);
             expect(";");
-            return node("call", name, null, args);
+            return call;
         } finally {
             nesting--;
         }
@@ -192,6 +183,34 @@ final class ActionScriptParser {
         String name = bindingName();
         expect("=");
         return node(kind, name, null, expression(0));
+    }
+
+    private Node call(String name) {
+        expect("(");
+        var args = new ArrayList<Node>();
+        var names = new HashSet<String>();
+        if (!is(")")) {
+            do {
+                String key = identifier();
+                if (!names.add(key)) invalid("Duplicate argument: " + key);
+                expect("=");
+                args.add(node("argument", key, null, expression(0)));
+            } while (take(","));
+        }
+        expect(")");
+        return node("call", name, null, args);
+    }
+
+    private Node postfix(Node value) {
+        while (is(".") || is("[")) {
+            if (take(".")) value = node("access", "", null, value, node("literal", "", identifier()));
+            else {
+                expect("[");
+                value = node("access", "", null, value, expression(0));
+                expect("]");
+            }
+        }
+        return value;
     }
 
     private Node block() {
@@ -205,7 +224,7 @@ final class ActionScriptParser {
     private Node expression(int minimum) {
         enter();
         try {
-            Node left = primary();
+            Node left = postfix(primary());
             while (precedence(token.text()) >= minimum && token.kind().equals("symbol")) {
                 String operator = token.text();
                 int precedence = precedence(operator);
@@ -270,7 +289,8 @@ final class ActionScriptParser {
         if (take("true")) return node("literal", "", true);
         if (take("false")) return node("literal", "", false);
         if (take("null")) return node("literal", "", null);
-        return node("variable", identifier(), null);
+        String name = identifier();
+        return is("(") ? call(name) : node("variable", name, null);
     }
 
     private static int precedence(String operator) {
@@ -381,7 +401,7 @@ final class ActionScriptParser {
                     offset++;
                 }
             }
-            if ("(){}[]:;,=+-*/%!<>".indexOf(c) < 0 && !symbol.equals("&&") && !symbol.equals("||"))
+            if (".(){}[]:;,=+-*/%!<>".indexOf(c) < 0 && !symbol.equals("&&") && !symbol.equals("||"))
                 throw new Stop(Status.INVALID, "Forbidden character at " + start);
             token = new Token("symbol", symbol, start);
         }

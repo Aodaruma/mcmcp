@@ -25,10 +25,16 @@ final class MinecraftV2InventoryMoveDriver implements V2OperationJobExecution.Dr
     private ExactInventoryTransfer.CursorReturn cursorReturn;
     private long returnRevision;
     private String failure;
+    private final boolean exchange;
 
     MinecraftV2InventoryMoveDriver(Minecraft minecraft, V2InventoryMoveArguments request) {
+        this(minecraft, request, false);
+    }
+
+    MinecraftV2InventoryMoveDriver(Minecraft minecraft, V2InventoryMoveArguments request, boolean exchange) {
         this.minecraft = minecraft;
         this.request = request;
+        this.exchange = exchange;
     }
 
     public void begin(long tick, BooleanSupplier allowed) {
@@ -46,9 +52,19 @@ final class MinecraftV2InventoryMoveDriver implements V2OperationJobExecution.Dr
             failure = "inventory_move_source_or_slot_changed";
             return;
         }
-        transfer = ExactInventoryTransfer.plan(snapshot.slots(), List.of(source), List.of(destination),
+        var target = player.inventoryMenu.getSlot(destination).getItem();
+        if (!exchange && !target.isEmpty() && !net.minecraft.world.item.ItemStack.isSameItemSameComponents(stack, target)
+                || exchange && !target.isEmpty() && (!ordinary(source, target)
+                    || !ExactInventoryTransfer.ordinaryPickupItem(target.getItem().getClass()))) {
+            failure = "inventory_move_components_or_equipment_mismatch";
+            return;
+        }
+        var capacities = player.inventoryMenu.slots.stream().map(slot -> exchange
+                ? slot.getMaxStackSize() : slot.getMaxStackSize(stack)).toList();
+        transfer = (exchange ? ExactInventoryTransfer.swap(snapshot.slots(), source, destination, capacities)
+                : ExactInventoryTransfer.plan(snapshot.slots(), List.of(source), List.of(destination),
                 request.item(), snapshot.slots().get(source).itemAndComponentsHash(), true,
-                request.count(), 1, stack.getMaxStackSize()).orElse(null);
+                request.count(), 1, stack.getMaxStackSize(), capacities)).orElse(null);
         if (transfer == null) failure = "inventory_move_capacity_or_count";
     }
 
@@ -74,8 +90,11 @@ final class MinecraftV2InventoryMoveDriver implements V2OperationJobExecution.Dr
     }
     private boolean ordinary(int slot, net.minecraft.world.item.ItemStack stack) {
         var target = player.inventoryMenu.getSlot(slot);
-        return target.getClass() == Slot.class && target.mayPickup(player) && target.mayPlace(stack)
-                && target.getMaxStackSize(stack) >= stack.getMaxStackSize();
+        boolean vanilla = target.getClass() == Slot.class
+                || target.getClass() == net.minecraft.world.inventory.ArmorSlot.class
+                || target.getClass().getName().equals("net.minecraft.world.inventory.InventoryMenu$1");
+        return vanilla && target.mayPickup(player) && target.mayPlace(stack)
+                && target.getMaxStackSize(stack) >= (exchange ? stack.getCount() : request.count());
     }
     private int menuSlot(int inventorySlot) {
         for (int index = 0; index < player.inventoryMenu.slots.size(); index++) {

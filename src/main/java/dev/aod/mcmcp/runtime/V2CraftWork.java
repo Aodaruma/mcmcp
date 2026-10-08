@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
 
-/** One recipe-book placement and one output move at a time, confirmed from server payloads. */
+/** One PICKUP placement and one output move at a time, confirmed from server payloads. */
 final class V2CraftWork implements MinecraftV2MenuDriver.Work {
     private static final int ACK_TICKS = 100;
     private final Minecraft minecraft;
@@ -25,7 +25,7 @@ final class V2CraftWork implements MinecraftV2MenuDriver.Work {
     private final int gridSize;
     private Stage stage = Stage.READY;
     private Map<String, Integer> beforeItems;
-    private Map<String, Integer> beforeAll;
+    private Map<StackFingerprint, Integer> beforeAll;
     private long dispatchRevision;
     private long dispatchTick;
     private int confirmed;
@@ -33,10 +33,11 @@ final class V2CraftWork implements MinecraftV2MenuDriver.Work {
     private String failure;
     private final Map<String, Integer> consumed = new LinkedHashMap<>();
     private final Map<String, Integer> producedRemainders = new LinkedHashMap<>();
-    private Map<String, Integer> expectedAll;
+    private Map<StackFingerprint, Integer> expectedAll;
     private Map<String, Integer> craftMaterials;
     private Map<String, Integer> craftRemainders;
     private int returningSlot = -1;
+    private V2CraftGridPlacement placement;
 
     V2CraftWork(Minecraft minecraft, ClientRecipeCatalog.ResolvedRecipe recipe,
             V2CraftPlan plan, boolean inventory) {
@@ -49,9 +50,16 @@ final class V2CraftWork implements MinecraftV2MenuDriver.Work {
     public V2BlockJobExecution.StepResult tick(AbstractContainerMenu menu, ContainerSnapshot snapshot,
             long tick, BooleanSupplier allowed) {
         if (failure != null) return V2BlockJobExecution.StepResult.FAILED;
-        if (!matchesLive(menu, snapshot) || !snapshot.carried().empty()) {
+        if (!matchesLive(menu, snapshot)) {
             return waitForAck(tick);
         }
+        if (stage == Stage.PREPARING && placement != null) {
+            if (!placement.tick(menu, snapshot, tick, allowed)) {
+                dispatchTick = tick; // Each pickup has its own acknowledgement deadline.
+                return V2BlockJobExecution.StepResult.RUNNING;
+            }
+        }
+        if (!snapshot.carried().empty()) return waitForAck(tick);
         if (stage == Stage.COLLECTING) {
             reconcile(menu, snapshot);
             if (stage == Stage.COLLECTING) return waitForAck(tick);
@@ -61,31 +69,30 @@ final class V2CraftWork implements MinecraftV2MenuDriver.Work {
         if (!allowed.getAsBoolean()) return fail("craft_dispatch_denied");
         if (stage == Stage.READY) {
             if (!gridEmpty(snapshot, gridSize)) return fail("crafting_grid_not_empty");
-            beforeItems = defaultItems(minecraft, menu, snapshot);
+            beforeItems = craftItems(minecraft, menu, snapshot);
             beforeAll = allItems(minecraft, menu, snapshot);
             if (V2CraftPlan.allocate(recipe.view().ingredients(), 1, beforeItems) == null) {
                 return fail("insufficient_materials");
             }
             dispatchRevision = snapshot.packetLedgerRevision();
             dispatchTick = tick;
+            placement = new V2CraftGridPlacement(minecraft, menu, recipe, gridSize, plan.crafts() - confirmed);
             uncertain = true;
-            stage = Stage.PREPARING; // Register intent before a possibly throwing dispatch.
-            minecraft.gameMode.handlePlaceRecipe(menu.containerId, recipe.displayId(), false);
+            stage = Stage.PREPARING; // Construction is pure; dispatch starts on the next tick.
             return V2BlockJobExecution.StepResult.RUNNING;
         }
         if (snapshot.packetLedgerRevision() <= dispatchRevision) return waitForAck(tick);
         var output = snapshot.slots().getFirst();
         int units = snapshot.slots().subList(1, gridSize + 1).stream().mapToInt(StackFingerprint::count).sum();
         int required = recipe.view().ingredients().stream().mapToInt(ClientRecipeCatalog.IngredientView::countPerCraft).sum();
-        if (!output.itemId().equals(plan.item()) || output.count() != plan.outputPerCraft()
-                || output.itemAndComponentsHash() != defaultHash(plan.item()) || units != required) {
+        if (!output.sameItem(StackFingerprint.fromServerPacket(prototype(plan.item())))
+                || output.count() != plan.outputPerCraft() || units != required) {
             return waitForAck(tick);
         }
         var grid = new LinkedHashMap<String, Integer>();
         for (int index = 1; index <= gridSize; index++) {
             var stack = snapshot.slots().get(index);
             if (stack.empty()) continue;
-            if (stack.itemAndComponentsHash() != defaultHash(stack.itemId())) return fail("craft_material_components_changed");
             grid.merge(stack.itemId(), stack.count(), Math::addExact);
         }
         var allocation = V2CraftPlan.allocate(recipe.view().ingredients(), 1, grid);
@@ -97,13 +104,14 @@ final class V2CraftWork implements MinecraftV2MenuDriver.Work {
         produced.add(prototype(plan.item()).copyWithCount(plan.outputPerCraft()));
         craftMaterials = Map.copyOf(grid);
         craftRemainders = new LinkedHashMap<>();
-        var inputs = new LinkedHashMap<String, Integer>();
-        var remainderKeys = new LinkedHashMap<String, Integer>();
+        var inputs = new LinkedHashMap<StackFingerprint, Integer>();
+        var remainderKeys = new LinkedHashMap<StackFingerprint, Integer>();
         for (int index = 1; index <= gridSize; index++) {
             var stack = snapshot.slots().get(index);
             if (stack.empty()) continue;
             add(inputs, stack, 1);
-            var remainder = remainder(stack.itemId());
+            var template = menu.getSlot(index).getItem().getCraftingRemainder();
+            var remainder = template == null ? ItemStack.EMPTY : template.create();
             if (remainder.isEmpty()) continue;
             remainder.setCount(Math.multiplyExact(remainder.getCount(), stack.count()));
             produced.add(remainder);
@@ -112,7 +120,7 @@ final class V2CraftWork implements MinecraftV2MenuDriver.Work {
             craftRemainders.merge(fingerprint.itemId(), fingerprint.count(), Math::addExact);
         }
         if (!hasProductionCapacity(menu, produced)) return fail("craft_output_capacity");
-        expectedAll = expectedProduction(beforeAll, inputs, plan.item() + "#" + defaultHash(plan.item()),
+        expectedAll = expectedProduction(beforeAll, inputs, StackFingerprint.fromServerPacket(prototype(plan.item())).withCount(1),
                 plan.outputPerCraft(), remainderKeys);
         dispatchRevision = snapshot.packetLedgerRevision();
         dispatchTick = tick;
@@ -178,8 +186,8 @@ final class V2CraftWork implements MinecraftV2MenuDriver.Work {
         return V2BlockJobExecution.StepResult.RUNNING;
     }
 
-    static Map<String, Integer> expectedProduction(Map<String, Integer> before, Map<String, Integer> inputs,
-            String outputKey, int outputCount, Map<String, Integer> remainders) {
+    static <K> Map<K, Integer> expectedProduction(Map<K, Integer> before, Map<K, Integer> inputs,
+            K outputKey, int outputCount, Map<K, Integer> remainders) {
         var expected = new LinkedHashMap<>(before);
         inputs.forEach((key, count) -> {
             int remaining = expected.getOrDefault(key, 0) - count;
@@ -192,31 +200,37 @@ final class V2CraftWork implements MinecraftV2MenuDriver.Work {
     }
 
     @Override
-    public void observeBeforeClose(AbstractContainerMenu menu, ContainerSnapshot snapshot) { reconcile(menu, snapshot); }
+    public void observeBeforeClose(AbstractContainerMenu menu, ContainerSnapshot snapshot) {
+        if (placement != null) {
+            if (!matchesLive(menu, snapshot)) throw new IllegalStateException("craft pickup snapshot unavailable");
+            placement.release(menu, snapshot);
+        }
+        reconcile(menu, snapshot);
+    }
 
-    static Map<String, Integer> defaultItems(Minecraft minecraft, AbstractContainerMenu menu, ContainerSnapshot snapshot) {
+    static Map<String, Integer> craftItems(Minecraft minecraft, AbstractContainerMenu menu, ContainerSnapshot snapshot) {
         var result = new LinkedHashMap<String, Integer>();
         for (int slot = 0; slot < menu.slots.size(); slot++) {
             var actual = menu.getSlot(slot);
             if (actual.container != minecraft.player.getInventory() || actual.getContainerSlot() >= 36) continue;
             var stack = snapshot.slots().get(slot);
-            if (!stack.empty() && stack.itemAndComponentsHash() == defaultHash(stack.itemId())) {
+            if (!stack.empty()) {
                 result.merge(stack.itemId(), stack.count(), Math::addExact);
             }
         }
         return result;
     }
 
-    private static Map<String, Integer> allItems(Minecraft minecraft, AbstractContainerMenu menu, ContainerSnapshot snapshot) {
-        var result = new LinkedHashMap<String, Integer>();
+    private static Map<StackFingerprint, Integer> allItems(Minecraft minecraft, AbstractContainerMenu menu, ContainerSnapshot snapshot) {
+        var result = new LinkedHashMap<StackFingerprint, Integer>();
         for (int slot = 0; slot < menu.slots.size(); slot++) {
             if (menu.getSlot(slot).container == minecraft.player.getInventory()) add(result, snapshot.slots().get(slot), 1);
         }
         return result;
     }
 
-    private static void add(Map<String, Integer> totals, StackFingerprint stack, int multiplier) {
-        if (!stack.empty()) totals.merge(stack.itemId() + "#" + stack.itemAndComponentsHash(),
+    private static void add(Map<StackFingerprint, Integer> totals, StackFingerprint stack, int multiplier) {
+        if (!stack.empty()) totals.merge(stack.withCount(1),
                 stack.count() * multiplier, Math::addExact);
     }
 
@@ -278,29 +292,9 @@ final class V2CraftWork implements MinecraftV2MenuDriver.Work {
                 ? V2BlockJobExecution.StepResult.RUNNING : fail("craft_sync_timeout");
     }
     private V2BlockJobExecution.StepResult fail(String reason) { failure = reason; return V2BlockJobExecution.StepResult.FAILED; }
-    boolean dispatched() { return beforeAll != null; }
+    boolean dispatched() { return confirmed > 0 || placement != null && placement.dispatched(); }
     boolean hasPending() { return stage != Stage.READY; }
     long dispatchRevision() { return dispatchRevision; }
-    boolean preparing() { return stage == Stage.PREPARING; }
-
-    /** A mere revision advance cannot prove that the recipe placement was processed. */
-    boolean preparationObserved(AbstractContainerMenu menu, ContainerSnapshot snapshot) {
-        if (!preparing() || snapshot == null || snapshot.packetLedgerRevision() <= dispatchRevision
-                || !matchesLive(menu, snapshot) || !snapshot.carried().empty()) return false;
-        var output = snapshot.slots().getFirst();
-        if (!output.itemId().equals(plan.item()) || output.count() != plan.outputPerCraft()
-                || output.itemAndComponentsHash() != defaultHash(plan.item())) return false;
-        var grid = new LinkedHashMap<String, Integer>();
-        var restored = new LinkedHashMap<>(allItems(minecraft, menu, snapshot));
-        for (int index = 1; index <= gridSize; index++) {
-            var stack = snapshot.slots().get(index);
-            if (stack.empty()) continue;
-            if (stack.itemAndComponentsHash() != defaultHash(stack.itemId())) return false;
-            grid.merge(stack.itemId(), stack.count(), Math::addExact);
-            add(restored, stack, 1);
-        }
-        return restored.equals(beforeAll) && grid.equals(V2CraftPlan.allocate(recipe.view().ingredients(), 1, grid));
-    }
     public Map<String, Object> result() {
         var result = new LinkedHashMap<String, Object>();
         result.put("operation", "craft");

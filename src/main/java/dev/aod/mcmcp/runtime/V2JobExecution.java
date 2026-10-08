@@ -12,4 +12,5 @@ interface V2JobExecution {
     AgentJobStore.Snapshot cancel();
     AgentJobStore.Snapshot stop(String reason);
     default boolean allowsScreenChange() { return false; }
+    default boolean allowsRiding() { return false; }
 }

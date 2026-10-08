@@ -15,6 +15,37 @@ class ExactInventoryTransferTest {
     private static final UUID SESSION = UUID.randomUUID();
 
     @Test
+    void fullInventorySwapNeedsNoSpareSlotAndCanRecoverTheSecondCursor() {
+        var other = new StackFingerprint("minecraft:stone", 32, 99);
+        var initial = List.of(stack(64), other);
+        var plan = ExactInventoryTransfer.swap(initial, 0, 1, List.of(64,64)).orElseThrow();
+        assertThat(plan.clicks()).hasSize(3);
+        var state = snapshot(initial, EMPTY, 1);
+        for(int i=0;i<2;i++) {
+            assertThat(plan.beginClick(state,10+i)).isTrue();
+            var click=plan.next();
+            state=snapshot(click.slots(),click.cursor(),2+i);
+            assertThat(plan.confirm(state,2+i)).isTrue();
+        }
+        var recovery=plan.cursorReturn(state).orElseThrow();
+        assertThat(recovery.slot()).isZero();
+        assertThat(plan.confirmRelease(snapshot(recovery.slots(),EMPTY,4))).isTrue();
+        assertThat(recovery.slots()).containsExactly(other,stack(64));
+    }
+
+    @Test
+    void identicalIntegerHashesDoNotMergeDifferentComponentsOrAcknowledgeWrongPayloads() {
+        var type=net.minecraft.core.component.DataComponentType.<String>builder().persistent(com.mojang.serialization.Codec.STRING).build();
+        var a=new StackFingerprint(ITEM,1,77,java.util.Map.of(type,"variant-a"));
+        var b=new StackFingerprint(ITEM,1,77,java.util.Map.of(type,"variant-b"));
+        assertThat(ExactInventoryTransfer.plan(List.of(a,b),List.of(0),List.of(1),ITEM,77,true,1,1,64)).isEmpty();
+        var plan=ExactInventoryTransfer.swap(List.of(a,b),0,1,List.of(64,64)).orElseThrow();
+        assertThat(plan.beginClick(snapshot(List.of(a,b),EMPTY,1),1)).isTrue();
+        assertThat(plan.confirm(snapshot(List.of(EMPTY,b),b,2),2)).isFalse();
+        assertThat(plan.confirm(snapshot(List.of(EMPTY,b),a,3),3)).isTrue();
+    }
+
+    @Test
     void cancellationAfterPartialDepositCountsUnitsAfterTheCursorReturns() {
         var initial = List.of(stack(64), EMPTY);
         var plan = plan(initial, List.of(0), List.of(1), 1, 1);

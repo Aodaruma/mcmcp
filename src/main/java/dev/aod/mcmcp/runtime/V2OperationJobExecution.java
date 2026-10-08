@@ -164,12 +164,14 @@ final class V2OperationJobExecution implements V2JobExecution {
     enum Step { RUNNING, CONFIRMED, FAILED }
 
     public boolean allowsScreenChange() { return begun && driver.allowsScreenChange(); }
+    public boolean allowsRiding() { return driver.allowsRiding(); }
 
     interface Driver {
         void begin(long clientTick, BooleanSupplier outputAllowed);
         Step tick(long clientTick, BooleanSupplier outputAllowed);
         Map<String, Object> result();
         default boolean allowsScreenChange() { return false; }
+        default boolean allowsRiding() { return false; }
         void close();
     }
 }

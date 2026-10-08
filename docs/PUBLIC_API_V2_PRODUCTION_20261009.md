@@ -1,5 +1,7 @@
 # 公開API v2：クラフト・製錬・醸造
 
+> 材料データ、MOD破壊、水中／乗り物、整理、条件・外部ファイルの追加実装は[2026-10-09の追加ガイド](PUBLIC_API_V2_PRIORITIES_20261009.md)を参照。今回の実機最終検証は準備中。
+
 2026-10-09。開発branchの実装範囲。通常の「くらふとぶ！」profileへの導入は保留中。[隔離Dockerの9ケース・24 jobと検証範囲](experiments/20261009_v2_production_docker.md)を参照。[Tool Catalog](MCMCP_MCP_Tool_Catalog.json)が入力schemaの正本。
 
 ## 操作と責務
@@ -8,7 +10,7 @@
 | --- | --- | --- |
 | `agent_craft` | `plan`／`execute`。手元2×2または座標指定の作業台3×3 | `count` は新たに作る完成品数、`max_crafts` は製作回数 |
 | `agent_interact` | `target:"block", operation:"smelt"`／`"brew"` | 製錬は新規完成品数、醸造は瓶数1～3 |
-| `agent_inventory` | `operation:"move"`。手元・main inventory間の数量指定移送 | `count` は移送数1～64、枠番号0～35 |
+| `agent_inventory` | `operation:"move"`。手元・main inventory間の数量指定移送 | `count` は移送数1～64、枠番号0～40（装備slot制約あり） |
 
 開始応答の `action_id` を `agent_get_action(include_result:true)` で照会する。取消は `agent_cancel_action`。固定引数の `craft(...)`／`interact(...)`／`inventory(...)` をscript内でも使える。確認できない操作を自動で再送しない。
 
@@ -24,7 +26,7 @@
 
 1回4個のレシピで5個を指定すると既定では拒否する。`allow_surplus:true` のときだけ8個を許可する。既存所持数は `count` に含めない。`max_crafts` は既定64・上限4096。`max_ticks` は既定1200。作業台への接近は `advance:true`、`max_distance:64` が既定。
 
-通常の定形・不定形、default componentsの材料と決定的な完成品を対象にする。牛乳バケツ等の既知の戻り容器は、完成品との収容容量とserver差分を照合して回収する。結果の `confirmed_crafts`、`confirmed_count`、`consumed`、`produced_remainders` を参照する。データ付き材料・特殊レシピ・連鎖クラフトは追加実装待ち。近隣収納からの材料自動回収はしない。
+通常の定形・不定形、item ID条件に適合するデータ付き材料と決定的な完成品を対象にする。牛乳バケツ等の既知の戻り容器は、完成品との収容容量とserver差分を照合して回収する。結果の `confirmed_crafts`、`confirmed_count`、`consumed`、`produced_remainders` を参照する。特殊レシピ・連鎖クラフトは追加実装待ち。近隣収納からの材料自動回収はしない。
 
 ## 製錬・醸造
 
@@ -50,4 +52,4 @@
 
 設備は閉じても通常ゲームとして加工を続け得る。`processing_may_continue`、`last_station_slots`、`station_observed_tick` を見て再観測する。slot記録は最後の観測であり現在の保証ではない。解放を証明できない場合は `release_pending:true` を保持し、次のjobを開始しない。ワールド切替で証拠を取得できない場合は `release_evidence_unavailable` を返す。
 
-取引・金床・エンチャント、データ付き材料・連鎖クラフト、複数工程醸造等は[承認済みの実装計画](PUBLIC_API_V2_PRODUCTION_PLAN_20261009.md)の後続範囲。全MODや通信拒否の全組合せを実機合格とは扱わない。
+取引・金床・エンチャント、連鎖クラフト、複数工程醸造等は[承認済みの実装計画](PUBLIC_API_V2_PRODUCTION_PLAN_20261009.md)の後続範囲。全MODや通信拒否の全組合せを実機合格とは扱わない。

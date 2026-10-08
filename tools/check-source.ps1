@@ -22,6 +22,9 @@ try {
     & $PythonExecutable -m unittest discover -s tools/mcp -p 'test_*.py'
     if ($LASTEXITCODE -ne 0) { throw 'MCP transport unit tests failed' }
 
+    & $PythonExecutable -m unittest discover -s tools/building -p 'test_*.py'
+    if ($LASTEXITCODE -ne 0) { throw 'Blueprint compiler tests failed' }
+
     foreach($test in Get-ChildItem -LiteralPath tools/building -Filter 'Test-McmcpBuilding*.ps1') {
         & $shellPath -NoProfile -File $test.FullName
         if ($LASTEXITCODE -ne 0) { throw 'Building checkpoint tests failed' }
@@ -32,6 +35,7 @@ try {
         @(Get-Item -LiteralPath tools/eval/Test-McmcpCapabilityGateLoading.ps1) +
         @(Get-Item -LiteralPath tools/eval/Test-McmcpV2Smoke.ps1) +
         @(Get-Item -LiteralPath tools/eval/Test-McmcpV2ProductionSmoke.ps1) +
+        @(Get-Item -LiteralPath tools/eval/Test-McmcpV2PrioritiesSmoke.ps1) +
         @(Get-Item -LiteralPath tools/eval/Test-McmcpV2StorageStopSmoke.ps1)
     foreach ($test in $mockTests | Sort-Object Name) {
         & $shellPath -NoProfile -File $test.FullName
