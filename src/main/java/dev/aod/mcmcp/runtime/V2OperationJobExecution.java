@@ -22,6 +22,8 @@ final class V2OperationJobExecution implements V2JobExecution {
     private long startedNanos = Long.MIN_VALUE;
     private AgentJobStore.State terminalIntent;
     private String terminalFailure;
+    private boolean driverReleased;
+    private boolean inputsReleased;
 
     V2OperationJobExecution(AgentJobStore jobs, UUID actionId, UUID worldSessionId,
             Driver driver, BooleanSupplier releaseAndVerify) {
@@ -32,8 +34,10 @@ final class V2OperationJobExecution implements V2JobExecution {
         this.releaseAndVerify = Objects.requireNonNull(releaseAndVerify, "releaseAndVerify");
         var job = jobs.get(actionId);
         operation = job.kind() == AgentJobStore.Kind.INVENTORY ? "inventory"
+                : job.kind() == AgentJobStore.Kind.CRAFT ? "craft"
                 : job.kind() == AgentJobStore.Kind.LOOK ? "look" : "interaction";
         if ((job.kind() != AgentJobStore.Kind.INVENTORY
+                && job.kind() != AgentJobStore.Kind.CRAFT
                 && job.kind() != AgentJobStore.Kind.INTERACT && job.kind() != AgentJobStore.Kind.LOOK)
                 || !job.worldSessionId().equals(worldSessionId)) {
             throw new IllegalArgumentException("operation job does not match its session");
@@ -117,7 +121,8 @@ final class V2OperationJobExecution implements V2JobExecution {
     }
 
     private void captureResult() {
-        Map<String, Object> result = driver.result();
+        Map<String, Object> result = new java.util.LinkedHashMap<>(driver.result());
+        if (terminalIntent != null) result.put("release_pending", !driverReleased || !inputsReleased);
         if (!result.isEmpty()) jobs.recordResult(actionId, result);
     }
 
@@ -132,19 +137,26 @@ final class V2OperationJobExecution implements V2JobExecution {
     }
 
     private AgentJobStore.Snapshot publishAfterRelease() {
+        inputsReleased = false;
         try {
-            try { driver.close(); }
-            finally { if (begun) captureResultSafely(); }
-            if (releaseAndVerify.getAsBoolean()) {
+            if (!driverReleased) {
+                driver.close();
+                driverReleased = true;
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // Retain unresolved menu/cursor ownership, while releasing keys independently.
+        } finally {
+            try { inputsReleased = releaseAndVerify.getAsBoolean(); }
+            catch (RuntimeException | LinkageError ignored) { }
+            if (begun) captureResultSafely();
+        }
+        if (driverReleased && inputsReleased) {
                 if (terminalIntent == AgentJobStore.State.SUCCEEDED
                         && jobs.get(actionId).cancelRequested()) {
                     terminalIntent = AgentJobStore.State.CANCELLED;
                     terminalFailure = "client_request";
                 }
                 jobs.finish(actionId, terminalIntent, terminalFailure, true);
-            }
-        } catch (RuntimeException | LinkageError ignored) {
-            // Retry idempotent release before publishing a terminal result.
         }
         return jobs.get(actionId);
     }

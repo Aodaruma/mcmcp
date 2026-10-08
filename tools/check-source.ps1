@@ -31,6 +31,7 @@ try {
     $mockTests = @(Get-ChildItem -LiteralPath tools/eval -Filter 'Test-Mcmcp*CapabilityGate.ps1') +
         @(Get-Item -LiteralPath tools/eval/Test-McmcpCapabilityGateLoading.ps1) +
         @(Get-Item -LiteralPath tools/eval/Test-McmcpV2Smoke.ps1) +
+        @(Get-Item -LiteralPath tools/eval/Test-McmcpV2ProductionSmoke.ps1) +
         @(Get-Item -LiteralPath tools/eval/Test-McmcpV2StorageStopSmoke.ps1)
     foreach ($test in $mockTests | Sort-Object Name) {
         & $shellPath -NoProfile -File $test.FullName

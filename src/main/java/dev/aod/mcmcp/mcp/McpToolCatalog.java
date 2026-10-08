@@ -23,6 +23,7 @@ final class McpToolCatalog {
             "agent_place_block",
             "agent_interact",
             "agent_inventory",
+            "agent_craft",
             "agent_click",
             "agent_input_sequence",
             "agent_run_script",

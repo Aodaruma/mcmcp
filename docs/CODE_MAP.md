@@ -159,3 +159,5 @@ capability gateの入口は `Invoke-Mcmcp*CapabilityGate.ps1` です。共通支
 手持ちitemのv2使用は`V2ItemUseArguments`／`MinecraftV2ItemUseDriver`が扱い、`V2OperationJobExecution`をinventoryと共有します。`V2JobExecution`がblock実行器との取消境界を揃えます。`AgentInputState.suppressUseRestart`は一度始めた長押しの自動再使用を防ぎ、`MultiPlayerGameModeUseMixin`は有効なAgent USE leaseがある間だけ物理キー由来の解除を抑えます。
 
 entityのv2操作は`V2EntityInteractArguments`／`MinecraftV2EntityInteractDriver`が観測参照・実crosshair・通常MAIN_HAND操作を接続します。`V2HeldItemSelection`と`V2HeldStackEvidence`をitem使用と共有し、持ち替えと新しいserver所持品payloadの照合を揃えます。entityの操作受付と効果確認は区別します。
+
+生産系は`V2CraftArguments`／`V2CraftPlan`／`MinecraftV2CraftDriver`／`V2CraftWork`が2×2・3×3の計画・製作・戻り容器を扱います。手元menu 0のserver受信は`PlayerMenuSyncSignals`、数量移送は`MinecraftV2InventoryMoveDriver`と既存`ExactInventoryTransfer`を共有します。`V2ProductionArguments`／`MinecraftV2ProductionDriver`は材料分割と設備接近、`V2ProductionAttempt`は旧かまど・醸造adapterの有限取引をv2のjobへ接続します。全て`V2OperationJobExecution`の配送確認・取消・入力解放を経由します。[生産系ガイド](PUBLIC_API_V2_PRODUCTION_20261009.md)を参照。

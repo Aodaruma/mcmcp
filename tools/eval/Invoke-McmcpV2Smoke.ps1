@@ -76,8 +76,9 @@ function Get-V2SmokeInventory {
 }
 
 function Get-V2SmokeItemCount([object]$Inventory, [string]$Item) {
-    return [int](@($Inventory.slots | Where-Object item -CEQ $Item |
-        Measure-Object -Property count -Sum)[0].Sum)
+    $counts = @($Inventory.slots | Where-Object item -CEQ $Item | Measure-Object -Property count -Sum)
+    if ($counts.Count -eq 0) { return 0 }
+    return [int]$counts[0].Sum
 }
 
 function Invoke-V2SmokeCore {
@@ -269,7 +270,7 @@ function Invoke-McmcpV2Smoke {
     $finalControl = $null
     try {
         $checked = Invoke-McmcpClient -TokenPath $TokenPath -Endpoint $Endpoint -Check
-        Assert-V2Smoke ($checked.ok -and $checked.tool_count -eq 14) 'Unexpected public tool surface'
+        Assert-V2Smoke ($checked.ok -and $checked.tool_count -eq 15) 'Unexpected public tool surface'
         $control = Invoke-V2SmokeTool 'agent_get_mcp_status'
         Assert-V2Smoke ($control.control_mode -ceq 'ready' -and $null -eq $control.running_action_id) 'MCP must be idle and READY'
         [void](Get-V2SmokeState)

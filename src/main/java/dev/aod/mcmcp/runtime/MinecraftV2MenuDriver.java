@@ -8,6 +8,7 @@ import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.HashedStack;
 import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
 import net.minecraft.world.inventory.ContainerInput;
+import net.minecraft.world.inventory.AbstractContainerMenu;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -36,6 +37,20 @@ final class MinecraftV2MenuDriver implements V2OperationJobExecution.Driver {
     private ContainerSyncSignals.ContainerSnapshot beforeClick;
     private ContainerSyncSignals.ContainerSnapshot latest;
     private String failure;
+    private Work work;
+
+    interface Work {
+        V2BlockJobExecution.StepResult tick(AbstractContainerMenu menu,
+                ContainerSyncSignals.ContainerSnapshot snapshot, long tick, BooleanSupplier allowed);
+        Map<String, Object> result();
+        default void observeBeforeClose(AbstractContainerMenu menu, ContainerSyncSignals.ContainerSnapshot snapshot) { }
+    }
+
+    MinecraftV2MenuDriver withWork(Work work) {
+        if (started) throw new IllegalStateException("menu already started");
+        this.work = java.util.Objects.requireNonNull(work);
+        return this;
+    }
 
     MinecraftV2MenuDriver(Minecraft minecraft, Supplier<WorldSessionTracker.Snapshot> sessions,
             AgentObservations observations, ClientReconciliationSignals reconciliation,
@@ -91,6 +106,7 @@ final class MinecraftV2MenuDriver implements V2OperationJobExecution.Driver {
                 || screen != null && screen != container) return menuFail("menu_context_changed");
         screen = container;
         latest = content;
+        if (work != null) return work.tick(live, content, tick, allowed);
         if (beforeClick != null) {
             if (state.lastServerCursorProven() && state.lastServerCursorEmpty()
                     && content.packetLedgerRevision() > beforeClick.packetLedgerRevision()
@@ -159,6 +175,8 @@ final class MinecraftV2MenuDriver implements V2OperationJobExecution.Driver {
             expectedOpen = false;
             return;
         }
+        if (work != null) screens.ownedSession().filter(value -> value.token().routineId().equals(owner))
+                .ifPresent(value -> work.observeBeforeClose(minecraft.player.containerMenu, value.serverSnapshot()));
         var barrier = prediction == null ? ScreenOwnershipSignals.CausalBarrierStatus.NOT_REQUIRED
                 : switch (prediction.acknowledgement().status()) {
                     case ACKNOWLEDGED -> ScreenOwnershipSignals.CausalBarrierStatus.ACKNOWLEDGED;
@@ -184,6 +202,11 @@ final class MinecraftV2MenuDriver implements V2OperationJobExecution.Driver {
     public void close() { opener.close(); }
     public Map<String, Object> result() {
         var result = new LinkedHashMap<String, Object>();
+        if (work != null) {
+            result.putAll(work.result());
+            if (failure != null) result.put("failure", failure);
+            return result;
+        }
         result.put("target", "menu");
         result.put("menu_type", request.menuType());
         result.put("confirmed_clicks", completed);

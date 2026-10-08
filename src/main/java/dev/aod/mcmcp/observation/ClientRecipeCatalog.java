@@ -294,8 +294,6 @@ public final class ClientRecipeCatalog {
                     });
                     if (hasRemainder) {
                         unsupportedReason = "crafting_remainder";
-                        ingredients.clear();
-                        break;
                     }
                     ingredients.add(new IngredientView(index, 1, alternatives));
                 }
@@ -591,11 +589,18 @@ public final class ClientRecipeCatalog {
             map.put("display_kind", displayKind);
             map.put("required_screen", requiredScreen);
             map.put("supported", supported);
+            map.put("v2_craft_supported", v2CraftSupported());
             map.put("unsupported_reason", unsupportedReason);
             map.put("result", result.toMap());
             map.put("ingredients", ingredients.stream().map(IngredientView::toMap).toList());
             map.put("shape", shape == null ? null : shape.toMap());
             return map;
+        }
+
+        public boolean v2CraftSupported() {
+            return (supported || "crafting_remainder".equals(unsupportedReason))
+                    && Set.of("shaped", "shapeless").contains(displayKind)
+                    && result.deterministic() && result.alternatives().size() == 1 && !ingredients.isEmpty();
         }
     }
 

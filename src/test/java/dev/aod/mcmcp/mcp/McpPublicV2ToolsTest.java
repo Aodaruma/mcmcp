@@ -29,13 +29,53 @@ class McpPublicV2ToolsTest {
             UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
 
     @Test
+    void productionAndExactMoveAreTypedAndDeliveryGated() throws Exception {
+        var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();
+        var registry = registry(calls);
+        var inputs = List.of(
+                JsonParser.parseString("""
+                    {"target":"block","operation":"smelt","x":1,"y":64,"z":2,
+                     "block":"minecraft:furnace","count":4,"fuel":{"item":"minecraft:coal","max_count":1}}
+                    """).getAsJsonObject(),
+                JsonParser.parseString("""
+                    {"target":"block","operation":"brew","x":1,"y":64,"z":2,
+                     "block":"minecraft:brewing_stand","count":3,
+                     "input":{"item":"minecraft:potion","potion":"minecraft:water"},
+                     "output":{"item":"minecraft:potion","potion":"minecraft:awkward"},
+                     "ingredient":"minecraft:nether_wart","fuel":{"item":"minecraft:blaze_powder","max_count":1}}
+                    """).getAsJsonObject());
+        inputs.getFirst().addProperty("recipe_ref", "a".repeat(24));
+        inputs.getFirst().addProperty("recipe_fingerprint", "sha256:" + "0".repeat(64));
+        for (var input : inputs) {
+            calls.clear();
+            var prepared = registry.prepareCall("agent_interact", input);
+            assertThat(prepared.response().get("isError").getAsBoolean()).isFalse();
+            assertThat(calls.getFirst()).isInstanceOf(McpRuntimePort.StartInteract.class);
+            assertThat(prepared.deliveryReceipt()).isInstanceOf(McpRuntimePort.ActionDeliveryReceipt.class);
+            input.addProperty("entity_ref", "b".repeat(24));
+            calls.clear();
+            assertThat(registry.prepareCall("agent_interact", input).response().get("isError").getAsBoolean()).isTrue();
+            assertThat(calls).isEmpty();
+        }
+        var move = JsonParser.parseString("""
+                {"operation":"move","source_slot":0,"destination_slot":35,"item":"minecraft:coal","count":13}
+                """).getAsJsonObject();
+        assertThat(registry.prepareCall("agent_inventory", move).deliveryReceipt())
+                .isInstanceOf(McpRuntimePort.ActionDeliveryReceipt.class);
+        move.addProperty("count", 65);
+        calls.clear();
+        assertThat(registry.prepareCall("agent_inventory", move).response().get("isError").getAsBoolean()).isTrue();
+        assertThat(calls).isEmpty();
+    }
+
+    @Test
     void scriptReplacesThePublicJsonDslAndOldRequestsCannotDispatch() {
         var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();
         var registry = registry(calls);
         var names = registry.listResult().getAsJsonArray("tools").asList().stream()
                 .map(tool -> tool.getAsJsonObject().get("name").getAsString()).toList();
         assertThat(names).contains("agent_run_script").doesNotContain("agent_start_action");
-        assertThat(names).hasSize(14);
+        assertThat(names).hasSize(15);
         assertThatThrownBy(() -> registry.prepareCall("agent_start_action",
                 LegacyActionSchema.inputSchema().getAsJsonArray("examples").get(0).getAsJsonObject()))
                 .isInstanceOf(McmcpToolRegistry.UnknownToolException.class);
@@ -43,7 +83,7 @@ class McpPublicV2ToolsTest {
     }
 
     @Test
-    void allNineBasicToolsAreDiscoverableAndDeliveryGated() throws Exception {
+    void allTenBasicToolsAreDiscoverableAndDeliveryGated() throws Exception {
         var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();
         var registry = registry(calls);
         var examples = Map.of(
@@ -53,6 +93,7 @@ class McpPublicV2ToolsTest {
                 "agent_place_block", "{\"x\":4,\"y\":65,\"z\":8,\"block\":\"minecraft:stone\"}",
                 "agent_interact", "{\"target\":\"block\",\"x\":4,\"y\":65,\"z\":8}",
                 "agent_inventory", "{\"operation\":\"inspect\"}",
+                "agent_craft", "{\"operation\":\"execute\",\"station\":{\"kind\":\"inventory_2x2\"},\"recipe_ref\":\"" + "a".repeat(24) + "\",\"recipe_fingerprint\":\"sha256:" + "0".repeat(64) + "\",\"count\":4}",
                 "agent_click", "{\"button\":\"right\"}",
                 "agent_input_sequence", "{\"steps\":[{\"inputs\":[\"sneak\",\"forward\"],\"hold_ticks\":2}]}",
                 "agent_run_script", "{\"source\":\"move(x=4, y=65, z=8);\"}");
@@ -63,6 +104,7 @@ class McpPublicV2ToolsTest {
                 "agent_place_block", McpRuntimePort.StartPlaceBlock.class,
                 "agent_interact", McpRuntimePort.StartInteract.class,
                 "agent_inventory", McpRuntimePort.StartInventory.class,
+                "agent_craft", McpRuntimePort.StartCraft.class,
                 "agent_click", McpRuntimePort.StartClick.class,
                 "agent_input_sequence", McpRuntimePort.StartInputSequence.class,
                 "agent_run_script", McpRuntimePort.StartScript.class);

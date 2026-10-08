@@ -39,7 +39,7 @@ class V2InventoryInspectExecutionTest {
     }
 
     @ParameterizedTest
-    @EnumSource(value = AgentJobStore.Kind.class, names = {"INVENTORY", "INTERACT", "LOOK"})
+    @EnumSource(value = AgentJobStore.Kind.class, names = {"CRAFT", "INVENTORY", "INTERACT", "LOOK"})
     void readbackWaitsForDeliveryAndRetainsResultAfterRelease(AgentJobStore.Kind kind) {
         var jobs = new AgentJobStore();
         var session = UUID.randomUUID();
@@ -57,13 +57,15 @@ class V2InventoryInspectExecutionTest {
                 .isEqualTo(AgentJobStore.State.RUNNING);
         assertThat(calls).hasValue(1);
         assertThat(jobs.get(id).result()).containsEntry("slots", 2);
+        assertThat(jobs.get(id).result()).containsEntry("release_pending", true);
         assertThat(execution.tick(session, 4, 4, true, () -> true).state())
                 .isEqualTo(AgentJobStore.State.SUCCEEDED);
         assertThat(calls).hasValue(1);
+        assertThat(jobs.get(id).result()).containsEntry("release_pending", false);
     }
 
     @ParameterizedTest
-    @EnumSource(value = AgentJobStore.Kind.class, names = {"INVENTORY", "INTERACT", "LOOK"})
+    @EnumSource(value = AgentJobStore.Kind.class, names = {"CRAFT", "INVENTORY", "INTERACT", "LOOK"})
     void cancellationAndUnsafeWorldNeverReadInventory(AgentJobStore.Kind kind) {
         var jobs = new AgentJobStore();
         var session = UUID.randomUUID();
@@ -118,7 +120,7 @@ class V2InventoryInspectExecutionTest {
     }
 
     @ParameterizedTest
-    @EnumSource(value = AgentJobStore.Kind.class, names = {"INVENTORY", "INTERACT"})
+    @EnumSource(value = AgentJobStore.Kind.class, names = {"CRAFT", "INVENTORY", "INTERACT"})
     void cancellationCapturesCleanupEffectsEvenWhenMenuReleaseNeedsAnotherTick(AgentJobStore.Kind kind) {
         var jobs = new AgentJobStore();
         var session = UUID.randomUUID();
@@ -158,12 +160,14 @@ class V2InventoryInspectExecutionTest {
         var pending = execution.cancel();
         assertThat(pending.state()).isEqualTo(AgentJobStore.State.RUNNING);
         assertThat(pending.result()).containsEntry("confirmed_count", 7).containsEntry("unconfirmed", true);
-        assertThat(released).hasValue(0);
+        assertThat(released).hasValue(1);
+        assertThat(pending.result()).containsEntry("release_pending", true);
         var terminal = execution.tick(session, 2, 4, false, () -> false);
         assertThat(terminal.state()).isEqualTo(AgentJobStore.State.CANCELLED);
         assertThat(terminal.result()).containsEntry("confirmed_count", 7).containsEntry("unconfirmed", true);
         assertThat(ticks).hasValue(1);
-        assertThat(released).hasValue(1);
+        assertThat(released).hasValue(2);
+        assertThat(terminal.result()).containsEntry("release_pending", false);
     }
 
     private static final class StubDriver implements V2OperationJobExecution.Driver {

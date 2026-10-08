@@ -15,6 +15,28 @@ class ExactInventoryTransferTest {
     private static final UUID SESSION = UUID.randomUUID();
 
     @Test
+    void cancellationAfterPartialDepositCountsUnitsAfterTheCursorReturns() {
+        var initial = List.of(stack(64), EMPTY);
+        var plan = plan(initial, List.of(0), List.of(1), 1, 1);
+        var before = snapshot(initial, EMPTY, 1);
+        for (int step = 0; step < 2; step++) {
+            assertThat(plan.beginClick(before, 10 + step)).isTrue();
+            var click = plan.next();
+            before = snapshot(click.slots(), click.cursor(), 2 + step);
+            assertThat(plan.confirm(before, 2 + step)).isTrue();
+        }
+        assertThat(plan.confirmedCount()).isZero();
+        var recovery = plan.cursorReturn(before).orElseThrow();
+        assertThat(plan.confirmRelease(snapshot(List.of(stack(64), EMPTY), EMPTY, 4))).isFalse();
+        var after = snapshot(recovery.slots(), EMPTY, 4);
+        assertThat(plan.confirmRelease(after)).isTrue();
+        assertThat(plan.confirmedCount()).isEqualTo(1);
+        assertThat(plan.pending()).isFalse();
+        assertThat(plan.exhausted()).isTrue();
+        assertThat(plan.beginClick(after, 20)).isFalse();
+    }
+
+    @Test
     void expandedStorageUsesActualPickupCountsAndExactQuantitiesInBothDirections() {
         for (int quantity : new int[]{1, 2, 9, 32, 63, 64}) {
             var take = ExactInventoryTransfer.plan(List.of(stack(2560), EMPTY), List.of(0), List.of(1),

@@ -120,6 +120,7 @@
                     "required_screen": {"enum": ["inventory_2x2", "crafting_table", "furnace", "blast_furnace", "smoker", "unsupported"]},
                     "supported": {"type": "boolean"},
                     "unsupported_reason": {"type": ["string", "null"], "maxLength": 160},
+                    "v2_craft_supported": {"type": "boolean", "description": "Known deterministic crafting display accepted by agent_craft, including ordinary container remainders. Station fit, materials and capacity are checked at plan/execute time. The supported field retains the legacy adapter meaning."},
                     "result": {
                       "type": "object",
                       "additionalProperties": false,
@@ -198,7 +199,7 @@
                       ]
                     }
                   },
-                  "required": ["recipe_ref", "fingerprint", "display_kind", "required_screen", "supported", "unsupported_reason", "result", "ingredients", "shape"]
+                  "required": ["recipe_ref", "fingerprint", "display_kind", "required_screen", "supported", "v2_craft_supported", "unsupported_reason", "result", "ingredients", "shape"]
                 }
               }
             },
@@ -2433,7 +2434,7 @@
     {
       "name": "agent_interact",
       "title": "Interact",
-      "description": "Uses a block, held item, observed entity, or coordinate menu through ordinary game input. Blocks and entities can be approached with advance (default true); entities must remain visible and valid. Menu operations atomically open, inspect, optionally shift-click whole stacks in Vanilla generic chest/dispenser, hopper or shulker storage menus under exact slot/item/count conditions, then close. Menu crafting output, partial transfers, cursor pickup and custom buttons are not supported. Job results distinguish accepted use from server-confirmed effects. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply.",
+      "description": "Uses a block, held item, observed entity, or coordinate menu through ordinary game input. Blocks and entities can be approached with advance (default true); entities must remain visible and valid. Menu operations atomically open, inspect, optionally shift-click whole stacks in Vanilla generic chest/dispenser, hopper or shulker storage menus under exact slot/item/count conditions, then close. Menu crafting output, partial transfers, cursor pickup and custom buttons are not supported. Job results distinguish accepted use from server-confirmed effects. Explicit execution tick budgets can reach 1728000; existing defaults remain. Wall deadline is max(120 seconds, tick budget / 20), capped at 24 hours and at the parent script remaining time. Per-operation confirmation and safety checks still apply. operation=smelt runs an empty furnace, blast furnace or smoker with an exact newly recovered output count, known recipe and fuel consumption budget; up to 64 smelts per job. operation=brew runs one validated standard potion transition for 1..3 bottles using input/output item+potion identities and an ingredient. Both prepare exact material stacks in empty player slots, approach the station, load, wait, recover and verify server evidence. Processing can continue after cancellation; partial results do not promise rollback. Existing operation-omitted calls keep their behavior.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
@@ -2508,7 +2509,10 @@
               "advance": {
                 "type": "boolean"
               },
-              "sneak": {"type": "boolean", "default": false}
+              "sneak": {
+                "type": "boolean",
+                "default": false
+              }
             },
             "required": [
               "target",
@@ -2687,6 +2691,226 @@
               "block",
               "menu_type"
             ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "target": {
+                "const": "block"
+              },
+              "operation": {
+                "const": "smelt"
+              },
+              "x": {
+                "type": "integer"
+              },
+              "y": {
+                "type": "integer"
+              },
+              "z": {
+                "type": "integer"
+              },
+              "block": {
+                "enum": [
+                  "minecraft:furnace",
+                  "minecraft:blast_furnace",
+                  "minecraft:smoker"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4096
+              },
+              "fuel": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "item": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                    "maxLength": 128
+                  },
+                  "max_count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 64
+                  }
+                },
+                "required": [
+                  "item",
+                  "max_count"
+                ]
+              },
+              "advance": {
+                "type": "boolean",
+                "default": true
+              },
+              "max_distance": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 4096,
+                "default": 64
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1728000
+              },
+              "recipe_ref": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{24}$"
+              },
+              "recipe_fingerprint": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "max_smelts": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64,
+                "default": 64
+              }
+            },
+            "required": [
+              "target",
+              "operation",
+              "x",
+              "y",
+              "z",
+              "block",
+              "count",
+              "fuel",
+              "recipe_ref",
+              "recipe_fingerprint"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "target": {
+                "const": "block"
+              },
+              "operation": {
+                "const": "brew"
+              },
+              "x": {
+                "type": "integer"
+              },
+              "y": {
+                "type": "integer"
+              },
+              "z": {
+                "type": "integer"
+              },
+              "block": {
+                "const": "minecraft:brewing_stand"
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3
+              },
+              "fuel": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "item": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                    "maxLength": 128
+                  },
+                  "max_count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 64
+                  }
+                },
+                "required": [
+                  "item",
+                  "max_count"
+                ]
+              },
+              "advance": {
+                "type": "boolean",
+                "default": true
+              },
+              "max_distance": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 4096,
+                "default": 64
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1728000
+              },
+              "input": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "item": {
+                    "enum": [
+                      "minecraft:potion",
+                      "minecraft:splash_potion",
+                      "minecraft:lingering_potion"
+                    ]
+                  },
+                  "potion": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "item",
+                  "potion"
+                ]
+              },
+              "output": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "item": {
+                    "enum": [
+                      "minecraft:potion",
+                      "minecraft:splash_potion",
+                      "minecraft:lingering_potion"
+                    ]
+                  },
+                  "potion": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "item",
+                  "potion"
+                ]
+              },
+              "ingredient": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              }
+            },
+            "required": [
+              "target",
+              "operation",
+              "x",
+              "y",
+              "z",
+              "block",
+              "count",
+              "fuel",
+              "input",
+              "output",
+              "ingredient"
+            ]
           }
         ]
       },
@@ -2767,6 +2991,47 @@
             },
             "required": [
               "operation",
+              "item",
+              "count"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "const": "move"
+              },
+              "source_slot": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 35
+              },
+              "destination_slot": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 35
+              },
+              "item": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$",
+                "maxLength": 128
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
+              },
+              "max_ticks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1728000
+              }
+            },
+            "required": [
+              "operation",
+              "source_slot",
+              "destination_slot",
               "item",
               "count"
             ]
@@ -3018,6 +3283,136 @@
               "count"
             ]
           }
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "const": 2
+          },
+          "action_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "state": {
+            "const": "queued"
+          }
+        },
+        "required": [
+          "schema_version",
+          "action_id",
+          "state"
+        ],
+        "$schema": "https://json-schema.org/draft/2020-12/schema"
+      }
+    },
+    {
+      "name": "agent_craft",
+      "title": "Plan and Execute Crafting",
+      "description": "Plans or executes a bounded number of newly crafted items in the player 2x2 grid or an approached crafting table. Obtain recipe_ref and recipe_fingerprint from agent_get_state query. count means new output items; max_crafts limits recipe executions. Non-multiple counts require allow_surplus=true. Supports known deterministic shaped/shapeless recipes using default-component materials, including ordinary container remainders. Consult recipe_query.v2_craft_supported and plan for suitability. Uses only player inventory, confirms each output from server payloads, and never repeats uncertain dispatches. plan uses current known inventory without opening a screen; execution rechecks station, materials and capacity. Returns a delivery-gated action_id; use agent_get_action with include_result and agent_cancel_action. Component-sensitive recipes and recursive crafting are not supported in this initial slice. Returned containers are checked for capacity and recovered before completion.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "operation": {
+            "enum": [
+              "plan",
+              "execute"
+            ]
+          },
+          "station": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "inventory_2x2"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "kind": {
+                    "const": "crafting_table"
+                  },
+                  "x": {
+                    "type": "integer"
+                  },
+                  "y": {
+                    "type": "integer"
+                  },
+                  "z": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "x",
+                  "y",
+                  "z"
+                ]
+              }
+            ]
+          },
+          "recipe_ref": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{24}$",
+            "minLength": 24,
+            "maxLength": 24
+          },
+          "recipe_fingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "minLength": 71,
+            "maxLength": 71
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 262144
+          },
+          "max_crafts": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4096,
+            "default": 64
+          },
+          "allow_surplus": {
+            "type": "boolean",
+            "default": false
+          },
+          "max_ticks": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1728000,
+            "default": 1200
+          },
+          "advance": {
+            "type": "boolean",
+            "default": true
+          },
+          "max_distance": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 4096,
+            "default": 64
+          }
+        },
+        "required": [
+          "operation",
+          "station",
+          "recipe_ref",
+          "recipe_fingerprint",
+          "count"
         ]
       },
       "outputSchema": {
@@ -4745,6 +5140,7 @@
                   "place_block",
                   "interact",
                   "inventory",
+                  "craft",
                   "click",
                   "input_sequence",
                   "script"

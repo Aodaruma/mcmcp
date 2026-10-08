@@ -13,8 +13,9 @@
 | `agent_move` | 座標または方向へ移動。未観測の目的地も指定でき、MODが局所観測しながら進む |
 | `agent_break_block` | Vanillaの指定座標・直方体を破壊。条件は任意、`advance:true`で接近しながら続ける |
 | `agent_place_block` | Vanillaの指定blockを座標・直方体へ設置。向きなどの`properties`は任意 |
-| `agent_interact` | block・item・観測したentityへの操作と、menuの開封・内容取得・Vanillaのスタック移動 |
-| `agent_inventory` | 所持品の確認・hotbarとの交換・投棄、対応収納の確認・数量移送 |
+| `agent_interact` | block・item・観測したentityへの操作と、menuの開封・内容取得・Vanillaのスタック移動、製錬・単工程醸造 |
+| `agent_craft` | 手元2×2・作業台3×3の計画／製作・戻り容器の回収。[生産系ガイド](PUBLIC_API_V2_PRODUCTION_20261009.md) |
+| `agent_inventory` | 所持品の確認・hotbarとの交換・数量移送・投棄、対応収納の確認・数量移送 |
 | `agent_click` | 左・右・中クリックを有限回実行。意味的な作業成功までは保証しない |
 | `agent_input_sequence` | 論理キー／マウスを同時・順番に入力。時間・間隔・反復・到達停止条件を指定 |
 | `agent_run_script` | 名前付き引数、変数、条件分岐、有限loop、小関数で行動を組み合わせる |
@@ -23,7 +24,7 @@
 
 ## 開始・確認・取消
 
-行動9ツールは共通のjobを返します。開始応答の`state:"queued"`は完了ではありません。同じIDを`agent_get_action`に渡し、terminalまで確認します。`wait_timeout_ms:25000`は最大25秒待ち、時間内に終わらなくても現在の進行を返します。
+行動10ツールは共通のjobを返します。開始応答の`state:"queued"`は完了ではありません。同じIDを`agent_get_action`に渡し、terminalまで確認します。`wait_timeout_ms:25000`は最大25秒待ち、時間内に終わらなくても現在の進行を返します。
 
 ```json
 {"x":4,"y":65,"z":8}

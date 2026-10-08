@@ -108,7 +108,7 @@ class ClientRecipeCatalogTest {
     }
 
     @Test
-    void craftingRemaindersAreVisibleButNeverAdvertisedAsExecutable() {
+    void craftingRemaindersRemainUnsupportedForLegacyButRetainV2Ingredients() {
         var catalog = new ClientRecipeCatalog();
         UUID session = UUID.randomUUID();
         catalog.refresh(session, 1, List.of(shapeless(9, Items.MILK_BUCKET, Items.STONE, 1)));
@@ -120,7 +120,8 @@ class ClientRecipeCatalogTest {
 
         assertThat(recipe.supported()).isFalse();
         assertThat(recipe.unsupportedReason()).isEqualTo("crafting_remainder");
-        assertThat(recipe.ingredients()).isEmpty();
+        assertThat(recipe.ingredients()).hasSize(1);
+        assertThat(recipe.v2CraftSupported()).isTrue();
     }
 
     @Test

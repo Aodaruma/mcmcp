@@ -1,5 +1,13 @@
 # 公開API v2：進捗と再開メモ（2026-09-28）
 
+## 最新の設計整理（2026-10-09）
+
+[生産系ツールの設計案と実装順序](PUBLIC_API_V2_PRODUCTION_PLAN_20261009.md)を承認後、`agent_craft`、`agent_interact` の `smelt`／`brew`、`agent_inventory` の正確な数量移送を実装した。公開15ツール。固定引数のscriptからも共通jobへ接続する。[利用方法・制限](PUBLIC_API_V2_PRODUCTION_20261009.md)を参照。
+
+最終候補production-r6で9ケース・24 jobを確認。手元2×2・作業台3×3、ケーキとバケツ回収、鉄の製錬、通常／残燃料での醸造、投入後取消、クラフト取消、数量移送の期限停止、script接続が合格。Java等1,694件とsource checksも成功。元world・設定・JARの65ファイルをhash一致で復旧済み。[実験記録と未確認範囲](experiments/20261009_v2_production_docker.md)を参照。通常profileへのJAR置換は保留を維持する。
+
+残りはデータ付き材料・連鎖クラフト、複数工程醸造、取引・金床・エンチャント、MODブロック破壊、水中・乗り物、装備を含む整理、MOD収納、条件・script、保存・再開。creative作業対応は別枠。実装済み／実ゲーム合格／通常profile導入を区別する。
+
 ## 最新更新：飛行・降下（2026-09-30）
 
 クリエイティブ／スペクテイターの`agent_move`に上下を含む空中経路を追加した。creativeは自動離陸・障害物回避・足場のない落差の飛行降下、spectatorは通常のすり抜けに対応する。既存の座標と`direction:"up"`／`"down"`を使い、公開14ツールを維持。survivalの落差制限は従来どおり。

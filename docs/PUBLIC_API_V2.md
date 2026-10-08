@@ -2,7 +2,9 @@
 
 今回の優先機能と試用手順は[試用メモ](PUBLIC_API_V2_TRIAL_20260929.md)を参照。実装状況・未確認事項は[進捗と再開メモ](PUBLIC_API_V2_STATUS_20260928.md)、実機結果は[基本smoke](experiments/20260928_public_api_v2_local.md)と[所持収納・使用中停止](experiments/20260929_v2_storage_stop_local.md)を参照。この設計案の完成目標、実装済み、実機確認済みの範囲を区別する。
 
-2026-09-27。利用者の追加フィードバックを反映した実装用の設計案。基準は`main`の`f7d4bf4`。2026-09-28のDraft PRでは基本行動8ツールを一組で公開catalogへ接続した。旧JSON Action DSLの開始ツールは公開catalog・受付から削除し、13ツールになった。2026-09-30には視点専用の`agent_look`を追加し、現在は14ツール。旧DSLの入力schemaは内部実行器の回帰試験用resourceにだけ残し、本体JARには同梱しない。実ゲーム確認と不足する行動範囲が残るため、v2完成・配布済みとは扱わない。
+2026-10-09に生産系の最初の実装を追加した。`agent_craft` の手元2×2・作業台3×3、`agent_interact` の製錬・単工程醸造、`agent_inventory(operation:"move")` の数量移送を公開する。現在は15ツール。[生産系の使い方と制限](PUBLIC_API_V2_PRODUCTION_20261009.md)と[承認された設計・残りの実装順序](PUBLIC_API_V2_PRODUCTION_PLAN_20261009.md)を参照。取引・金床・エンチャント等はまだ公開していない。
+
+2026-09-27。利用者の追加フィードバックを反映した実装用の設計案。基準は`main`の`f7d4bf4`。2026-09-28のDraft PRでは基本行動8ツールを一組で公開catalogへ接続した。旧JSON Action DSLの開始ツールは公開catalog・受付から削除し、13ツールになった。2026-09-30には視点専用の`agent_look`を追加し、当時14ツールになった。2026-10-09の生産系追加後は15ツール。旧DSLの入力schemaは内部実行器の回帰試験用resourceにだけ残し、本体JARには同梱しない。実ゲーム確認と不足する行動範囲が残るため、v2完成・配布済みとは扱わない。
 
 実ゲームの主要成功・取消・危険停止は[隔離smoke test](../tools/eval/fixtures/public-api-v2/README.md)で検証する。runner／fixtureの単体検査と実ゲーム合格を区別し、対象JAR・action ID・readback・復旧を実験記録へ残す。
 
@@ -39,7 +41,8 @@ LLMは行き先、作業範囲、条件、反復の意図を伝える。MODは�
 | `agent_break_block` | 単一座標／直方体範囲、任意のblock条件・除外条件・最大個数 | 近づく、見えるようになったblockを確認する、適切な道具を探して選択する、通常操作で破壊する、結果を確認する |
 | `agent_place_block` | 単一座標／範囲、block/item、任意の望むstate・配置条件 | 手持ち確保、支持面・方向・接続の検討、移動・設置・照合。state未指定なら既定の設置状態を受け入れる |
 | `agent_interact` | block／entity／itemと目的。座標／範囲や種類の条件は任意 | 対象を見つける、接近、通常使用、画面やstateの変化を確認する |
-| `agent_inventory` | `inspect`／`swap`／`transfer`／`drop`、item条件、数量、移動元・先 | hotbar／inventory／対応menuの同期、移送・投棄、数量の確認 |
+| `agent_inventory` | `inspect`／`swap`／`move`／`transfer`／`drop`、item条件、数量、移動元・先 | hotbar／inventory／対応menuの同期、移送・投棄、数量の確認 |
+| `agent_craft` | `plan`／`execute`、手元2×2／座標指定の作業台、レシピ参照、新規完成品数 | 材料・容量の確認、通常のレシピ配置、完成品・戻り容器の回収とserver照合 |
 | `agent_click` | 左／右／中、対象／現在照準、回数、画面文脈 | 必要な入力と効果の確認。中クリックはゲームモード別に意味を扱う |
 | `agent_input_sequence` | 同時・順次のsteps、押下tick、間隔、反復数、停止条件 | 複数入力の単一所有、有限実行と解放 |
 | `agent_run_script` | 下記の制限言語のsourceと総予算 | 関数・変数・分岐・反復で複数の基本行動を組み立てて進める |

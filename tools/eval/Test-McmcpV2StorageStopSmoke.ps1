@@ -11,7 +11,7 @@ $calls = [Collections.Generic.List[string]]::new()
 
 function Invoke-McmcpClient {
     param($TokenPath, $Endpoint, $Tool, $Arguments, [switch]$Check)
-    if ($Check) { return @{ ok = $true; tool_count = 14 } }
+    if ($Check) { return @{ ok = $true; tool_count = 15 } }
     $calls.Add($Tool)
     $definition = @($catalog.tools | Where-Object name -CEQ $Tool)[0]
     Assert-McmcpSchema $Arguments $definition.inputSchema 'invalid_extended_smoke_request'

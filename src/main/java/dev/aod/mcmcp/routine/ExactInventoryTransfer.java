@@ -11,11 +11,16 @@ import java.util.List;
 import java.util.Optional;
 
 /** A fixed, bounded sequence of ordinary PICKUP clicks with packet-proven cursor transitions. */
-final class ExactInventoryTransfer {
+public final class ExactInventoryTransfer {
+    public static boolean ordinaryPickupItem(Class<?> itemType) {
+        return KnownMenuTransfers.ordinaryPickupItem(itemType);
+    }
     static final int MAX_CLICKS = 14;
     private static final int MAX_SEARCH_STATES = 10_000;
     private final List<Click> clicks;
     private final List<Integer> capacities;
+    private final List<StackFingerprint> initialSlots;
+    private final List<Integer> sourceSlots;
     private List<StackFingerprint> confirmedSlots;
     private StackFingerprint confirmedCursor = StackFingerprint.EMPTY;
     private int next;
@@ -28,14 +33,17 @@ final class ExactInventoryTransfer {
     private long dispatchTick = -1;
     private int cursorOrigin = -1;
 
-    private ExactInventoryTransfer(List<StackFingerprint> initial, List<Click> clicks, List<Integer> capacities) {
+    private ExactInventoryTransfer(List<StackFingerprint> initial, List<Click> clicks, List<Integer> capacities,
+            List<Integer> sources) {
         this.confirmedSlots = List.copyOf(initial);
+        this.initialSlots = List.copyOf(initial);
+        this.sourceSlots = List.copyOf(sources);
         this.clicks = List.copyOf(clicks);
         this.capacities = List.copyOf(capacities);
     }
 
     /** Plans everything before any click; capacity/count/click failure never causes a partial start. */
-    static Optional<ExactInventoryTransfer> plan(
+    public static Optional<ExactInventoryTransfer> plan(
             List<StackFingerprint> initial, List<Integer> sources, List<Integer> destinations,
             String item, int defaultHash, boolean defaultOnly,
             int quantity, int maxSources, int stackLimit) {
@@ -45,7 +53,7 @@ final class ExactInventoryTransfer {
     }
 
     /** Slot capacity and cursor pickup limit are separate, including expanded storage stacks. */
-    static Optional<ExactInventoryTransfer> plan(
+    public static Optional<ExactInventoryTransfer> plan(
             List<StackFingerprint> initial, List<Integer> sources, List<Integer> destinations,
             String item, int defaultHash, boolean defaultOnly,
             int quantity, int maxSources, int stackLimit, List<Integer> capacities) {
@@ -95,7 +103,7 @@ final class ExactInventoryTransfer {
                 }
                 remaining -= moved;
             }
-            if (remaining == 0) return Optional.of(new ExactInventoryTransfer(initial, clicks, capacities));
+            if (remaining == 0) return Optional.of(new ExactInventoryTransfer(initial, clicks, capacities, sources));
         }
         return Optional.empty();
     }
@@ -146,7 +154,7 @@ final class ExactInventoryTransfer {
         return Optional.empty();
     }
 
-    boolean beginClick(ContainerSnapshot snapshot, long tick) {
+    public boolean beginClick(ContainerSnapshot snapshot, long tick) {
         if (inFlight || exhausted() || tick <= dispatchTick
                 || snapshot.packetLedgerRevision() < confirmedRevision
                 || !matchesConfirmed(snapshot)) return false;
@@ -157,7 +165,7 @@ final class ExactInventoryTransfer {
         return true;
     }
 
-    boolean confirm(ContainerSnapshot snapshot, long cursorProofRevision) {
+    public boolean confirm(ContainerSnapshot snapshot, long cursorProofRevision) {
         if (!inFlight || snapshot.packetLedgerRevision() <= dispatchRevision
                 || cursorProofRevision <= dispatchRevision
                 || !next().slots().equals(snapshot.slots())
@@ -178,15 +186,20 @@ final class ExactInventoryTransfer {
         return true;
     }
 
-    boolean matchesConfirmed(ContainerSnapshot snapshot) {
+    public boolean matchesConfirmed(ContainerSnapshot snapshot) {
         return confirmedSlots.equals(snapshot.slots()) && confirmedCursor.equals(snapshot.carried());
     }
 
     /** Return only the proven cursor remainder to the slot that supplied it, without resuming work. */
-    Optional<CursorReturn> cursorReturn(ContainerSnapshot snapshot) {
+    public Optional<CursorReturn> cursorReturn(ContainerSnapshot snapshot) {
         if (inFlight || confirmedCursor.empty() || cursorOrigin < 0 || !matchesConfirmed(snapshot)) {
             return Optional.empty();
         }
+        return plannedCursorReturn();
+    }
+
+    private Optional<CursorReturn> plannedCursorReturn() {
+        if (confirmedCursor.empty() || cursorOrigin < 0) return Optional.empty();
         var source = confirmedSlots.get(cursorOrigin);
         if (!source.empty() && !sameItem(source, confirmedCursor)) return Optional.empty();
         long count = (long) source.count() + confirmedCursor.count();
@@ -196,10 +209,25 @@ final class ExactInventoryTransfer {
         return Optional.of(new CursorReturn(cursorOrigin, List.copyOf(after)));
     }
 
-    boolean awaitingAcknowledgement() { return inFlight; }
+    public boolean awaitingAcknowledgement() { return inFlight; }
 
-    record CursorReturn(int slot, List<StackFingerprint> slots) {
-        boolean confirmed(ContainerSnapshot snapshot) {
+    /** Stops at a proven empty cursor, retaining even a partly completed split group. */
+    public boolean confirmRelease(ContainerSnapshot snapshot) {
+        if (inFlight || !snapshot.carried().empty()) return false;
+        boolean returned = plannedCursorReturn().filter(value -> value.confirmed(snapshot)).isPresent();
+        if (!matchesConfirmed(snapshot) && !returned) return false;
+        confirmedCount = sourceSlots.stream().mapToInt(slot -> initialSlots.get(slot).count() - snapshot.slots().get(slot).count()).sum();
+        confirmedSlots = snapshot.slots();
+        confirmedCursor = StackFingerprint.EMPTY;
+        confirmedRevision = snapshot.packetLedgerRevision();
+        cursorOrigin = -1;
+        groupStarted = false;
+        next = clicks.size();
+        return true;
+    }
+
+    public record CursorReturn(int slot, List<StackFingerprint> slots) {
+        public boolean confirmed(ContainerSnapshot snapshot) {
             return snapshot.carried().empty() && slots.equals(snapshot.slots());
         }
     }
@@ -209,18 +237,18 @@ final class ExactInventoryTransfer {
                 && matchesConfirmed(snapshot);
     }
 
-    boolean ackTimedOut(long tick) {
+    public boolean ackTimedOut(long tick) {
         return inFlight && tick - dispatchTick >= KnownMenuTransfers.UPDATE_TIMEOUT_TICKS;
     }
 
-    Click next() { return clicks.get(next); }
-    boolean exhausted() { return next == clicks.size(); }
-    boolean pending() { return inFlight || groupStarted; }
+    public Click next() { return clicks.get(next); }
+    public boolean exhausted() { return next == clicks.size(); }
+    public boolean pending() { return inFlight || groupStarted; }
     int pendingCount() { return pending() ? next().quantity() : 0; }
-    int confirmedCount() { return confirmedCount; }
+    public int confirmedCount() { return confirmedCount; }
     int confirmedGroups() { return confirmedGroups; }
     int clickCount() { return clicks.size(); }
-    long dispatchRevision() { return dispatchRevision; }
+    public long dispatchRevision() { return dispatchRevision; }
     List<Click> clicks() { return clicks; }
 
     private static boolean sameItem(StackFingerprint left, StackFingerprint right) {
@@ -233,7 +261,7 @@ final class ExactInventoryTransfer {
                 : new StackFingerprint(stack.itemId(), count, stack.itemAndComponentsHash());
     }
 
-    record Click(int slot, int button, List<StackFingerprint> slots, StackFingerprint cursor,
+    public record Click(int slot, int button, List<StackFingerprint> slots, StackFingerprint cursor,
                  int quantity, boolean groupEnd) { }
     private record Counts(int source, int destination, int cursor) { }
     private record Transition(boolean source, int button, Counts after) { }

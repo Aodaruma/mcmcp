@@ -1182,6 +1182,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (command instanceof StartInventory inventory) {
             return submitV2InventoryStart(inventory, context);
         }
+        if (command instanceof StartCraft craft) {
+            return submitV2InventoryStart(craft, context);
+        }
         if (command instanceof GetAction action) {
             return submitAgentGetAction(action, context);
         }
@@ -1517,7 +1520,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             scriptJobs.setDeadline(actionId, scriptDeadline);
             UUID worldId = session.worldSessionId();
             scriptExecution = new ScriptJobExecution(scriptJobs, actionId, worldId,
-                    request.source(), Set.of("move", "breakBlocks", "place", "inventory",
+                    request.source(), Set.of("move", "breakBlocks", "place", "inventory", "craft",
                             "click", "input", "interact", "look"),
                     request.work(), request.iterations(), request.calls(),
                     new RuntimeScriptCommandRunner(context.evaluationLeaseExpectation()),
@@ -1560,6 +1563,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 case "interact" -> new StartInteract(arguments);
                 case "look" -> new StartLook(arguments);
                 case "inventory" -> new StartInventory(arguments);
+                case "craft" -> new StartCraft(arguments);
                 case "click" -> new StartClick(arguments);
                 case "input" -> new StartInputSequence(arguments);
                 default -> throw new IllegalArgumentException("unsupported script command");
@@ -1674,10 +1678,11 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private CompletionStage<RuntimeReply> submitV2InventoryStart(
-            StartInventory command, RuntimeCallContext context) {
+            RuntimeCommand command, RuntimeCallContext context) {
         final V2InventoryRequest request;
         try {
-            request = V2InventoryRequest.parse(command.arguments());
+            request = command instanceof StartCraft craft ? V2CraftArguments.parse(craft.arguments())
+                    : V2InventoryRequest.parse(((StartInventory) command).arguments());
         } catch (RuntimeException | LinkageError failure) {
             return CompletableFuture.completedFuture(RuntimeFailures.mapFailure(failure));
         }
@@ -1700,6 +1705,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private Map<String, Object> commitV2Inventory(
             Minecraft minecraft, WorldSessionTracker.Snapshot session,
             V2InventoryRequest request, RuntimeCallContext context) {
+        String toolName = request instanceof V2CraftArguments ? "agent_craft" : "agent_inventory";
         assertClientThread(minecraft);
         RuntimeFailures.requireReady(session);
         if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
@@ -1720,7 +1726,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     "task_busy", "Another action is already queued or running.",
                     true, Map.of());
         }
-        requireLiveCall(context, "agent_inventory");
+        requireLiveCall(context, toolName);
         if (!arming.beginAction(session.worldSessionId())) {
             throw new RuntimeInvocationException(
                     "mcp_operation_disabled", "The READY authorization is no longer available.",
@@ -1728,15 +1734,18 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         UUID actionId = null;
         try {
-            requireLiveCall(context, "agent_inventory");
-            actionId = reserveV2Job(AgentJobStore.Kind.INVENTORY,
+            requireLiveCall(context, toolName);
+            actionId = reserveV2Job(request instanceof V2CraftArguments ? AgentJobStore.Kind.CRAFT : AgentJobStore.Kind.INVENTORY,
                     session.worldSessionId(), request.maxTicks(),
                     System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS, context);
             V2OperationJobExecution.Driver driver = switch (request) {
+                case V2CraftArguments craft -> new MinecraftV2CraftDriver(minecraft, sessions::snapshot,
+                        recipeCatalog, agentObservations, reconciliationSignals, craft);
                 case V2InventoryDropArguments drop -> new MinecraftV2InventoryDropDriver(
                         minecraft, session.worldSessionId(), drop);
                 case V2InventorySwapArguments swap -> new MinecraftV2InventorySwapDriver(
                         minecraft, session.worldSessionId(), swap);
+                case V2InventoryMoveArguments move -> new MinecraftV2InventoryMoveDriver(minecraft, move);
                 case V2InventoryInspectArguments inspect ->
                         inventoryInspectDriver(minecraft, inspect);
                 case V2InventoryContainerArguments container -> new MinecraftV2ContainerDriver(
@@ -1755,7 +1764,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             v2InventoryPlayerIdentity = minecraft.player;
             v2InventoryLevelIdentity = minecraft.level;
             v2InventoryControlEpoch = arming.snapshot(session.worldSessionId()).controlEpoch();
-            requireLiveCall(context, "agent_inventory");
+            requireLiveCall(context, toolName);
         } catch (RuntimeException | LinkageError failure) {
             if (actionId != null) v2Jobs.abandon(actionId);
             if (AgentInputState.global().inputOwnerNone()) AgentInputState.global().clearActionDeadline();
@@ -1934,6 +1943,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         RuntimeFailures.requireReady(session);
         String toolName = lookOnly ? "agent_look" : "agent_interact";
         var look = lookOnly ? V2LookArguments.parse(arguments) : null;
+        var production = !lookOnly && V2ProductionArguments.matches(arguments)
+                ? V2ProductionArguments.parse(arguments, session.dimension()) : null;
         var itemUse = !lookOnly && "item".equals(arguments.get("target"))
                 ? V2ItemUseArguments.parse(arguments) : null;
         var entityUse = !lookOnly && "entity".equals(arguments.get("target"))
@@ -1942,12 +1953,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 ? V2MenuArguments.parse(arguments, session.dimension()) : null;
         var entity = entityUse == null ? null : resolveV2VisibleEntity(minecraft, session,
                 new V2ClickArguments.EntityRefTarget(entityUse.ref(), entityUse.type()), entityUse.advance());
-        var request = !lookOnly && itemUse == null && entityUse == null && menuUse == null
+        var request = !lookOnly && production == null && itemUse == null && entityUse == null && menuUse == null
                 ? V2BlockInteractArguments.parse(arguments, session.dimension()) : null;
-        int maxTicks = look != null ? look.maxTicks() : itemUse != null ? itemUse.maxTicks()
+        int maxTicks = production != null ? production.maxTicks() : look != null ? look.maxTicks() : itemUse != null ? itemUse.maxTicks()
                 : entityUse != null ? entityUse.maxTicks()
                 : menuUse != null ? menuUse.block().maxTicks() : request.maxTicks();
-        double maxDistance = look != null ? 0.25D : request != null ? request.maxDistance()
+        double maxDistance = production != null ? production.maxDistance() : look != null ? 0.25D : request != null ? request.maxDistance()
                 : entityUse != null ? entityUse.maxDistance()
                 : menuUse != null ? menuUse.block().maxDistance() : 64.0D;
         if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
@@ -1983,7 +1994,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 if (!released) arming.lock("v2_interact_release_failed");
                 return released;
             };
-            if (look != null) {
+            if (production != null) {
+                v2InteractExecution = new V2OperationJobExecution(v2Jobs, actionId,
+                        session.worldSessionId(), new MinecraftV2ProductionDriver(minecraft, sessions::snapshot,
+                                agentObservations, reconciliationSignals, recipeCatalog,
+                                production.brew() ? knownBrewingPort : knownFurnacePort, production,
+                                () -> v2InteractMaxDistance - v2InteractTravelled), release);
+            } else if (look != null) {
                 v2InteractExecution = new V2OperationJobExecution(v2Jobs, actionId,
                         session.worldSessionId(), new MinecraftV2LookDriver(minecraft, sessions::snapshot,
                                 agentObservations, look), release);
@@ -2307,6 +2324,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     throw new AssertionError("agent_look must use delivery-gated admission");
             case StartInventory ignored ->
                     throw new AssertionError("agent_inventory must use delivery-gated admission");
+            case StartCraft ignored ->
+                    throw new AssertionError("agent_craft must use delivery-gated admission");
             case GetAction action -> getAgentAction(action.arguments());
             case CancelAction action -> cancelAgentAction(minecraft, action.arguments());
             case ConfirmActionDelivery delivery -> confirmAgentActionDelivery(delivery.actionId());
@@ -2896,7 +2915,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             } else if (requested && (before.kind() == AgentJobStore.Kind.INTERACT || before.kind() == AgentJobStore.Kind.LOOK)
                     && v2InteractExecution != null) {
                 finishV2InteractIfTerminal(v2InteractExecution.cancel());
-            } else if (requested && before.kind() == AgentJobStore.Kind.INVENTORY
+            } else if (requested && (before.kind() == AgentJobStore.Kind.INVENTORY || before.kind() == AgentJobStore.Kind.CRAFT)
                     && v2InventoryExecution != null) {
                 finishV2InventoryIfTerminal(v2InventoryExecution.cancel());
             } else if (requested) {
@@ -3607,7 +3626,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             finishV2PlaceIfTerminal(result);
         } else if (result.kind() == AgentJobStore.Kind.INTERACT || result.kind() == AgentJobStore.Kind.LOOK) {
             finishV2InteractIfTerminal(result);
-        } else if (result.kind() == AgentJobStore.Kind.INVENTORY) {
+        } else if (result.kind() == AgentJobStore.Kind.INVENTORY || result.kind() == AgentJobStore.Kind.CRAFT) {
             finishV2InventoryIfTerminal(result);
         } else if (result.kind() == AgentJobStore.Kind.INPUT_SEQUENCE
                 || result.kind() == AgentJobStore.Kind.CLICK) {
@@ -3764,7 +3783,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (!(rawId instanceof String id)) return;
         try {
             var job = v2Jobs.get(UUID.fromString(id));
-            if (job.kind() == AgentJobStore.Kind.INVENTORY && !job.state().terminal()) {
+            if ((job.kind() == AgentJobStore.Kind.INVENTORY || job.kind() == AgentJobStore.Kind.CRAFT) && !job.state().terminal()) {
                 finishV2InventoryIfTerminal(
                         v2InventoryExecution.stop("delivery_not_confirmed"));
             }
