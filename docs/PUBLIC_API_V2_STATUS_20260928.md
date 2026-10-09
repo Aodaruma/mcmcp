@@ -2,7 +2,7 @@
 
 ## 最新更新：優先機能の実機確認（2026-10-10）
 
-クラフトの材料データ、4 MOD破壊、5 水中／乗り物、6 整理、8 条件・scriptを最終候補priorities-r7で確認。このPCの実機13ケースとJava等1,719件が成功した。外部source・JSON/CSV、小規模blueprintの中断・再開・再実行も確認済み。147,456セル全量の実施工は未検証。[試用メモと導入状況](PUBLIC_API_V2_TRIAL_20261010.md)、[実機記録](experiments/20261010_v2_priorities_local.md)を参照。先行Docker環境の復旧はSSH timeoutのため未確認。
+クラフトの材料データ、4 MOD破壊、5 水中／乗り物、6 整理、8 条件・scriptを最終候補priorities-r7で確認。このPCの実機13ケースとJava等1,719件が成功した。外部source・JSON/CSV、小規模blueprintの中断・再開・再実行も確認済み。147,456セル全量の実施工は未検証。ローカル検証profileの292ファイルを復元し、Prism起動後に「くらふとぶ！-v01.2」へ導入済み。通常profileの再起動後、公開15ツールの全入出力schema一致も確認した。[試用メモと導入状況](PUBLIC_API_V2_TRIAL_20261010.md)、[実機記録](experiments/20261010_v2_priorities_local.md)を参照。先行Docker環境の復旧はSSH timeoutのため未確認。
 
 以下は各時点の履歴であり、過去の導入保留・検証待ちを現在の状況として扱わない。
 

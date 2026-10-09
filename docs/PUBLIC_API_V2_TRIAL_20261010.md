@@ -27,6 +27,10 @@
 
 ## 導入状況
 
-最終候補R7は実機13ケースに合格。通常の「くらふとぶ！-v01.2」への反映はWindowsのロック解除待ちで、まだJARを変更していない。導入時は検証profileを復旧し、Prismを先に起動して元JARを退避、物理path・SHA-256・製品JARが1個だけであることを確認する。検証用harnessは通常profileへ入れない。
+**2026-10-10、通常の「くらふとぶ！-v01.2」へ最終候補R7を反映済み。** 実機13ケースに合格後、検証profileの292ファイルを復元。Prismを先に起動して元JARを退避し、物理path・SHA-256・製品JARが1個だけであることを確認した。検証用harnessは通常profileへ入れていない。
+
+通常profileをPrism GUIから起動し、公開15ツールの全入出力schemaがcatalogと一致することも確認済み。タイトル画面・MCP OFFで引き渡し。試用時は利用者がworldへ入り、MCPをONにする。導入JARのSHA-256は `90a63cabbf3a1358ee176e06a218565fc108b3996ec3cd48c64242d2d1fbd69f`。
+
+先行のaod-mimoid Docker環境の復旧だけは、SSH timeoutにより未確認。復旧用backupを保持している。
 
 main統合・タグ・Release公開は行わず、Draft PR #85を維持する。

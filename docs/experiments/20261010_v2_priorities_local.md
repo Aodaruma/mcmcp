@@ -48,7 +48,11 @@
 
 ## 復旧・通常profile導入
 
-ローカル検証profileは開始前の292ファイルをhash付きで保存。13ケース完了後、WindowsがロックされていたためGUI終了・復旧・通常profile導入は解除待ち。通常profileのJARはまだ変更していない。
+ローカル検証profileは開始前の292ファイルを復元し、全ファイルのhash一致を確認。試験後のprofileも別途保存した。
+
+2026-10-10 02:05 JST、Prism Launcherを先にGUI起動した状態で、通常の「くらふとぶ！-v01.2」へ最終候補R7を反映。ネイティブprocessから開いたJARハンドルの物理pathを確認し、AppData仮想化領域への誤配置を防いだ。元JAR（SHA-256 `227ae54631d1b09f3fbd75f617bfcd03c1eaf348cef48f4b0e6416ea516a597c`）を退避、新JARのhash一致・製品JARが1個・test harness不在を確認した。
+
+Prism GUIから通常profileを起動し、02:07 JSTに公開15ツールの全input/output schemaが正本catalogと一致することを確認。Minecraft 26.2／NeoForge 26.2.0.59／32 modsのタイトル画面、MCP OFF、world未接続で引き渡した。通常worldは開いていない。証拠は `normal-installation.json` と `normal-verification.json`、元JARは導入artifactの `normal-before` に保存。
 
 先行のリモートDockerはSSH timeoutのため、66ファイルの復旧をまだ確認できていない。利用者へ接続確認を依頼済み。ローカル成功をリモート復旧完了として扱わない。
 
