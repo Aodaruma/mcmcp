@@ -1,6 +1,6 @@
 # v2 地図アート利用時の修正
 
-この文書は開発候補 `merchants-r4` の追加仕様をまとめる。通常の「くらふとぶ！」は別チャットが使用しているため、まだ旧R7のまま。ローカルゲームの操作・再起動・JAR交換はしていない。
+この文書は開発候補 `merchants-r4` の追加仕様をまとめる。2026-10-10 03:38 JST、利用者の依頼で通常の「くらふとぶ！-v01.2」へ導入した。Prismからの起動と公開APIの照合も完了している。
 
 ## 修正内容
 
@@ -36,6 +36,14 @@ Java 1,690件、harness 14件、admin bridge 28件、計1,732件の試験とbuil
 候補JAR SHA-256：`3a6e9fe6028b5e7a4d9d0cd509fef395ad306407c3679ab1769b44dacf9bd720`。実行記録はローカル `artifacts/v2-merchants-20261010` と同名のリモート評価ディレクトリに保存する。認証情報やworldの内容をGitへ追加しない。
 
 2026-10-10 03:26 JST、今回の実機試験後も元world 61・設定3・JAR2の計66ファイルをハッシュ一致で復元し、fixtureを退避、検証containerを停止した。PowerShell／Python source checksも成功した。
+
+## 通常プロファイルへの導入
+
+Prism Launcher起動済み・Minecraft終了済みを確認し、旧R7のJARをバックアップしてから、検証済み候補の製品JARだけを交換した。ネイティブの物理path、導入前後とバックアップのSHA-256、製品JARが1個であること、検証用harness／admin bridgeの不在を確認した。
+
+03:40 JST、Prism GUIから起動したゲームのMCP endpointについて、公開15ツールの全input/output schemaがcatalogと一致した。endpointの所有JVMの作業ディレクトリと起動時刻も照合し、対象profileが交換後に起動したことを確認。タイトル画面・MCP OFFで引き渡し、通常worldには入っていない。
+
+ローカル記録と旧JARの保存先は `artifacts/v2-merchants-install-20261010`。`normal-installation.json`、`normal-verification.json`、`normal-before/`にそれぞれ導入・API照合・バックアップを保存した。
 
 ## 残件
 

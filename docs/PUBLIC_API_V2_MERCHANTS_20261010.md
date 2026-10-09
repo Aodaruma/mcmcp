@@ -40,6 +40,6 @@ scriptの `interact(...)` からも同じ引数で呼べる。取消・Esc・UI 
 - 候補取得後の価格変更を購入前に拒否。
 - 支払い準備中の取消で、数量整合とmenu/cursor解放を確認。
 
-単体試験では候補の相手・session・dimension・期限、components変更、整数境界と費用合算も検証した。行商人、すべてのMOD取引、ネットワーク切断・遅延の全組合せは実機未検証。試験runnerは `tools/eval/Invoke-McmcpV2MerchantSmoke.ps1`。この追加JARは通常の「くらふとぶ！」へまだ導入していない。
+単体試験では候補の相手・session・dimension・期限、components変更、整数境界と費用合算も検証した。行商人、すべてのMOD取引、ネットワーク切断・遅延の全組合せは実機未検証。試験runnerは `tools/eval/Invoke-McmcpV2MerchantSmoke.ps1`。最終候補 `merchants-r4` は2026-10-10に通常の「くらふとぶ！-v01.2」へ導入し、再起動後の全公開schemaを照合済み。
 
 最終候補 `merchants-r4` でも通常取引（予算・古い候補の拒否を含む）と途中取消を再確認した。候補の `confirmation` は `server_merchant_offers`、購入の確定は `server_container_packets` として返し、`effect_confirmed` は確認済み取引がある場合だけtrueになる。関連修正と候補ハッシュは[地図アート利用時の修正](PUBLIC_API_V2_MAP_ART_FIXES_20261010.md)を参照。

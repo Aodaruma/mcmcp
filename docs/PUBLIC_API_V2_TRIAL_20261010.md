@@ -2,13 +2,13 @@
 
 2026-10-10。公開15ツール。入力の正本は[Tool Catalog](MCMCP_MCP_Tool_Catalog.json)、詳細は[追加機能ガイド](PUBLIC_API_V2_PRIORITIES_20261009.md)、実機の確認範囲は[検証記録](experiments/20261010_v2_priorities_local.md)を参照。
 
-追加開発候補では取引に加え、エリトラ装備時の段差移動、レバー／ピストン観測、同一接続のディメンション移動でのMCP ON引継ぎ、scriptの `report(value=...)` を実装・隔離検証した。[追加修正の仕様と残件](PUBLIC_API_V2_MAP_ART_FIXES_20261010.md)。通常profileには未導入。
+取引に加え、エリトラ装備時の段差移動、レバー／ピストン観測、同一接続のディメンション移動でのMCP ON引継ぎ、scriptの `report(value=...)` を実装・隔離検証し、通常profileへ導入済み。[追加修正の仕様と残件](PUBLIC_API_V2_MAP_ART_FIXES_20261010.md)。
 
 | 優先項目 | 現在の範囲 |
 | --- | --- |
 | 1. クラフト | 手元2×2・作業台3×3、数量計画、名前・耐久値・エンチャント付き材料、戻り容器、途中取消。特殊なデータ転写レシピ・連鎖クラフトは対象外 |
 | 2. 製錬・醸造 | `agent_interact`の`smelt`・`brew`。既存の通常かまど／醸造台による単工程。MOD専用設備や複数工程の自動計画は未対応 |
-| 3. 取引・金床・エンチャント | 追加開発で候補確認・費用上限付き取引を実装し、隔離実機で検証。通常profileはまだR7のため取引は未導入。金床・エンチャントは未実装。[取引ガイド](PUBLIC_API_V2_MERCHANTS_20261010.md) |
+| 3. 取引・金床・エンチャント | 候補確認・費用上限付き取引を実装し、隔離実機で検証・通常profileへ導入済み。金床・エンチャントは未実装。[取引ガイド](PUBLIC_API_V2_MERCHANTS_20261010.md) |
 | 4. MODブロック破壊 | 登録済みblockを通常攻撃で破壊。硬度・道具・server更新を確認。実機はSophisticated Backpacksで確認。独自の分解・レンチ操作は未対応 |
 | 5. 水中・乗り物 | 水中の上下・出入口・酸素退避、通常ボート／トロッコ／操縦可能な馬の移動。降車には静止と安全な乾いた足場が必要 |
 | 6. インベントリ整理 | 同じデータのstack統合、指定枠のsort、満杯での交換、装備・オフハンドへの数量移送 |
@@ -29,9 +29,9 @@
 
 ## 導入状況
 
-**2026-10-10、通常の「くらふとぶ！-v01.2」へ最終候補R7を反映済み。** 実機13ケースに合格後、検証profileの292ファイルを復元。Prismを先に起動して元JARを退避し、物理path・SHA-256・製品JARが1個だけであることを確認した。検証用harnessは通常profileへ入れていない。
+**2026-10-10 03:38 JST、通常の「くらふとぶ！-v01.2」をR7から `merchants-r4` へ更新済み。** 先行R7は実機13ケースに合格後、検証profileの292ファイルを復元して導入した。今回もPrismが起動済みであることを確認して旧JARを退避し、物理path・SHA-256・製品JARが1個だけであることを確認して交換した。検証用harness／admin bridgeは通常profileへ入れていない。
 
-通常profileをPrism GUIから起動し、公開15ツールの全入出力schemaがcatalogと一致することも確認済み。タイトル画面・MCP OFFで引き渡し。試用時は利用者がworldへ入り、MCPをONにする。導入JARのSHA-256は `90a63cabbf3a1358ee176e06a218565fc108b3996ec3cd48c64242d2d1fbd69f`。
+通常profileをPrism GUIから起動し、03:40 JSTに公開15ツールの全入出力schemaがcatalogと一致することを確認した。endpoint所有JVMの作業ディレクトリと交換後の起動時刻も照合済み。タイトル画面・MCP OFFで引き渡し。試用時は利用者がworldへ入り、MCPをONにする。導入JARのSHA-256は `3a6e9fe6028b5e7a4d9d0cd509fef395ad306407c3679ab1769b44dacf9bd720`。旧R7のバックアップと導入・API照合記録はローカル `artifacts/v2-merchants-install-20261010` に保存した。
 
 先行のaod-mimoid Docker環境も、2026-10-10 02:34 JSTまでに元world・設定・JARの66ファイルをハッシュ一致で復元し、検証containerとDocker Desktopの停止を確認した。
 
