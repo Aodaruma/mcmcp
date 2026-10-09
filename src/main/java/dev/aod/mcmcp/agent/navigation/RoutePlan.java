@@ -108,6 +108,12 @@ public record RoutePlan(
         return probeEdgeCount > 0;
     }
 
+    public boolean endsOnLadderTransit() {
+        return !edges.isEmpty() && edges.getLast().locomotion()
+                == dev.aod.mcmcp.agent.safety.Locomotion.LADDER
+                && !edges.getLast().destination();
+    }
+
     /** Direct adapter value for {@link ActionDslCompiler.PrimitiveCostModel}. */
     public ActionDslCompiler.Cost toDslPrimitiveCost() {
         return new ActionDslCompiler.Cost(

@@ -145,7 +145,7 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
         return horizontal <= radius + tolerance && Math.abs(player.getY() - y) <= radius + 0.21D
                 && (!player.isInWater() || MinecraftActionPrimitiveExecutor.waterBreathingRecovered(
                         player.isEyeInFluid(net.minecraft.tags.FluidTags.WATER), player.getAirSupply(), player.getMaxAirSupply()))
-                && (player.isInWater() || mode.aerial() || player.onGround() || player.onClimbable());
+                && (player.isInWater() || mode.aerial() || player.onGround());
     }
 
     private void releasePosture() {

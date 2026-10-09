@@ -115,6 +115,9 @@ final class FixtureV2Priorities {
                     report.put("merchants", merchants);
                     report.put("position", List.of(player.getX(), player.getY(), player.getZ()));
                     report.put("air", player.getAirSupply());
+                    report.put("health", player.getHealth());
+                    report.put("on_ground", player.onGround());
+                    report.put("on_climbable", player.onClimbable());
                     report.put("fall_flying", player.isFallFlying());
                     report.put("dimension", player.level().dimension().identifier().toString());
                     if (player.getVehicle() != null) {
@@ -172,6 +175,17 @@ final class FixtureV2Priorities {
                         + (slot < 9 ? "hotbar." + slot : "inventory." + (slot - 9)) + " with minecraft:stone 64");
             }
             case "blueprint" -> result.add("give @s minecraft:cobblestone 32");
+            case "ladder_down", "ladder_long", "ladder_up", "ladder_long_up", "ladder_gap" -> {
+                int top = kind.equals("ladder_long") || kind.equals("ladder_long_up") ? 112 : 104;
+                result.addAll(List.of("fill 300 101 300 320 115 320 minecraft:air",
+                        "fill 300 " + (top - 1) + " 300 310 " + (top - 1) + " 310 minecraft:stone",
+                        "fill 305 101 305 305 " + top + " 305 minecraft:air",
+                        "fill 304 101 305 304 " + top + " 305 minecraft:stone",
+                        "fill 305 101 305 305 " + top + " 305 minecraft:ladder[facing=east]",
+                        "tp @s 305.5814 " + top + " 304.7269 0 35"));
+                if (kind.equals("ladder_up") || kind.equals("ladder_long_up")) result.add("tp @s 306.5 101 305.5 90 0");
+                if (kind.equals("ladder_gap")) result.add("setblock 305 102 305 minecraft:air");
+            }
             case "elytra_step" -> result.addAll(List.of("item replace entity @s armor.chest with minecraft:elytra",
                     "fill 306 101 304 310 101 306 minecraft:stone", "tp @s 305.5 101 305.5 -90 0"));
             case "mechanisms" -> result.addAll(List.of("setblock 305 101 303 minecraft:lever[face=floor,facing=south,powered=true]",

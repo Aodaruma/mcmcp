@@ -2148,7 +2148,9 @@ public final class LocalObservationVolume {
         if (support == Support.UNKNOWN) {
             return new DropEvaluation(Drop.UNKNOWN, Vec3.ZERO);
         }
-        if (currentAabb && !player.onGround()) {
+        // Vanilla retains onGround for the first tick entering a ladder from the floor lip.
+        if (currentAabb && (!player.onGround()
+                || player.onClimbable() && safeLadderCell(player, level, origin, box))) {
             return new DropEvaluation(Drop.AIRBORNE_OR_SWIMMING, Vec3.ZERO);
         }
         if (fluid == Fluid.WATER) {

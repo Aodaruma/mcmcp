@@ -16,6 +16,60 @@ class CoordinateGoalPlannerTest {
     private static final CoordinateGoalPlanner.Budget DEFAULT = CoordinateGoalPlanner.Budget.DEFAULT;
 
     @Test
+    void longLadderUsesOnlyProgressingTransitWithAnotherObservedRungBeyondIt() {
+        var map = map();
+        for (int y = 80; y > 76; y--) map.observe(ladder(rung(y), rung(y - 1)));
+        var planner = new CoordinateGoalPlanner(SESSION, new NavCell("overworld", 1, 64, 0));
+        var first = plan(planner, map, rung(80));
+        assertThat(first.status()).isEqualTo(PARTIAL_WAYPOINT);
+        assertThat(first.route().orElseThrow().cells()).containsExactly(rung(80), rung(79), rung(78), rung(77));
+        assertThat(first.route().orElseThrow().endsOnLadderTransit()).isTrue();
+        assertThat(map.snapshot().orElseThrow().containsDestination(rung(77))).isFalse();
+        assertThat(new DeterministicAStar().findRoute(map.snapshot().orElseThrow(), rung(80), rung(77)).found()).isFalse();
+        for (int y = 77; y > 73; y--) map.observe(ladder(rung(y), rung(y - 1)));
+        assertThat(plan(planner, map, rung(77)).route().orElseThrow().cells())
+                .containsExactly(rung(77), rung(76), rung(75), rung(74));
+    }
+
+    @Test
+    void ladderTransitCannotBeAFinalGoalOrCrossMissingContinuation() {
+        var map = map(ladder(rung(80), rung(79)), ladder(rung(79), rung(78)));
+        var goal = new NavCell("overworld", 1, 64, 0);
+        assertThat(plan(new CoordinateGoalPlanner(SESSION, goal),
+                map(ladder(rung(80), rung(79))), rung(80)).status()).isEqualTo(BLOCKED);
+        var toRung = plan(new CoordinateGoalPlanner(SESSION, rung(79)), map, rung(80));
+        assertThat(toRung.status()).isNotIn(KNOWN_GOAL_ROUTE, REACHED_KNOWN_GOAL);
+        assertThat(plan(new CoordinateGoalPlanner(SESSION, goal, cell -> !cell.equals(rung(78))), map, rung(80))
+                .status()).isEqualTo(BLOCKED);
+        assertThat(plan(new CoordinateGoalPlanner(SESSION, rung(84)), map, rung(80)).status()).isEqualTo(BLOCKED);
+    }
+
+    @Test
+    void ladderSegmentsFinishAtTheSupportedExitWhenItBecomesKnown() {
+        var exit = new NavCell("overworld", 1, 64, 0);
+        var map = map(ladder(rung(66), rung(65)), ladder(rung(65), rung(64)));
+        var source = ladder(rung(64), exit);
+        map.observe(new TraversabilityEdge(SESSION, source.key(), source.status(),
+                TraversabilityEdge.TargetSupport.CONFIRMED, source.clearance(), source.transition(),
+                source.fluid(), source.hazard(), source.provenance(), source.observerPosition(), 1, 0, source.locomotion()));
+        var result = plan(new CoordinateGoalPlanner(SESSION, exit), map, rung(66));
+        assertThat(result.status()).isEqualTo(KNOWN_GOAL_ROUTE);
+        assertThat(result.route().orElseThrow().endsOnLadderTransit()).isFalse();
+        assertThat(result.route().orElseThrow().cells()).containsExactly(rung(66), rung(65), rung(64), exit);
+    }
+
+    private static NavCell rung(int y) { return new NavCell("overworld", 0, y, 0); }
+
+    private static TraversabilityEdge ladder(NavCell from, NavCell to) {
+        return new TraversabilityEdge(SESSION, new TraversabilityEdge.Key(from, to),
+                TraversabilityEdge.Status.PROBE_ALLOWED, TraversabilityEdge.TargetSupport.ABSENT,
+                TraversabilityEdge.Clearance.CONFIRMED, TraversabilityEdge.Transition.PARTIAL,
+                TraversabilityEdge.Fluid.NONE, TraversabilityEdge.Hazard.NONE,
+                TraversabilityEdge.Provenance.LOCAL_VOLUME, from, 1, 0,
+                dev.aod.mcmcp.agent.safety.Locomotion.LADDER);
+    }
+
+    @Test
     void denseKnownAirColumnChoosesABoundedSegmentWithoutExhaustingCandidateSearches() {
         var map = map();
         for (int y = 64; y < 164; y++) {

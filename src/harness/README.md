@@ -4,18 +4,32 @@
 
 The additional `-Dmcmcp.fixture.v2Priorities=true` flag enables fixed test preparation through
 `config/mcmcp-v2-priorities/request.txt`. Write a fresh integer followed by a colon and one of
-`components`, `cake`, `cancel`, `blueprint`, `inventory`, `water`, `water_air`, `boat`, `minecart`, `horse`, `mod_break`, or `report`.
+`components`, `cake`, `cancel`, `blueprint`, `inventory`, `water`, `water_air`, `boat`, `minecart`, `horse`, `mod_break`,
+`trade`, `trade_full`, `trade_change`, `elytra_step`, `mechanisms`, `dimension_end`, `dimension_overworld`,
+`ladder_down`, `ladder_long`, `ladder_up`, `ladder_long_up`, `ladder_gap`, or `report`.
 The receipt is written to `receipt.json`. This accepts no commands, paths, coordinates or item IDs.
 It uses the same private integrated-server owner checks below. Production JARs do not include it.
 
 These cases replace blocks in **300,100,300 through 320,108,320**, remove tagged fixture vehicles,
 and replace the player's inventory, position, mode and effects. Back up the entire disposable world
 and profile settings first, then restore them after testing. `report` only reads server inventory,
-cursor, position and air. Submit new setup requests only when the previous public job has terminated.
+cursor, position, air, health, ground/climbable flags, dimension and the fixed merchant/vehicle state.
+Submit new setup requests only when the previous public job has terminated.
 Setup never enables MCP: the user must press the game's normal status button before the smoke runner.
 Run `tools/eval/Invoke-McmcpV2PrioritiesSmoke.ps1` with the matching case, explicit world session and
 a fresh artifact directory. `water` supplies water breathing; `water_air` starts underwater with 120 air,
 so run its retreat test immediately. `cake`/`cancel` use the existing production smoke cases.
+
+The ladder cases additionally clear **300,101,300 through 320,115,320**. They prepare an east-facing
+ladder at x=305, z=305 between feet heights 101 and 104 (short) or 112 (long). Downward cases start
+at x=305.5814, z=304.7269 on the upper floor lip. Upward cases start at x=306.5, z=305.5 on the lower
+floor. `ladder_gap` removes the rung at y=102. Use only a backed-up disposable world.
+Run `tools/eval/Invoke-McmcpV2LadderSmoke.ps1 -TokenPath <private-token-file> -Endpoint <endpoint>
+-ExpectedWorldSession <session> -ArtifactDirectory <fresh-directory> -LadderCase <case>` after setup.
+Cases `Down`, `LongDown`, `Up`, `LongUp`, `Gap` match those five preparations. `Cancel` uses
+`ladder_long`; `TickLimit` uses `ladder_down`. The runner checks the full public catalog, session,
+fixture bounds, health, terminal status and idle control; issue `report` afterward for server-side
+landing evidence. Cancellation releases inputs and does not freeze Vanilla ladder gravity.
 
 ## Original fixed arenas
 

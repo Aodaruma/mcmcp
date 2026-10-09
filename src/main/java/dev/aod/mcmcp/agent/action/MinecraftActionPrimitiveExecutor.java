@@ -250,6 +250,11 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             state.edgeIndex++;
             state.resetProgress();
             if (state.edgeIndex == state.route.edges().size()) {
+                if (state.route.endsOnLadderTransit() && player.onClimbable()) {
+                    boolean changed = edgeDecision(state.route, state.edgeIndex - 1, snapshot) == EdgeDecision.REPLAN;
+                    return finish(changed ? Status.REPLAN_REQUIRED : Status.SUCCEEDED,
+                            changed ? Reason.ROUTE_EDGE_CHANGED : Reason.NONE);
+                }
                 state.beginSettlement();
                 return tickNavigationSettlement(
                         minecraft, player, snapshot, movementSafety,

@@ -91,6 +91,9 @@ public final class CoordinateGoalPlanner {
             if (edge.destination()) {
                 candidates.add(edge.key().to());
                 if (edge.locomotion() == Locomotion.GROUND || edge.locomotion().aerial()) candidates.add(edge.key().from());
+            } else if (edge.traversable() && edge.locomotion() == Locomotion.LADDER
+                    && ladderWaypoint(map, start, edge.key().to())) {
+                candidates.add(edge.key().to());
             }
         }
         if (stopped(cancelled)) return empty(Status.CANCELLED, 0, 0);
@@ -140,7 +143,8 @@ public final class CoordinateGoalPlanner {
             }
             attempts++;
             var found = search.findRoute(map, start, candidate, budget.expansions() - expanded,
-                    () -> !stopped(cancelled), () -> { }, cellAllowed);
+                    () -> !stopped(cancelled), () -> { }, cellAllowed,
+                    ladderWaypoint(map, start, candidate));
             expanded += found.expandedCells().size();
             if (stopped(cancelled)) return empty(Status.CANCELLED, attempts, expanded);
             if (found.found()) {
@@ -166,6 +170,19 @@ public final class CoordinateGoalPlanner {
 
     private static boolean stopped(BooleanSupplier cancelled) {
         return Thread.currentThread().isInterrupted() || cancelled.getAsBoolean();
+    }
+
+    private boolean ladderWaypoint(KnownTraversabilitySnapshot map, NavCell start, NavCell cell) {
+        int direction = Integer.compare(goal.y(), start.y());
+        if (direction == 0 || reached(cell) || !map.containsLadderTransit(cell)
+                || Integer.compare(cell.y(), start.y()) != direction
+                || Integer.compare(goal.y(), cell.y()) != direction
+                || cell.distanceTo(goal) >= start.distanceTo(goal)) return false;
+        // Leave another verified rung beyond the handoff while the next local snapshot arrives.
+        return map.outgoing(cell).stream().anyMatch(edge -> edge.traversable()
+                && edge.locomotion() == Locomotion.LADDER
+                && edge.key().to().x() == cell.x() && edge.key().to().z() == cell.z()
+                && edge.key().to().y() - cell.y() == direction && cellAllowed.test(edge.key().to()));
     }
 
     private record Reachable(NavCell cell, double cost) { }
