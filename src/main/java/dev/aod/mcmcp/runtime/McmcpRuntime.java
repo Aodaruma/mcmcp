@@ -142,6 +142,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final ScopedEntityAttackConsentStore entityAttackConsent =
             new ScopedEntityAttackConsentStore();
     private final LocalArmingState arming = new LocalArmingState();
+    private final WorldTransitionControl worldTransitionControl = new WorldTransitionControl();
     private final InputReleaseController inputRelease = new InputReleaseController();
     private final EvaluationLeaseController evaluationControl;
     private final MinecraftStationaryBreakPort stationaryBreakPort;
@@ -362,6 +363,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     public void onLoggingIn(Minecraft minecraft) {
         assertClientThread(minecraft);
+        worldTransitionControl.clear();
         transientMultiplayerConsentAddress = null;
         evaluationControl.terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
@@ -385,11 +387,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     public void onLevelUnload(Minecraft minecraft) {
         assertClientThread(minecraft);
+        var handoff = captureWorldTransition(minecraft, minecraft.player != null && minecraft.player.getHealth() > 0);
         transientMultiplayerConsentAddress = null;
         evaluationControl.terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
         clearAgentSessionState();
-        stopForLifecycle(minecraft, "level_or_dimension_change");
+        var stopped = stopForLifecycle(minecraft, "level_or_dimension_change");
         routines.clearSession("level_or_dimension_change");
         routineLifecycle.clearSession();
         ClientPredictionSignals.global().closeLevel(minecraft.level);
@@ -405,11 +408,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         sessions.suspendWorld();
         memory.detachSession();
         arming.lock("level_or_dimension_change");
+        worldTransitionControl.suspend(handoff, stopped, arming.peek(), inbox.safetyEpoch(), !automationActivityPending());
         publishSession();
     }
 
     public void onLoggingOut(Minecraft minecraft) {
         assertClientThread(minecraft);
+        worldTransitionControl.clear();
         transientMultiplayerConsentAddress = null;
         evaluationControl.terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
@@ -433,13 +438,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         publishSession();
     }
 
-    public void onPlayerClone(Minecraft minecraft) {
+    public void onPlayerClone(Minecraft minecraft, boolean livingPlayer) {
         assertClientThread(minecraft);
+        var handoff = captureWorldTransition(minecraft, livingPlayer);
         transientMultiplayerConsentAddress = null;
         evaluationControl.terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
         clearAgentSessionState();
-        stopForLifecycle(minecraft, "player_respawn");
+        var stopped = stopForLifecycle(minecraft, "player_respawn");
         routines.clearSession("player_respawn");
         routineLifecycle.clearSession();
         ClientPredictionSignals.global().resetAttemptsForPlayerClone(minecraft.level);
@@ -455,6 +461,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         sessions.invalidate();
         memory.detachSession();
         arming.lock("player_respawn");
+        worldTransitionControl.suspend(handoff, stopped, arming.peek(), inbox.safetyEpoch(), !automationActivityPending());
         publishSession();
     }
 
@@ -809,6 +816,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     /** Uses the same priority lane as Esc so a UI stop releases every owned input inline. */
     public void disableAutomationFromUi(Minecraft minecraft) {
         assertClientThread(minecraft);
+        worldTransitionControl.clear();
         transientMultiplayerConsentAddress = null;
         entityAttackConsent.clear();
         if (anyActive()) {
@@ -854,7 +862,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         return enableAutomationFromUi(Minecraft.getInstance());
     }
 
-    /** Grants only the current armed period; disabling or leaving the level clears it. */
+    /** Grants only this connection's armed period; OFF and disconnect clear it. */
     public boolean enableAutomationForCurrentMultiplayerSessionFromUi(
             Minecraft minecraft, String address) {
         assertClientThread(minecraft);
@@ -6200,13 +6208,20 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private record AgentCleanupProgress(boolean primitiveClosed, boolean recoveryClosed) {
     }
 
-    private void stopForLifecycle(Minecraft minecraft, String reason) {
+    private ClientCommandInbox.StopReceipt stopForLifecycle(Minecraft minecraft, String reason) {
         try {
-            inbox.requestEmergencyStop(reason);
+            var stopped = inbox.requestEmergencyStop(reason);
             inbox.drainEmergencyStopPreTick(minecraft, sessions.snapshot());
+            return stopped.getNow(null);
         } finally {
             routineLifecycle.clearDeadline();
         }
+    }
+
+    private WorldTransitionControl.Candidate captureWorldTransition(Minecraft minecraft, boolean livingPlayer) {
+        return worldTransitionControl.capture(minecraft.getConnection(), sessions.snapshot().dimension(),
+                arming.peek(), inbox.safetyEpoch(), transientMultiplayerConsentAddress,
+                livingPlayer && !evaluationControl.anyActive() && endpointFaultCode == null && !shutdown);
     }
 
     private void synchronizeWorld(Minecraft minecraft) {
@@ -6216,25 +6231,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         var dimension = minecraft.level.dimension().identifier().toString();
         var before = sessions.snapshot();
+        if (before.dimension() != null && !before.dimension().equals(dimension)) {
+            onLevelUnload(minecraft);
+        }
         boolean changed = sessions.latchReady(dimension);
         var after = sessions.snapshot();
         if (changed) {
-            if (before.dimension() != null && !before.dimension().equals(dimension)) {
-                evaluationControl.terminateActiveEvaluationOnClient(
-                        minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
-                clearAgentSessionState();
-                routines.clearSession("dimension_changed");
-                routineLifecycle.clearSession();
-                clearAutomationPortSessions(
-                        stationaryBreakPort::clearSession,
-                        semanticActionPort::clearSession,
-                        applyBlockPlanPort::clearSession,
-                        pillarUpPort::clearSession);
-                clearPhaseFivePortSessions();
-                recipeCatalog.detachSession();
-                memory.detachSession();
-                arming.lock("dimension_changed");
-            }
             memory.startSession(after.worldSessionId(), dimension);
             var reconciliation = reconciliationSignals.bindAndSnapshot(
                     minecraft.level, after.worldSessionId());
@@ -6242,6 +6244,22 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     after.worldSessionId(), dimension, reconciliation.worldRevision());
             screenOwnership.bindWorldSession(minecraft.level, after.worldSessionId());
             MerchantOfferSignals.global().bindSession(minecraft.level, after.worldSessionId());
+            var control = arming.peek();
+            long stopEpoch = inbox.safetyEpoch();
+            var handoff = worldTransitionControl.take(minecraft.getConnection(), dimension, control, stopEpoch,
+                    localControlAvailable(minecraft, after) && endpointFaultCode == null
+                            && !shutdown && !automationActivityPending());
+            if (handoff != null) {
+                transientMultiplayerConsentAddress = handoff.multiplayerConsent();
+                var capabilities = new java.util.HashSet<>(availableCapabilities(minecraft));
+                capabilities.retainAll(handoff.capabilities());
+                if (!multiplayerPolicyAllows(minecraft) || !inbox.armAfterWorldTransition(
+                        after.worldSessionId(), capabilities, stopEpoch, control.controlEpoch())) {
+                    transientMultiplayerConsentAddress = null;
+                } else {
+                    routineLifecycle.resetContinuation(after.worldSessionId());
+                }
+            }
         }
     }
 

@@ -370,6 +370,19 @@ public final class ClientCommandInbox {
         return safetyEpoch.get();
     }
 
+    /** A concurrent stop must win over a pending dimension handoff. */
+    boolean armAfterWorldTransition(java.util.UUID sessionId, java.util.Set<String> capabilities,
+            long expectedSafetyEpoch, long expectedControlEpoch) {
+        synchronized (admissionGate) {
+            var control = armingState.peek();
+            if (!accepting || pendingStop != null || !stopWaiters.isEmpty()
+                    || safetyEpoch.get() != expectedSafetyEpoch || !control.locked()
+                    || control.controlEpoch() != expectedControlEpoch) return false;
+            armingState.arm(sessionId, capabilities);
+            return true;
+        }
+    }
+
     public int queuedCommands() {
         return normalQueue.size() + controlQueue.size();
     }

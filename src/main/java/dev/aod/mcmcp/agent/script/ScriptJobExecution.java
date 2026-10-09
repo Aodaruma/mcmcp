@@ -162,6 +162,7 @@ public final class ScriptJobExecution implements Runnable {
             details.put("iterations", result.iterations());
             details.put("calls", result.calls());
             details.put("completed_commands", job.completedOperations());
+            details.put("reports", result.reports());
             details.put("resources", resources.entrySet().stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
                     Map.Entry::getKey, entry -> Map.of("format", entry.getValue().format(), "sha256", entry.getValue().sha256()))));
             if (!result.detail().isEmpty()) details.put("detail", result.detail());

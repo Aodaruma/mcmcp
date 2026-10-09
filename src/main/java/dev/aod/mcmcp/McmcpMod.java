@@ -127,7 +127,7 @@ public final class McmcpMod {
 
     private void onPlayerClone(ClientPlayerNetworkEvent.Clone event) {
         AgentMovementInput.install(event.getNewPlayer(), Minecraft.getInstance().options);
-        runtime.onPlayerClone(Minecraft.getInstance());
+        runtime.onPlayerClone(Minecraft.getInstance(), event.getOldPlayer().getHealth() > 0);
     }
 
     private void onLevelUnload(LevelEvent.Unload event) {

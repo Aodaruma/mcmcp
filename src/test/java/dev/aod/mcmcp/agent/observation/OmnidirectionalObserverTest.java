@@ -406,6 +406,21 @@ class OmnidirectionalObserverTest {
     }
 
     @Test
+    void visibleMechanismStatesDoNotGrantConstructionPermission() {
+        var lever = Blocks.LEVER.defaultBlockState().setValue(BlockStateProperties.POWERED, true);
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(lever).properties())
+                .containsEntry("powered", "true").containsEntry("face", "wall");
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(lever)).isNull();
+        for (var piston : List.of(Blocks.PISTON, Blocks.STICKY_PISTON)) {
+            var state = piston.defaultBlockState().setValue(BlockStateProperties.EXTENDED, true)
+                    .setValue(BlockStateProperties.FACING, Direction.EAST);
+            assertThat(OmnidirectionalObserver.policyVisibleBlockState(state).properties())
+                    .containsEntry("extended", "true").containsEntry("facing", "east");
+            assertThat(OmnidirectionalObserver.safeDirectPlacementItem(state)).isNull();
+        }
+    }
+
+    @Test
     void completeStateIsLimitedToAuditedActionBlocks() {
         var xAxisLog = Blocks.OAK_LOG.defaultBlockState()
                 .setValue(BlockStateProperties.AXIS, Direction.Axis.X);

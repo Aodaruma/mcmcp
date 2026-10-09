@@ -17,7 +17,7 @@ final class ActionScript {
     static final int MAX_DEPTH = 64;
     static final int MAX_CALL_DEPTH = 16;
     static final Budget DEFAULT_BUDGET = new Budget(100_000, 10_000, 1_000);
-    static final Set<String> BUILTINS = Set.of("read_json", "read_csv", "length", "number");
+    static final Set<String> BUILTINS = Set.of("read_json", "read_csv", "length", "number", "report");
 
     record Budget(int work, int iterations, int calls) {
         Budget {
@@ -40,7 +40,8 @@ final class ActionScript {
             throw new Stop(Status.INVALID, "Observation unavailable");
         }
     }
-    record Result(Status status, int work, int iterations, int calls, int completed, String detail) {}
+    record Result(Status status, int work, int iterations, int calls, int completed, String detail,
+            java.util.List<Object> reports) {}
 
     static Result run(String source, Set<String> commands, Sink sink, BooleanSupplier cancelled, Budget budget) {
         return run(source, commands, sink, cancelled, budget, Map.of());
@@ -87,6 +88,8 @@ final class ActionScript {
         int callDepth;
         Map<String, ActionScriptParser.Node> functions = Map.of();
         final Map<String, ScriptResources.Resource> resources;
+        final ArrayList<Object> reports = new ArrayList<>();
+        int reportNodes, reportCharacters, reportBytes = 2;
 
         Execution(Budget budget, BooleanSupplier cancelled, Sink sink, Map<String, ScriptResources.Resource> resources) {
             this.budget = Objects.requireNonNull(budget);
@@ -95,7 +98,8 @@ final class ActionScript {
             this.resources = Map.copyOf(resources);
         }
         Result result(Status status, String detail) {
-            return new Result(status, work, iterations, calls, completed, detail);
+            return new Result(status, work, iterations, calls, completed, detail,
+                    Collections.unmodifiableList(new ArrayList<>(reports)));
         }
         void checkCancelled() {
             if (isCancelled())
@@ -259,6 +263,16 @@ final class ActionScript {
             if (!args.keySet().equals(Set.of(key))) throw new Stop(Status.INVALID, "Invalid data function arguments");
             Object value = args.get(key);
             return switch (name) {
+                case "report" -> {
+                    if (reports.size() == 32) throw new Stop(Status.LIMIT, "Report count limit");
+                    Object copy = copyReport(value, 0);
+                    int bytes = new com.google.gson.GsonBuilder().serializeNulls().create().toJson(copy)
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+                    if (reportBytes + bytes + 1 > 16_384) throw new Stop(Status.LIMIT, "Report byte limit");
+                    reportBytes += bytes + 1;
+                    reports.add(copy);
+                    yield null;
+                }
                 case "read_json", "read_csv" -> {
                     if (!(value instanceof String resourceName)) throw new Stop(Status.INVALID, "Resource name required");
                     var resource = resources.get(resourceName);
@@ -279,6 +293,32 @@ final class ActionScript {
                 }
                 default -> throw new AssertionError(name);
             };
+        }
+
+        private Object copyReport(Object value, int depth) {
+            step();
+            if (++reportNodes > 512 || depth > 16) throw new Stop(Status.LIMIT, "Report structure limit");
+            if (value == null || value instanceof Boolean) return value;
+            if (value instanceof Number number) return finite(number.doubleValue());
+            if (value instanceof String text) {
+                reportCharacters += text.length();
+                if (reportCharacters > 16_384) throw new Stop(Status.LIMIT, "Report text limit");
+                return text;
+            }
+            if (value instanceof java.util.List<?> list) {
+                var copy = new ArrayList<>();
+                for (Object element : list) copy.add(copyReport(element, depth + 1));
+                return Collections.unmodifiableList(copy);
+            }
+            if (value instanceof Map<?, ?> map) {
+                var copy = new LinkedHashMap<String, Object>();
+                for (var entry : map.entrySet()) {
+                    if (!(entry.getKey() instanceof String key)) throw new Stop(Status.INVALID, "Report key must be text");
+                    copy.put((String) copyReport(key, depth + 1), copyReport(entry.getValue(), depth + 1));
+                }
+                return Collections.unmodifiableMap(copy);
+            }
+            throw new Stop(Status.INVALID, "Report requires data values");
         }
     }
 

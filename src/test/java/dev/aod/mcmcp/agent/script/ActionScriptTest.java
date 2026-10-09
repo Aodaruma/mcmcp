@@ -26,6 +26,40 @@ class ActionScriptTest {
     }
 
     @Test
+    void reportsSnapshotObservedDataAndRemainAvailableAfterALaterFailure() {
+        var observation = new java.util.LinkedHashMap<String, Object>();
+        observation.put("known", true);
+        observation.put("value", Map.of("powered", true));
+        Sink observed = new Sink() {
+            public Outcome execute(Command c, java.util.function.BooleanSupplier cancel) { return Outcome.FAILURE; }
+            public Map<String, Object> observe(Map<String, Object> args, java.util.function.BooleanSupplier cancel) { return observation; }
+        };
+        var result = ActionScript.run("report(value=observe(kind=\"block\")); report(value=null); move();",
+                Set.of("move", "observe"), observed, () -> false, DEFAULT_BUDGET);
+        observation.clear();
+        assertThat(result.status()).isEqualTo(Status.FAILED);
+        assertThat(result.reports()).containsExactly(Map.of("known", true, "value", Map.of("powered", true)), null);
+        assertThatThrownBy(() -> result.reports().clear()).isInstanceOf(UnsupportedOperationException.class);
+        assertThat(run("report(path=\"file\");").status()).isEqualTo(Status.INVALID);
+    }
+
+    @Test
+    void reportsBoundSharedGraphsCountAndUtf8SizeBeforeSerialization() {
+        var shared = run("let a=[0]; repeat(30){a=[a,a];} report(value=a);");
+        assertThat(shared.status()).isEqualTo(Status.LIMIT);
+        assertThat(shared.reports()).isEmpty();
+        var count = run("repeat(33){report(value=1);}");
+        assertThat(count.status()).isEqualTo(Status.LIMIT);
+        assertThat(count.reports()).hasSize(32);
+        var bytes = run("let a=\"" + "あ".repeat(3_000) + "\"; report(value=a); report(value=a);");
+        assertThat(bytes.status()).isEqualTo(Status.LIMIT);
+        assertThat(bytes.reports()).hasSize(1);
+        var work = run("report(value=[1,2,3,4]);", new Budget(8, 0, 0));
+        assertThat(work.status()).isEqualTo(Status.LIMIT);
+        assertThat(work.reports()).isEmpty();
+    }
+
+    @Test
     void observationNumbersAndActionResultsCanDriveBranches() {
         Sink observed = new Sink() {
             public Outcome execute(Command c, java.util.function.BooleanSupplier cancel) { sent.add(c); return Outcome.SUCCESS; }

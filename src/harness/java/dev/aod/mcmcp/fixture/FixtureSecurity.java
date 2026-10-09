@@ -18,6 +18,15 @@ final class FixtureSecurity {
     }
 
     static Decision authorize(CommandSourceStack source) {
+        return authorize(source, false);
+    }
+
+    /** Only the fixed v2 dimension-return case may use this entry point. */
+    static Decision authorizeReturnFromEnd(CommandSourceStack source) {
+        return authorize(source, true);
+    }
+
+    private static Decision authorize(CommandSourceStack source, boolean allowEndReturn) {
         if (!Boolean.getBoolean(McmcpTestFixtureMod.ENABLE_PROPERTY)) {
             return Decision.reject("-D" + McmcpTestFixtureMod.ENABLE_PROPERTY + "=true is required");
         }
@@ -50,7 +59,8 @@ final class FixtureSecurity {
         }
 
         ServerLevel level = player.level();
-        if (source.getLevel() != level || !Level.OVERWORLD.equals(level.dimension())) {
+        if (source.getLevel() != level || !(Level.OVERWORLD.equals(level.dimension())
+                || allowEndReturn && Level.END.equals(level.dimension()))) {
             return Decision.reject("run the fixture as the owner in the Overworld");
         }
 

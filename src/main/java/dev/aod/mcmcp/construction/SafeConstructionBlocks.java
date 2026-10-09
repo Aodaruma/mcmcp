@@ -33,7 +33,10 @@ public final class SafeConstructionBlocks {
             "minecraft:white_wool",
             "minecraft:furnace",
             "minecraft:blast_furnace",
-            "minecraft:smoker");
+            "minecraft:smoker",
+            "minecraft:lever",
+            "minecraft:piston",
+            "minecraft:sticky_piston");
     private static final Set<String> IDS = ids();
 
     private SafeConstructionBlocks() {

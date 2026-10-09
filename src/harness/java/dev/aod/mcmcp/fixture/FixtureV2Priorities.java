@@ -44,10 +44,23 @@ final class FixtureV2Priorities {
                 try {
                     var player = server.getPlayerList().getPlayer(playerId);
                     if (player == null) throw new IllegalStateException("owner missing");
-                    var decision = FixtureSecurity.authorize(player.createCommandSourceStack());
-                    if (!decision.allowed()) throw new IllegalStateException(decision.rejection());
                     String kind = value.substring(value.indexOf(':') + 1);
-                    if (kind.equals("trade_change")) {
+                    var decision = kind.equals("dimension_overworld")
+                            ? FixtureSecurity.authorizeReturnFromEnd(player.createCommandSourceStack())
+                            : FixtureSecurity.authorize(player.createCommandSourceStack());
+                    if (!decision.allowed()) throw new IllegalStateException(decision.rejection());
+                    if (kind.equals("dimension_end") || kind.equals("dimension_overworld")) {
+                        var source = player.createCommandSourceStack().withMaximumPermission(server.operatorUserPermissions()).withSuppressedOutput();
+                        String destination = kind.equals("dimension_end") ? "minecraft:the_end" : "minecraft:overworld";
+                        var destinationLevel = server.getLevel(kind.equals("dimension_end")
+                                ? net.minecraft.world.level.Level.END : net.minecraft.world.level.Level.OVERWORLD);
+                        for (int x = 300 >> 4; x <= 310 >> 4; x++) {
+                            for (int z = 300 >> 4; z <= 310 >> 4; z++) destinationLevel.getChunk(x, z);
+                        }
+                        server.getCommands().performPrefixedCommand(source, "execute in " + destination + " run fill 300 100 300 310 100 310 minecraft:stone");
+                        server.getCommands().performPrefixedCommand(source, "execute in " + destination + " run fill 300 101 300 310 104 310 minecraft:air");
+                        server.getCommands().performPrefixedCommand(source, "execute in " + destination + " run tp @s 305.5 101 305.5 180 0");
+                    } else if (kind.equals("trade_change")) {
                         for (var entity : player.level().getEntitiesOfClass(net.minecraft.world.entity.npc.villager.Villager.class,
                                 new net.minecraft.world.phys.AABB(300, 100, 300, 320, 109, 320))) {
                             if (entity.entityTags().contains("mcmcp_v2_fixture")) entity.getOffers().getFirst().addToSpecialPriceDiff(1);
@@ -102,6 +115,8 @@ final class FixtureV2Priorities {
                     report.put("merchants", merchants);
                     report.put("position", List.of(player.getX(), player.getY(), player.getZ()));
                     report.put("air", player.getAirSupply());
+                    report.put("fall_flying", player.isFallFlying());
+                    report.put("dimension", player.level().dimension().identifier().toString());
                     if (player.getVehicle() != null) {
                         var vehicle = player.getVehicle();
                         report.put("vehicle", Map.of("position", List.of(vehicle.getX(), vehicle.getY(), vehicle.getZ()),
@@ -157,6 +172,11 @@ final class FixtureV2Priorities {
                         + (slot < 9 ? "hotbar." + slot : "inventory." + (slot - 9)) + " with minecraft:stone 64");
             }
             case "blueprint" -> result.add("give @s minecraft:cobblestone 32");
+            case "elytra_step" -> result.addAll(List.of("item replace entity @s armor.chest with minecraft:elytra",
+                    "fill 306 101 304 310 101 306 minecraft:stone", "tp @s 305.5 101 305.5 -90 0"));
+            case "mechanisms" -> result.addAll(List.of("setblock 305 101 303 minecraft:lever[face=floor,facing=south,powered=true]",
+                    "setblock 307 101 303 minecraft:piston[facing=south]",
+                    "setblock 303 101 303 minecraft:sticky_piston[facing=south]"));
             case "water", "water_air" -> result.addAll(List.of("fill 305 100 305 315 104 315 minecraft:stone",
                     "fill 306 101 306 314 104 314 minecraft:water", "tp @s 310.5 102 310.5 0 0"));
             case "boat" -> result.addAll(List.of("fill 300 101 300 320 101 320 minecraft:stone",

@@ -22,7 +22,7 @@ class ScriptJobExecutionTest {
         UUID id = confirmed(jobs, world, 3);
         var called = new ArrayList<String>();
         var execution = execution(jobs, id, world,
-                "move(x=1); repeat(2) { click(button=\"right\"); }",
+                "report(value={phase:\"start\"}); move(x=1); repeat(2) { click(button=\"right\"); }",
                 new ScriptJobExecution.CommandRunner() {
                     @Override
                     public ScriptJobExecution.Outcome execute(String name,
@@ -41,7 +41,8 @@ class ScriptJobExecutionTest {
         assertThat(finished.state()).isEqualTo(AgentJobStore.State.SUCCEEDED);
         assertThat(finished.completedOperations()).isEqualTo(3);
         assertThat(finished.result()).containsEntry("script_status", "success")
-                .containsEntry("completed_commands", 3);
+                .containsEntry("completed_commands", 3)
+                .containsEntry("reports", java.util.List.of(Map.of("phase", "start")));
     }
 
     @Test

@@ -20,6 +20,22 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ClientCommandInboxTest {
     @Test
+    void dimensionRearmingIsAtomicWithExplicitOffAndStopAdmission() {
+        for (int boundary = 0; boundary < 3; boundary++) {
+            var arming = new LocalArmingState();
+            var inbox = new ClientCommandInbox(4, new InputReleaseController(), arming);
+            arming.lock("level_or_dimension_change");
+            long controlEpoch = arming.peek().controlEpoch();
+            long safetyEpoch = inbox.safetyEpoch();
+            if (boundary == 1) inbox.requestLocalDisable();
+            if (boundary == 2) inbox.requestEmergencyStop("operator_stop");
+            assertThat(inbox.armAfterWorldTransition(UUID.randomUUID(), Set.of("movement"),
+                    safetyEpoch, controlEpoch)).isEqualTo(boundary == 0);
+            assertThat(arming.peek().locked()).isEqualTo(boundary != 0);
+        }
+    }
+
+    @Test
     void deferredPreflightRunsOncePerDrainAndPreservesItsOriginalDeadline() {
         var now = new AtomicLong(10);
         var inbox = new ClientCommandInbox(8, new InputReleaseController(), new LocalArmingState(),
