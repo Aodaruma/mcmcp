@@ -401,6 +401,43 @@ class CoordinateMoveJobExecutionTest {
                 from, tick, 0);
     }
 
+    @Test
+    void oxygenDiversionBeforeDeliveryWaitsToPublishAndDoesNotStartTheOriginalRoute() {
+        var map = map(edge(cell(0), cell(1)));
+        var store = new AgentJobStore();
+        var id = store.reserve(MOVE, SESSION, 10, 100);
+        var driver = new FakeDriver();
+        var execution = execution(store, id, cell(1), driver, () -> true);
+        execution.divertTo(cell(0), "air_supply_retreat");
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION,
+                0, 1, 1, true, 0, () -> true).state()).isEqualTo(UNCONFIRMED);
+        assertThat(driver.routes).isEmpty();
+        store.confirm(id, 2);
+        var result = execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION,
+                0, 2, 2, true, 0, () -> true);
+        assertThat(result.failure()).isEqualTo("air_supply_retreat");
+        assertThat(result.result()).containsEntry("diverted", true)
+                .containsEntry("original_goal", java.util.Map.of("x", 1, "y", 64, "z", 0));
+        assertThat(driver.routes).isEmpty();
+    }
+
+    @Test
+    void preciseArrivalMayStraddleACellBoundaryButMustBeConfirmedAfterRouteCompletion() {
+        var map = map(edge(cell(0), cell(1)));
+        var store = new AgentJobStore();
+        var id = store.reserve(MOVE, SESSION, 10, 100);
+        var driver = new FakeDriver(SUCCESS_STEP);
+        driver.preciseArrival = false;
+        var execution = execution(store, id, cell(1), driver, () -> true);
+        store.confirm(id, 1);
+        assertThat(execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION,
+                0, 1, 1, true, 0, () -> true).state()).isEqualTo(RUNNING);
+        driver.preciseArrival = true;
+        var below = new NavCell("overworld", 1, 63, 0); // Swimming feet at 63.9, goal 64.
+        assertThat(execution.tick(map.snapshot().orElseThrow(), below, SESSION,
+                0, 2, 2, true, 1, () -> true).state()).isEqualTo(SUCCEEDED);
+    }
+
     private static KnownTraversabilityMap map(TraversabilityEdge... edges) {
         var map = new KnownTraversabilityMap();
         map.startSession(SESSION, "overworld", 0);
@@ -440,6 +477,12 @@ class CoordinateMoveJobExecutionTest {
         int ticks;
         boolean prepareReady = true;
         double preparationDistance;
+        Boolean preciseArrival;
+
+        @Override
+        public boolean arrived(NavCell current, NavCell goal, double radius, double tolerance) {
+            return preciseArrival != null ? preciseArrival : current.distanceTo(goal) <= radius;
+        }
 
         @Override
         public boolean prepare(long tick, double remainingDistance, BooleanSupplier allowed) {

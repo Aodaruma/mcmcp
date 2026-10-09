@@ -127,9 +127,9 @@ final class MinecraftV2BreakDriver
         if (frame.isEmpty()) return V2BlockJobExecution.BeginResult.WAITING;
         var reconciliation = reconciliationSignals.bindAndSnapshot(level, session.worldSessionId());
         long barrier = reconciliation.surfaceBarrierWorldRevision(next.x(), next.y(), next.z());
-        var aim = V2BlockAimResolver.resolve(frame.orElseThrow(), next,
+        var aim = V2BlockAimResolver.resolve(frame.orElseThrow(), next, null,
                 player.getEyePosition(), session.worldSessionId(), session.clientTick(),
-                reconciliation.worldRevision(), barrier);
+                reconciliation.worldRevision(), barrier, request::accepts);
         if (aim.isEmpty()) {
             return V2BlockJobExecution.BeginResult.WAITING;
         }

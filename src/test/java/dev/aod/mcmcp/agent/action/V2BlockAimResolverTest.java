@@ -53,11 +53,29 @@ class V2BlockAimResolverTest {
     }
 
     private static ObservationFrame frame(long tick, long revision) {
+        return frame(tick, revision, "minecraft:deepslate");
+    }
+
+    @Test
+    void explicitModTargetStillRequiresFreshVisibleSurface() {
+        var frame = frame(10, 3, "sophisticatedbackpacks:backpack");
+        java.util.function.Predicate<String> allowed = "sophisticatedbackpacks:backpack"::equals;
+        assertThat(V2BlockAimResolver.resolve(frame, TARGET, null,
+                EYE, SESSION, 10, 3, 3, allowed)).isPresent();
+        assertThat(V2BlockAimResolver.resolve(frame, TARGET, null,
+                EYE, SESSION, 10, 4, 4, allowed)).isEmpty();
+        assertThat(V2BlockAimResolver.resolve(frame, TARGET, null,
+                EYE, SESSION, 51, 3, 3, allowed)).isEmpty();
+        assertThat(V2BlockAimResolver.resolve(frame, TARGET,
+                EYE, SESSION, 10, 3, 3)).isEmpty();
+    }
+
+    private static ObservationFrame frame(long tick, long revision, String block) {
         return new ObservationFrame("obs-0000000000000001", DIMENSION, tick, 8.0D,
                 false, List.of(new ObservationRecord.VisibleSurface(
                         new BlockPosition(DIMENSION, 1, 64, 0),
                         ObservationRecord.Face.WEST,
-                        new ResourceId("minecraft:deepslate"),
+                        new ResourceId(block),
                         ObservationRecord.ShapeClass.OPAQUE,
                         null,
                         new WorldPosition(DIMENSION, 1.0D, 65.0D, 0.5D),

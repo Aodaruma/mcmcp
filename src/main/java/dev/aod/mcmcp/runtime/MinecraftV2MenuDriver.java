@@ -102,7 +102,8 @@ final class MinecraftV2MenuDriver implements V2OperationJobExecution.Driver {
                 || container.getMenu() != live || live.containerId != content.containerId()
                 || !request.menuType().equals(ScreenOwnershipSignals.registeredMenuTypeId(live).orElse(null))
                 || live.slots.size() != content.slots().size() || live.slots.size() > 256
-                || !live.getCarried().isEmpty() || !content.carried().empty()
+                // Craft work validates its intermediate PICKUP cursor against server snapshots.
+                || work == null && (!live.getCarried().isEmpty() || !content.carried().empty())
                 || screen != null && screen != container) return menuFail("menu_context_changed");
         screen = container;
         latest = content;

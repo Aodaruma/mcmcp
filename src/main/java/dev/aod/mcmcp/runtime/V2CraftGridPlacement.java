@@ -150,12 +150,19 @@ final class V2CraftGridPlacement {
         if (active == null) return;
         var snapshot = withoutResult(raw);
         if (returning != null) {
-            if (cursorRevision(menu) > returnRevision && returning.confirmed(snapshot) && active.confirmRelease(snapshot)) return;
+            if (cursorRevision(menu) > returnRevision && returning.confirmed(snapshot) && active.confirmRelease(snapshot)) {
+                active = null;
+                return;
+            }
             throw new IllegalStateException("craft cursor return awaiting confirmation");
         }
         active.confirm(snapshot, cursorRevision(menu));
         if (active.awaitingAcknowledgement()) throw new IllegalStateException("craft pickup awaiting confirmation");
-        if (snapshot.carried().empty() && active.confirmRelease(snapshot)) return;
+        if (snapshot.carried().empty() && active.confirmRelease(snapshot)) {
+            // The subsequent menu close returns the grid and changes these slots again.
+            active = null;
+            return;
+        }
         returning = active.cursorReturn(snapshot).orElseThrow(() -> new IllegalStateException("craft cursor origin changed"));
         returnRevision = snapshot.packetLedgerRevision();
         send(menu, returning.slot(), 0);

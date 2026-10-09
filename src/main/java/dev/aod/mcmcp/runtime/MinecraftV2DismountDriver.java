@@ -20,7 +20,7 @@ final class MinecraftV2DismountDriver implements V2OperationJobExecution.Driver 
     MinecraftV2DismountDriver(Minecraft minecraft) { this.minecraft = minecraft; }
     public void begin(long tick, BooleanSupplier allowed) {
         player = minecraft.player; vehicle = player.getVehicle();
-        if (!MinecraftV2VehicleDriver.supported(player) || vehicle.getDeltaMovement().lengthSqr() > 0.0025) {
+        if (!MinecraftV2VehicleDriver.supported(player) || MinecraftV2VehicleDriver.motionSpeedSquared(vehicle) > 0.0025) {
             failure = "dismount_requires_stationary_vehicle"; return;
         }
         if (!landingSafe()) { failure = "dismount_landing_unverified"; return; }
@@ -55,7 +55,7 @@ final class MinecraftV2DismountDriver implements V2OperationJobExecution.Driver 
         if (minecraft.player != player || minecraft.level != vehicle.level()) { failure = "dismount_context_changed"; return V2OperationJobExecution.Step.FAILED; }
         if (!dispatched && allowed.getAsBoolean()) {
             if (player.getVehicle() != vehicle || !MinecraftV2VehicleDriver.supported(player)
-                    || vehicle.getDeltaMovement().lengthSqr() > 0.0025 || !landingSafe()) {
+                    || MinecraftV2VehicleDriver.motionSpeedSquared(vehicle) > 0.0025 || !landingSafe()) {
                 failure = "dismount_context_or_landing_changed";
                 return V2OperationJobExecution.Step.FAILED;
             }

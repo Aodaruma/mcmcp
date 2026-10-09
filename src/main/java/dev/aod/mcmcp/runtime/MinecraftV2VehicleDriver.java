@@ -51,7 +51,7 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
                 || vehicle instanceof AbstractHorse horse && horse.isTamed()) && vehicle.getControllingPassenger() == player);
     }
     public boolean selfPlanning() { return true; }
-    public boolean arrived(NavCell goal, double radius, double tolerance) { return false; }
+    public boolean arrived(NavCell current, NavCell goal, double radius, double tolerance) { return false; }
     public boolean active() { return true; }
     public void begin(RoutePlan route, double tolerance) { throw new UnsupportedOperationException(); }
     public TickResult tick(KnownTraversabilitySnapshot map, double remaining, long tick, BooleanSupplier allowed) {
@@ -71,8 +71,12 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
         if (settled >= 4) { close(); return new TickResult(Status.SUCCEEDED, Reason.NONE); }
         if (remaining < Math.max(0.25, speed * 12)) return fail("vehicle_stopping_distance_budget");
         // Collision clearance includes the rider. Predict coasting before sending another input pulse.
-        if (!volumeSafe(vehicle.getBoundingBox().minmax(player.getBoundingBox())
-                .expandTowards(vehicle.getDeltaMovement().scale(12)))) return fail("vehicle_coasting_corridor_unverified");
+        // Grounded vehicles retain a downward gravity velocity after floor resolution.
+        // Rail/water/support transitions are checked separately by edgeSafe; extrapolating
+        // that gravity through the supporting block rejects a stationary horse or cart.
+        var velocity = vehicle.getDeltaMovement();
+        if (!volumeSafe(ridingVolume(vehicle.getBoundingBox(), player.getBoundingBox())
+                .expandTowards(velocity.x * 12, 0, velocity.z * 12))) return fail("vehicle_coasting_corridor_unverified");
         var start = cell(map.dimension(), vehicle.position());
         if (vehicle instanceof AbstractMinecart cart) {
             var rail = cart.getCurrentBlockPosOrRailBelow();
@@ -147,7 +151,7 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
     }
     private boolean edgeSafe(NavCell from, NavCell to) {
         if (from.distanceTo(to) > 1.75 || Math.hypot(to.x() + 0.5 - vehicle.getX(), to.z() + 0.5 - vehicle.getZ()) > 6) return false;
-        var body = vehicle.getBoundingBox().minmax(player.getBoundingBox());
+        var body = ridingVolume(vehicle.getBoundingBox(), player.getBoundingBox());
         Vec3 a = new Vec3(from.x() + 0.5 - vehicle.getX(), from.y() - Math.floor(vehicle.getY()), from.z() + 0.5 - vehicle.getZ());
         Vec3 b = new Vec3(to.x() + 0.5 - vehicle.getX(), to.y() - Math.floor(vehicle.getY()), to.z() + 0.5 - vehicle.getZ());
         if (!volumeSafe(body.move(a).move(0, Math.max(0, b.y - a.y), 0).minmax(body.move(b)))) return false;
@@ -183,6 +187,19 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
         }
         return minecraft.level.noCollision(vehicle, body);
     }
+    static AABB ridingVolume(AABB vehicle, AABB rider) {
+        var combined = vehicle.minmax(rider);
+        // Vanilla seat attachment offsets can place the rider's feet below the vehicle.
+        // The vehicle defines floor clearance; keep the rider's lateral and head clearance.
+        return new AABB(combined.minX, vehicle.minY, combined.minZ,
+                combined.maxX, combined.maxY, combined.maxZ);
+    }
+    static double motionSpeedSquared(Entity vehicle) {
+        return motionSpeedSquared(vehicle.getDeltaMovement(), vehicle.onGround());
+    }
+    static double motionSpeedSquared(Vec3 velocity, boolean onGround) {
+        return onGround && velocity.y < 0 ? velocity.horizontalDistanceSqr() : velocity.lengthSqr();
+    }
     private static NavCell cell(String dimension, Vec3 position) {
         return new NavCell(dimension, Mth.floor(position.x), Mth.floor(position.y), Mth.floor(position.z));
     }
@@ -192,7 +209,7 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
         var result = new LinkedHashMap<String, Object>();
         result.put("locomotion", vehicle instanceof AbstractBoat ? "boat" : vehicle instanceof AbstractMinecart ? "minecart" : "horse");
         result.put("path_plans", replans);
-        result.put("vehicle_may_continue_moving", vehicle.isAlive() && vehicle.getDeltaMovement().lengthSqr() > 0.000625);
+        result.put("vehicle_may_continue_moving", vehicle.isAlive() && motionSpeedSquared(vehicle) > 0.000625);
         if (failure != null) result.put("failure", failure);
         return result;
     }

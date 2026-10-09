@@ -36,7 +36,7 @@ public final class V2BlockAimResolver {
                 id -> id.startsWith("minecraft:"));
     }
 
-    /** Interactions may aim at registered MOD blocks; break/place keep their Vanilla policy. */
+    /** Callers can admit MOD targets while retaining all current-ray evidence checks. */
     public static Optional<Result> resolve(ObservationFrame frame, NavCell target,
             ObservationRecord.Face requiredFace, Vec3 currentEye,
             UUID worldSessionId, long currentTick,

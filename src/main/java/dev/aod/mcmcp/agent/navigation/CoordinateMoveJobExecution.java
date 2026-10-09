@@ -40,13 +40,14 @@ public final class CoordinateMoveJobExecution {
     private boolean localObservationRequired;
     private int localObservationWaitTicks;
     private String divertedReason;
+    private Map<String, Object> pendingDiversion;
 
     public boolean diverted() { return divertedReason != null; }
     public void divertTo(NavCell destination, String reason) {
         if (diverted() || terminalIntent != null || jobs.get(actionId).cancelRequested()) return;
         driver.close();
-        jobs.recordResult(actionId, Map.of("diverted", true, "diversion_reason", reason,
-                "original_goal", Map.of("x", goal.x(), "y", goal.y(), "z", goal.z())));
+        pendingDiversion = Map.of("diverted", true, "diversion_reason", reason,
+                "original_goal", Map.of("x", goal.x(), "y", goal.y(), "z", goal.z()));
         goal = destination;
         arrivalRadius = 0;
         divertedReason = reason;
@@ -126,6 +127,10 @@ public final class CoordinateMoveJobExecution {
             startedNanos = nowNanos;
             startedClientTick = clientTick;
             job = jobs.get(actionId);
+        }
+        if (pendingDiversion != null) {
+            jobs.recordResult(actionId, pendingDiversion);
+            pendingDiversion = null;
         }
         if (nowNanos - startedNanos >= AgentJobLimits.wallNanos(job.maxOperations())) {
             retainTerminal(AgentJobStore.State.FAILED, "duration_limit");
@@ -319,7 +324,7 @@ public final class CoordinateMoveJobExecution {
     }
 
     private boolean reached(NavCell cell) {
-        return cell.distanceTo(goal) <= arrivalRadius && driver.arrived(goal, arrivalRadius, tolerance);
+        return driver.arrived(cell, goal, arrivalRadius, tolerance);
     }
 
     private AgentJobStore.Snapshot publishAfterRelease() {
@@ -382,7 +387,9 @@ public final class CoordinateMoveJobExecution {
         default MinecraftActionPrimitiveExecutor.TickResult tickGoal(NavCell goal, KnownTraversabilitySnapshot map,
                 double remaining, long tick, BooleanSupplier allowed) { throw new UnsupportedOperationException(); }
         default Map<String, Object> result() { return Map.of(); }
-        default boolean arrived(NavCell goal, double radius, double tolerance) { return true; }
+        default boolean arrived(NavCell current, NavCell goal, double radius, double tolerance) {
+            return current.distanceTo(goal) <= radius;
+        }
         default boolean prepare(long clientTick, double remainingDistance, BooleanSupplier outputAllowed) { return true; }
         void begin(RoutePlan route, double tolerance);
         MinecraftActionPrimitiveExecutor.TickResult tick(KnownTraversabilitySnapshot map,

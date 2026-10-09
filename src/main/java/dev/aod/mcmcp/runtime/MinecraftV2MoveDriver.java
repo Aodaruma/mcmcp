@@ -137,11 +137,14 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
     @Override
     public boolean active() { return executor.active(); }
 
-    public boolean arrived(dev.aod.mcmcp.agent.navigation.NavCell goal, double radius, double tolerance) {
+    public boolean arrived(dev.aod.mcmcp.agent.navigation.NavCell current,
+            dev.aod.mcmcp.agent.navigation.NavCell goal, double radius, double tolerance) {
         var player = minecraft.player;
         double horizontal = Math.hypot(player.getX() - goal.x() - 0.5D, player.getZ() - goal.z() - 0.5D);
         double y = goal.y() + (mode.aerial() ? Locomotion.FLIGHT_FEET_OFFSET : 0);
         return horizontal <= radius + tolerance && Math.abs(player.getY() - y) <= radius + 0.21D
+                && (!player.isInWater() || MinecraftActionPrimitiveExecutor.waterBreathingRecovered(
+                        player.isEyeInFluid(net.minecraft.tags.FluidTags.WATER), player.getAirSupply(), player.getMaxAirSupply()))
                 && (player.isInWater() || mode.aerial() || player.onGround() || player.onClimbable());
     }
 

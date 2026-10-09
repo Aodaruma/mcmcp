@@ -49,6 +49,10 @@ final class FixtureV2Priorities {
                     String kind = value.substring(value.indexOf(':') + 1);
                     if (!kind.equals("report")) {
                         if (!inputIdle()) throw new IllegalStateException("input owned");
+                        // Fixed arena preparation must work even when the owner starts far away.
+                        for (int x = 300 >> 4; x <= 320 >> 4; x++) {
+                            for (int z = 300 >> 4; z <= 320 >> 4; z++) player.level().getChunk(x, z);
+                        }
                         var commands = commands(kind);
                         var source = player.createCommandSourceStack().withMaximumPermission(server.operatorUserPermissions()).withSuppressedOutput();
                         for (String command : commands) Commands.validateParseResults(server.getCommands().getDispatcher().parse(command, source));
@@ -56,6 +60,9 @@ final class FixtureV2Priorities {
                             if (!FixtureSecurity.reauthorize(decision.context()).allowed()) throw new IllegalStateException("fixture ownership changed");
                             server.getCommands().performPrefixedCommand(source, command);
                         }
+                        player.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
+                        player.fallDistance = 0;
+                        player.setHealth(player.getMaxHealth());
                         if (kind.equals("water_air")) player.setAirSupply(120);
                     }
                     var inventory = new ArrayList<Object>();
@@ -68,6 +75,12 @@ final class FixtureV2Priorities {
                     report.put("cursor_empty", player.containerMenu.getCarried().isEmpty());
                     report.put("position", List.of(player.getX(), player.getY(), player.getZ()));
                     report.put("air", player.getAirSupply());
+                    if (player.getVehicle() != null) {
+                        var vehicle = player.getVehicle();
+                        report.put("vehicle", Map.of("position", List.of(vehicle.getX(), vehicle.getY(), vehicle.getZ()),
+                                "velocity", vehicle.getDeltaMovement().toString(), "box", vehicle.getBoundingBox().toString(),
+                                "rider_box", player.getBoundingBox().toString(), "on_ground", vehicle.onGround()));
+                    }
                     report.put("status", "prepared");
                 } catch (Exception failure) {
                     report.put("status", "failed"); report.put("failure", failure.toString());
@@ -97,7 +110,7 @@ final class FixtureV2Priorities {
         switch (kind) {
             case "components" -> result.addAll(List.of(
                     "item replace entity @s hotbar.0 with minecraft:oak_log[minecraft:custom_name='Named material'] 16",
-                    "item replace entity @s hotbar.1 with minecraft:fishing_rod[minecraft:damage=10,minecraft:custom_name='Used rod']",
+                    "item replace entity @s hotbar.1 with minecraft:fishing_rod[minecraft:damage=10,minecraft:custom_name='Used rod',minecraft:enchantments={'minecraft:unbreaking':1}]",
                     "item replace entity @s hotbar.2 with minecraft:carrot",
                     "item replace entity @s hotbar.3 with minecraft:cobblestone[minecraft:custom_name='Named stone'] 16"));
             case "inventory" -> {
@@ -123,7 +136,7 @@ final class FixtureV2Priorities {
             case "horse" -> result.addAll(List.of("tp @s 303.5 101 306.5 -90 0",
                     "summon minecraft:horse 306.5 101 306.5 {Tags:[\"mcmcp_v2_fixture\"],Tame:1b,NoAI:1b,equipment:{saddle:{id:\"minecraft:saddle\",count:1}}}"));
             case "mod_break" -> {
-                var block = BuiltInRegistries.BLOCK.keySet().stream().filter(id -> id.getNamespace().equals("shogi"))
+                var block = BuiltInRegistries.BLOCK.keySet().stream().filter(id -> id.toString().equals("sophisticatedbackpacks:backpack"))
                         .sorted(Comparator.comparing(Object::toString)).findFirst().orElseThrow();
                 result.add("setblock 305 101 303 " + block);
                 result.add("item replace entity @s hotbar.0 with minecraft:netherite_pickaxe");

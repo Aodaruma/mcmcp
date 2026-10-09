@@ -463,7 +463,11 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 && s.current().fluid() == ObservationRecord.Fluid.WATER
                 && s.current().hazard() == ObservationRecord.Hazard.NONE
                 && !s.current().suffocation()).isPresent();
-        navigation.safeTicks = current && waterWaypointReached(player.getX(), player.getY(), player.getZ(),
+        // Keep the normal swim input at an exposed surface until oxygen recovers;
+        // releasing after position alone immediately lets vanilla sink the player again.
+        boolean breathingReady = waterBreathingRecovered(player.isEyeInFluid(net.minecraft.tags.FluidTags.WATER),
+                player.getAirSupply(), player.getMaxAirSupply());
+        navigation.safeTicks = current && breathingReady && waterWaypointReached(player.getX(), player.getY(), player.getZ(),
                 target, navigation.tolerance) ? navigation.safeTicks + 1 : 0;
         if (navigation.safeTicks >= SETTLE_SAFETY_TICKS) return finish(Status.SUCCEEDED, Reason.NONE);
         return driveNavigationWaypoint(minecraft, player, snapshot, safety, remaining, tick, allowed,
@@ -474,6 +478,9 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
     static boolean waterWaypointReached(double x, double y, double z, NavCell target, double tolerance) {
         return Math.hypot(target.x() + 0.5D - x, target.z() + 0.5D - z) <= tolerance
                 && Math.abs(target.y() - y) <= 0.20D;
+    }
+    public static boolean waterBreathingRecovered(boolean submerged, int air, int maximumAir) {
+        return submerged || air >= maximumAir;
     }
 
     /**
