@@ -1,6 +1,6 @@
 # MCMCP公開API v2：改訂案
 
-> 材料データ、MOD破壊、水中／乗り物、整理、条件・外部ファイルの追加実装は[2026-10-09の追加ガイド](PUBLIC_API_V2_PRIORITIES_20261009.md)を参照。今回の実機最終検証は準備中。
+> 材料データ、MOD破壊、水中／乗り物、整理、条件・外部ファイルの追加実装は[2026-10-09の追加ガイド](PUBLIC_API_V2_PRIORITIES_20261009.md)を参照。最新の実機結果と導入状況は[試用メモ](PUBLIC_API_V2_TRIAL_20261010.md)を参照。
 
 今回の優先機能と試用手順は[試用メモ](PUBLIC_API_V2_TRIAL_20260929.md)を参照。実装状況・未確認事項は[進捗と再開メモ](PUBLIC_API_V2_STATUS_20260928.md)、実機結果は[基本smoke](experiments/20260928_public_api_v2_local.md)と[所持収納・使用中停止](experiments/20260929_v2_storage_stop_local.md)を参照。この設計案の完成目標、実装済み、実機確認済みの範囲を区別する。
 

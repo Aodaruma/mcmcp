@@ -1,8 +1,8 @@
 # 公開API v2：クラフト・製錬・醸造
 
-> 材料データ、MOD破壊、水中／乗り物、整理、条件・外部ファイルの追加実装は[2026-10-09の追加ガイド](PUBLIC_API_V2_PRIORITIES_20261009.md)を参照。今回の実機最終検証は準備中。
+> 材料データ、MOD破壊、水中／乗り物、整理、条件・外部ファイルの追加実装は[2026-10-09の追加ガイド](PUBLIC_API_V2_PRIORITIES_20261009.md)を参照。最新の実機結果と導入状況は[試用メモ](PUBLIC_API_V2_TRIAL_20261010.md)を参照。
 
-2026-10-09。開発branchの実装範囲。通常の「くらふとぶ！」profileへの導入は保留中。[隔離Dockerの9ケース・24 jobと検証範囲](experiments/20261009_v2_production_docker.md)を参照。[Tool Catalog](MCMCP_MCP_Tool_Catalog.json)が入力schemaの正本。
+2026-10-09時点の生産系実装を説明する。[隔離Dockerの9ケース・24 jobと検証範囲](experiments/20261009_v2_production_docker.md)を参照。以降の追加実装と通常profileへの導入状況は上記の試用メモを参照。[Tool Catalog](MCMCP_MCP_Tool_Catalog.json)が入力schemaの正本。
 
 ## 操作と責務
 
