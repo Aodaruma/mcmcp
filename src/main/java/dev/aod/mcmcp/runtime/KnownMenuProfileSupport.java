@@ -469,7 +469,7 @@ public final class KnownMenuProfileSupport {
         return method;
     }
 
-    private static boolean activeArtifactMatches(ArtifactRequirement requirement)
+    static boolean activeArtifactMatches(ArtifactRequirement requirement)
             throws IOException {
         ModList modList = ModList.get();
         if (modList == null) return false;

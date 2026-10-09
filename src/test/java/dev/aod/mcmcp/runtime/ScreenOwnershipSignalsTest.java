@@ -334,6 +334,30 @@ class ScreenOwnershipSignalsTest {
     }
 
     @Test
+    void canceledZeroSlotSelectionMenuStillRequiresItsOwnFreshEmptyCursorProof() {
+        UUID session = UUID.randomUUID(), owner = UUID.randomUUID();
+        String menu = "waystones:warp_stone_selection";
+        var channel = new ContainerSyncSignals.SessionChannel();
+        channel.bindAndSnapshot(session);
+        var core = new ScreenOwnershipSignals.Core();
+        core.bindSession(session, 0);
+        assertThat(core.beginExpectedOpen(new ExpectedOpenToken(session, owner,
+                "held:7", "waystones:warp_stone", menu, 80), 1, 0)).isTrue();
+        core.cancelRoutine(owner, null, ScreenOwnershipSignals.CausalBarrierStatus.WAITING_ACK);
+        assertThat(core.onOpenScreen(channel.openScreen(7, menu, 90).snapshot().lastOpenScreen()).allowed()).isTrue();
+        assertThat(core.allowScreenOpening(7, menu, 90).allowed()).isTrue();
+        var view = new ScreenOwnershipSignals.MenuView(7, menu);
+        // Use a separate owner to prove the late screen was never made generally adoptable.
+        assertThat(core.cancelRoutine(UUID.randomUUID(), view).authorityMatched()).isFalse();
+        assertThat(core.onFullContent(channel.fullContent(7, menu, 1, List.of(), EMPTY, 91), true).allowed()).isTrue();
+        var close = core.cancelRoutine(owner, view, ScreenOwnershipSignals.CausalBarrierStatus.ACKNOWLEDGED);
+        assertThat(close.closeMenuBestEffort()).isTrue();
+        assertThat(close.serverCursorEmpty()).isTrue();
+        assertThat(core.onScreenClosing(7, menu).allowed()).isTrue();
+        assertThat(core.snapshot().phase()).isEqualTo(ScreenOwnershipSignals.Phase.IDLE);
+    }
+
+    @Test
     void canceledPredictedUseAcceptsLateExactScreenAndClosesBeforeFullContent() {
         var fixture = new Fixture(2);
         fixture.core.cancelRoutine(fixture.routine, null,

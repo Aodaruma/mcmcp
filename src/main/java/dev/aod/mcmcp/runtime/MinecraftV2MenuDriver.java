@@ -33,6 +33,7 @@ final class MinecraftV2MenuDriver implements V2OperationJobExecution.Driver {
     private Object level;
     private Object screen;
     private long openedTick;
+    private int openWaitTicks = 80;
     private long clickedTick;
     private int completed;
     private ContainerSyncSignals.ContainerSnapshot beforeClick;
@@ -97,9 +98,15 @@ final class MinecraftV2MenuDriver implements V2OperationJobExecution.Driver {
     }
 
     boolean beforeUse(String target, String before, long tick) {
+        return beforeUse(target, before, tick, 80);
+    }
+
+    boolean beforeUse(String target, String before, long tick, int waitTicks) {
         if (expectedOpen) return false;
+        if (waitTicks < 1 || waitTicks > 1280) throw new IllegalArgumentException("invalid menu open wait");
+        openWaitTicks = waitTicks;
         var token = new ExpectedOpenToken(sessions.get().worldSessionId(), owner,
-                target, before, menuType, screens.currentTick() + 80);
+                target, before, menuType, screens.currentTick() + waitTicks);
         expectedOpen = screens.beginExpectedOpen(token);
         openedTick = tick;
         return expectedOpen;
@@ -109,7 +116,7 @@ final class MinecraftV2MenuDriver implements V2OperationJobExecution.Driver {
         var state = screens.snapshot();
         if (state.phase() == ScreenOwnershipSignals.Phase.FAILED) return menuFail("menu_ownership_failed");
         var owned = screens.ownedSession().filter(value -> value.token().routineId().equals(owner));
-        if (owned.isEmpty()) return tick - openedTick <= 80 ? V2BlockJobExecution.StepResult.RUNNING
+        if (owned.isEmpty()) return tick - openedTick <= openWaitTicks ? V2BlockJobExecution.StepResult.RUNNING
                 : menuFail("menu_open_timeout");
         var content = owned.orElseThrow().serverSnapshot();
         var live = minecraft.player.containerMenu;
@@ -217,6 +224,9 @@ final class MinecraftV2MenuDriver implements V2OperationJobExecution.Driver {
     }
 
     public boolean allowsScreenChange() { return expectedOpen; }
+    boolean awaitingOpen() {
+        return expectedOpen && screens.ownedSession().filter(value -> value.token().routineId().equals(owner)).isEmpty();
+    }
     public void close() { if (opener != null) opener.close(); else releaseMenu(null); }
     public Map<String, Object> result() {
         var result = new LinkedHashMap<String, Object>();

@@ -45,7 +45,7 @@ final class FixtureV2Priorities {
                     var player = server.getPlayerList().getPlayer(playerId);
                     if (player == null) throw new IllegalStateException("owner missing");
                     String kind = value.substring(value.indexOf(':') + 1);
-                    var decision = kind.equals("dimension_overworld")
+                    var decision = kind.equals("dimension_overworld") || kind.equals("report") && player.level().dimension() == net.minecraft.world.level.Level.END
                             ? FixtureSecurity.authorizeReturnFromEnd(player.createCommandSourceStack())
                             : FixtureSecurity.authorize(player.createCommandSourceStack());
                     if (!decision.allowed()) throw new IllegalStateException(decision.rejection());
@@ -83,6 +83,7 @@ final class FixtureV2Priorities {
                         player.setHealth(player.getMaxHealth());
                         if (kind.equals("water_air")) player.setAirSupply(120);
                         if (kind.startsWith("storage_")) prepareBackpack(player, kind);
+                        if (kind.equals("waystones")) prepareWaystones(player);
                         if (kind.equals("trade") || kind.equals("trade_full")) {
                             var villager = new net.minecraft.world.entity.npc.villager.Villager(net.minecraft.world.entity.EntityTypes.VILLAGER, player.level());
                             villager.setPos(305.5, 101, 303.5);
@@ -121,6 +122,8 @@ final class FixtureV2Priorities {
                     report.put("position", List.of(player.getX(), player.getY(), player.getZ()));
                     report.put("air", player.getAirSupply());
                     report.put("health", player.getHealth());
+                    report.put("xp_levels", player.experienceLevel);
+                    report.put("xp_points", player.totalExperience);
                     report.put("on_ground", player.onGround());
                     report.put("on_climbable", player.onClimbable());
                     report.put("fall_flying", player.isFallFlying());
@@ -203,6 +206,30 @@ final class FixtureV2Priorities {
                 "open_tab", wrapper.getClass().getMethod("getOpenTabId").invoke(wrapper).toString());
     }
 
+    private static void prepareWaystones(net.minecraft.server.level.ServerPlayer player) throws ReflectiveOperationException {
+        var server = player.level().getServer();
+        var end = server.getLevel(net.minecraft.world.level.Level.END);
+        for (int x = 300 >> 4; x <= 320 >> 4; x++)
+            for (int z = 300 >> 4; z <= 320 >> 4; z++) end.getChunk(x, z);
+        for (int x = 300; x <= 320; x++) for (int z = 300; z <= 320; z++) {
+            end.setBlock(new net.minecraft.core.BlockPos(x, 100, z), net.minecraft.world.level.block.Blocks.STONE.defaultBlockState(), 3);
+            for (int y = 101; y <= 104; y++)
+                end.setBlock(new net.minecraft.core.BlockPos(x, y, z), net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 3);
+        }
+        Class<?> api = Class.forName("net.blay09.mods.waystones.api.WaystonesAPI");
+        Class<?> type = Class.forName("net.blay09.mods.waystones.api.WaystoneType");
+        Class<?> waystone = Class.forName("net.blay09.mods.waystones.api.Waystone");
+        Object andesite = Class.forName("net.blay09.mods.waystones.api.WaystoneTypes").getField("ANDESITE").get(null);
+        for (var level : List.of(player.level(), end)) {
+            Object placed = ((Optional<?>) api.getMethod("placeWaystone", net.minecraft.server.level.ServerLevel.class,
+                    net.minecraft.core.BlockPos.class, type).invoke(null, level,
+                    new net.minecraft.core.BlockPos(309, 101, 309), andesite)).orElseThrow();
+            Class.forName("net.blay09.mods.waystones.api.MutableWaystone").getMethod("setName", net.minecraft.network.chat.Component.class)
+                    .invoke(placed, net.minecraft.network.chat.Component.literal(level == end ? "MCMCP End" : "MCMCP Overworld"));
+            api.getMethod("activateWaystone", net.minecraft.server.level.ServerPlayer.class, waystone).invoke(null, player, placed);
+        }
+    }
+
     private static List<String> commands(String kind) {
         var result = new ArrayList<>(List.of("gamemode creative @s", "ride @s dismount",
                 "kill @e[tag=mcmcp_v2_fixture,x=300,y=100,z=300,dx=20,dy=8,dz=20]", "fill 300 100 300 320 100 320 minecraft:stone",
@@ -210,6 +237,8 @@ final class FixtureV2Priorities {
                 "tp @s 305.5 101 305.5 180 0", "setblock 305 101 303 minecraft:crafting_table",
                 "recipe give @s *", "time set noon", "weather clear"));
         switch (kind) {
+            case "waystones" -> result.addAll(List.of("item replace entity @s hotbar.7 with waystones:warp_stone",
+                    "experience set @s 30 levels", "experience set @s 0 points"));
             case "components" -> result.addAll(List.of(
                     "item replace entity @s hotbar.0 with minecraft:oak_log[minecraft:custom_name='Named material'] 16",
                     "item replace entity @s hotbar.1 with minecraft:fishing_rod[minecraft:damage=10,minecraft:custom_name='Used rod',minecraft:enchantments={'minecraft:unbreaking':1}]",

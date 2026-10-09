@@ -21,6 +21,7 @@ final class V2HeldItemSelection implements AutoCloseable {
     private int selectedSlot = -1;
     private boolean begun;
     private boolean layoutMayHaveChanged;
+    private boolean keepSelected;
 
     V2HeldItemSelection(Minecraft minecraft, UUID session, String item) {
         this.minecraft = minecraft;
@@ -72,6 +73,7 @@ final class V2HeldItemSelection implements AutoCloseable {
     }
     int slot() { return selectedSlot; }
     boolean layoutMayHaveChanged() { return layoutMayHaveChanged; }
+    void keepSelected() { keepSelected = true; }
 
     private boolean matches(int slot) {
         return item == null || item.equals(
@@ -81,6 +83,6 @@ final class V2HeldItemSelection implements AutoCloseable {
     @Override
     public void close() {
         if (staging != null) { staging.close(); staging = null; }
-        if (stillSelected()) player.getInventory().setSelectedSlot(originalSlot);
+        if (!keepSelected && stillSelected()) player.getInventory().setSelectedSlot(originalSlot);
     }
 }

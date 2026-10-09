@@ -7,7 +7,7 @@ The additional `-Dmcmcp.fixture.v2Priorities=true` flag enables fixed test prepa
 `components`, `cake`, `cancel`, `blueprint`, `inventory`, `water`, `water_air`, `boat`, `minecart`, `horse`, `mod_break`,
 `trade`, `trade_full`, `trade_change`, `elytra_step`, `mechanisms`, `dimension_end`, `dimension_overworld`,
 `ladder_down`, `ladder_long`, `ladder_up`, `ladder_long_up`, `ladder_gap`, `ladder_enclosed`,
-`storage_plain`, `storage_upgraded`, `storage_tab`, or `report`.
+`storage_plain`, `storage_upgraded`, `storage_tab`, `waystones`, or `report`.
 The receipt is written to `receipt.json`. This accepts no commands, paths, coordinates or item IDs.
 It uses the same private integrated-server owner checks below. Production JARs do not include it.
 
@@ -45,6 +45,12 @@ concrete. `storage_tab` also leaves pickup tab 3 open. Setup removes dropped ite
 Use `Invoke-McmcpV2BackpackSmoke.ps1 -BackpackCase Plain|Upgraded|Tab|Cancel|Budget` with the same
 token/session/artifact arguments. The last two cases use `storage_tab`; compare server reports
 before/after for unchanged upgrades and an empty cursor. Runner availability is not a live pass.
+
+`waystones` additionally rebuilds the End platform at 300,100,300 through 320,104,320, places and
+activates named waystones at 309,101,309 in both dimensions, and gives a warp stone in hotbar 7
+with 30 experience levels. It does not select a destination or change any cooldown configuration.
+`report` can read the fixed private End fixture; setup still requires the Overworld owner boundary.
+Back up the entire world, including MOD saved data and both dimensions, before this preparation.
 
 ## Original fixed arenas
 

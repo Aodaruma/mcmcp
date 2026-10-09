@@ -128,6 +128,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final AgentActionStore agentActions = new AgentActionStore();
     private final AgentJobStore v2Jobs = new AgentJobStore();
     private final V2MerchantReferences merchantReferences = new V2MerchantReferences();
+    private final V2WaystoneReferences waystoneReferences = new V2WaystoneReferences();
     private final AgentJobStore scriptJobs = new AgentJobStore();
     private final AtomicReference<UUID> scriptChildActionId = new AtomicReference<>();
     private final AtomicReference<UUID> scriptChildCancelSent = new AtomicReference<>();
@@ -2008,7 +2009,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var look = lookOnly ? V2LookArguments.parse(arguments) : null;
         var production = !lookOnly && V2ProductionArguments.matches(arguments)
                 ? V2ProductionArguments.parse(arguments, session.dimension()) : null;
-        var itemUse = !lookOnly && "item".equals(arguments.get("target"))
+        var waystone = !lookOnly && V2WaystoneArguments.matches(arguments) ? V2WaystoneArguments.parse(arguments) : null;
+        if (waystone != null && !WaystoneMenuSupport.available())
+            throw new IllegalArgumentException("supported Waystones artifact required");
+        var itemUse = !lookOnly && waystone == null && "item".equals(arguments.get("target"))
                 ? V2ItemUseArguments.parse(arguments) : null;
         var trade = !lookOnly && V2TradeArguments.matches(arguments) ? V2TradeArguments.parse(arguments) : null;
         var entityUse = trade != null ? trade.entity() : !lookOnly && "entity".equals(arguments.get("target"))
@@ -2022,9 +2026,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             throw new IllegalArgumentException("merchant operations require an observed villager or wandering trader");
         var offer = trade != null && trade.offerRef() != null ? merchantReferences.resolve(trade.offerRef(),
                 session.worldSessionId(), session.dimension(), entity.getUUID(), session.clientTick()) : null;
-        var request = !lookOnly && production == null && itemUse == null && entityUse == null && menuUse == null && dismount == null
+        var request = !lookOnly && waystone == null && production == null && itemUse == null && entityUse == null && menuUse == null && dismount == null
                 ? V2BlockInteractArguments.parse(arguments, session.dimension()) : null;
-        int maxTicks = dismount != null ? dismount.maxTicks() : production != null ? production.maxTicks() : look != null ? look.maxTicks() : itemUse != null ? itemUse.maxTicks()
+        int maxTicks = waystone != null ? waystone.maxTicks() : dismount != null ? dismount.maxTicks() : production != null ? production.maxTicks() : look != null ? look.maxTicks() : itemUse != null ? itemUse.maxTicks()
                 : entityUse != null ? entityUse.maxTicks()
                 : menuUse != null ? menuUse.block().maxTicks() : request.maxTicks();
         double maxDistance = dismount != null ? 8.0D : production != null ? production.maxDistance() : look != null ? 0.25D : request != null ? request.maxDistance()
@@ -2063,7 +2067,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 if (!released) arming.lock("v2_interact_release_failed");
                 return released;
             };
-            if (dismount != null) {
+            if (waystone != null) {
+                var menu = new MinecraftV2MenuDriver(minecraft, sessions::snapshot, WaystoneMenuSupport.MENU)
+                        .withWork(new V2WaystoneWork(minecraft, session.worldSessionId(), waystone, waystoneReferences));
+                var use = new V2ItemUseArguments(V2WaystoneArguments.ITEM, null,
+                        Math.min(1200, Math.max(1, maxTicks - 1)), Math.max(2, maxTicks));
+                v2InteractExecution = new V2OperationJobExecution(v2Jobs, actionId, session.worldSessionId(),
+                        new MinecraftV2ItemUseDriver(minecraft, session.worldSessionId(), use).withMenu(menu), release);
+            } else if (dismount != null) {
                 v2InteractExecution = new V2OperationJobExecution(v2Jobs, actionId, session.worldSessionId(),
                         new MinecraftV2DismountDriver(minecraft), release);
             } else if (production != null) {

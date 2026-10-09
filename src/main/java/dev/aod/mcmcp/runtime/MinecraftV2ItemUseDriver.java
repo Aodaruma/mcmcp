@@ -34,11 +34,21 @@ final class MinecraftV2ItemUseDriver implements V2OperationJobExecution.Driver {
     private long dispatchedTick;
     private V2HeldStackEvidence held;
     private String failure;
+    private MinecraftV2MenuDriver menu;
+    private ClientPredictionSignals.PredictionAttempt releaseBarrier;
+    private boolean menuReleaseSent;
+    private boolean menuReleaseFault;
 
     MinecraftV2ItemUseDriver(Minecraft minecraft, UUID session, V2ItemUseArguments request) {
         this.minecraft = Objects.requireNonNull(minecraft);
         this.session = Objects.requireNonNull(session);
         this.request = Objects.requireNonNull(request);
+    }
+
+    MinecraftV2ItemUseDriver withMenu(MinecraftV2MenuDriver menu) {
+        if (begun) throw new IllegalStateException("item use already begun");
+        this.menu = Objects.requireNonNull(menu);
+        return this;
     }
 
     @Override
@@ -54,6 +64,7 @@ final class MinecraftV2ItemUseDriver implements V2OperationJobExecution.Driver {
         }
         selection = new V2HeldItemSelection(minecraft, session, request.item());
         if (!selection.begin(tick, false)) failure = "item_not_available";
+        if (menu != null) menu.begin(tick, outputAllowed);
     }
 
     @Override
@@ -77,6 +88,11 @@ final class MinecraftV2ItemUseDriver implements V2OperationJobExecution.Driver {
             }
             held = new V2HeldStackEvidence(StackFingerprint.fromServerPacket(player.getMainHandItem()),
                     HotbarPayloadSyncSignals.global().bindAndSnapshot(level, session).revision());
+            if (menu != null && !menu.beforeUse("held:" + selection.slot(), request.item(), tick,
+                    Math.min(1280, request.maxTicks()))) {
+                failure = "menu_open_denied";
+                return V2OperationJobExecution.Step.FAILED;
+            }
             prediction = ClientPredictionSignals.global().begin(level, player.blockPosition(), tick);
             int sequence = prediction.sequenceBeforePrediction();
             dispatched = true; // A throwing native call is uncertain; never repeat it.
@@ -99,13 +115,19 @@ final class MinecraftV2ItemUseDriver implements V2OperationJobExecution.Driver {
         serverProcessed = ack.acknowledged();
         captureStack();
         if (use != null) {
-            if (!player.isUsingItem() || tick - dispatchedTick >= request.holdTicks()) {
+            if (!player.isUsingItem() || player.containerMenu != player.inventoryMenu
+                    || tick - dispatchedTick >= request.holdTicks()) {
                 releaseUse();
             } else if (!use.heartbeat(System.nanoTime(), LEASE_HORIZON)) {
                 failure = "item_input_expired";
                 return V2OperationJobExecution.Step.FAILED;
             }
         }
+        if (menu != null) return switch (menu.tickMenu(tick, outputAllowed)) {
+            case RUNNING -> V2OperationJobExecution.Step.RUNNING;
+            case CONFIRMED -> V2OperationJobExecution.Step.CONFIRMED;
+            case FAILED, SKIPPED -> V2OperationJobExecution.Step.FAILED;
+        };
         if (serverProcessed && use == null
                 && (request.resultItem() == null
                     ? clientConsumed || held.changed() : held.matches(request.resultItem()))) {
@@ -124,7 +146,8 @@ final class MinecraftV2ItemUseDriver implements V2OperationJobExecution.Driver {
     private boolean contextValid() {
         return player != null && level != null && minecraft.player == player && minecraft.level == level
                 && minecraft.gameMode != null && minecraft.getConnection() != null
-                && player.containerMenu == player.inventoryMenu && player.inventoryMenu.getCarried().isEmpty();
+                && (menu != null && dispatched || player.containerMenu == player.inventoryMenu)
+                && player.inventoryMenu.getCarried().isEmpty();
     }
 
     @Override
@@ -140,6 +163,7 @@ final class MinecraftV2ItemUseDriver implements V2OperationJobExecution.Driver {
         if (held != null && held.after() != null) result.put("held_after", Map.of(
                 "item", held.after().itemId(), "count", held.after().count()));
         if (failure != null) result.put("failure", failure);
+        if (menu != null) result.putAll(menu.result());
         return result;
     }
 
@@ -156,11 +180,40 @@ final class MinecraftV2ItemUseDriver implements V2OperationJobExecution.Driver {
     public void close() {
         releaseUse();
         captureStack();
+        if (menu != null) {
+            // Held use completes on a later server tick, so its initial ACK cannot retire a late menu.
+            // A sequenced ordinary mining-abort follows RELEASE_USE_ITEM on the same connection.
+            // Its ACK is a causal barrier; it breaks/uses no block and is never resent.
+            if (menu.awaitingOpen() && releaseBarrier == null && minecraft.level == level && minecraft.player == player) {
+                if (menuReleaseFault) throw new IllegalStateException("item release uncertain");
+                if (!menuReleaseSent) {
+                    menuReleaseSent = true;
+                    try { minecraft.gameMode.releaseUsingItem(player); }
+                    catch (RuntimeException | LinkageError uncertain) { menuReleaseFault = true; throw uncertain; }
+                }
+                releaseBarrier = ClientPredictionSignals.global().begin(level, player.blockPosition(), ScreenOwnershipSignals.global().currentTick());
+                int before = releaseBarrier.sequenceBeforePrediction();
+                var handler = ((dev.aod.mcmcp.mixin.client.ClientLevelPredictionAccessor) level).mcmcp$getBlockStatePredictionHandler();
+                try (var active = handler.startPredicting()) {
+                    minecraft.getConnection().send(new net.minecraft.network.protocol.game.ServerboundPlayerActionPacket(
+                            net.minecraft.network.protocol.game.ServerboundPlayerActionPacket.Action.ABORT_DESTROY_BLOCK,
+                            player.blockPosition(), net.minecraft.core.Direction.DOWN, active.currentSequence()));
+                }
+                if (releaseBarrier.captureIssuedPredictions() != before + 1)
+                    throw new IllegalStateException("item release barrier unavailable");
+            }
+            menu.releaseMenu(releaseBarrier);
+            // Waystones may validate the item again during asynchronous server teleport preparation.
+            if (Boolean.TRUE.equals(menu.result().get("selection_dispatched"))) selection.keepSelected();
+        }
         if (prediction != null) {
             serverProcessed = prediction.acknowledgement().acknowledged();
             prediction.close();
             prediction = null;
         }
         if (selection != null) selection.close();
+        if (releaseBarrier != null) { releaseBarrier.close(); releaseBarrier = null; }
     }
+
+    @Override public boolean allowsScreenChange() { return menu != null && menu.allowsScreenChange(); }
 }
