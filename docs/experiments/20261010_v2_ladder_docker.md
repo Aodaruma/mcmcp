@@ -34,6 +34,8 @@ Java 1,693件、harness 14件、admin bridge 28件の計1,735件、`verifyHarnes
 
 ローカル `artifacts/v2-ladder-20261010` にbaseline失敗、R1/R2、最終 `r3-evidence`、製品／harnessのhash、復旧receiptを保存する。認証情報・world・private logはGitへ追加しない。最終製品JARは同ディレクトリの `package-r3/mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar`。通常導入には製品JARだけを渡し、harnessを渡さない。
 
-05:18 JSTに元world 61・設定3・JAR2、計66ファイルのハッシュ一致とfixture退避を確認し、検証containerを停止した。05:19 JSTにはDocker Desktopとbackendの終了も確認し、起動前の停止状態へ戻した。通常profileへの交換・サーバー再接続・MCP ONは利用者指定の差し替え担当へ引き継ぐ。
+05:18 JSTに元world 61・設定3・JAR2、計66ファイルのハッシュ一致とfixture退避を確認し、検証containerを停止した。05:19 JSTにはDocker Desktopとbackendの終了も確認し、起動前の停止状態へ戻した。
+
+通常profileへの交換・Prism GUI起動・サーバー再接続・MCP ONは利用者指定の差し替え担当が行い、05:27 JSTまでに完了報告と `artifacts/v2-ladder-install-20261010/normal-verification.json` を確認した。旧版バックアップ・導入先hash・交換後起動のJVM・新session・READY/jobなし・15ツール全schema一致を記録し、チャット表示状態で入力を終了した。開発担当は通常ゲームを並行操作していない。実装commit `a86ae3c` の[CI build](https://github.com/Aodaruma/mcmcp/actions/runs/37986473252)も成功している。
 
 元の地図アート現場そのもの、MOD製の梯子、梯子途中の動的破壊、マルチプレイの通信遅延、raw入力によるポータル・縁の通過は実機未検証。足場のない梯子途中を最終目的地にする用途は対象外。先行する取引・生産・飛行の全ケースを今回のJARで再実行したものではない。

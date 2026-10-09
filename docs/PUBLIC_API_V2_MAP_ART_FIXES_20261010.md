@@ -1,6 +1,6 @@
 # v2 地図アート利用時の修正
 
-この文書は開発候補 `merchants-r4` と後続の `ladder-r3` の追加仕様をまとめる。`merchants-r4` は2026-10-10 03:38 JSTに通常の「くらふとぶ！-v01.2」へ導入し、Prismからの起動と公開APIの照合を完了した。`ladder-r3` は隔離Dockerで検証済みの差し替え用候補で、通常profileへの導入確認は別途行う。
+この文書は開発候補 `merchants-r4` と後続の `ladder-r3` の追加仕様をまとめる。`merchants-r4` は2026-10-10 03:38 JSTに通常の「くらふとぶ！-v01.2」へ導入した。後続の `ladder-r3` も隔離Dockerで検証後、差し替え担当が導入し、05:27 JSTまでにPrism起動・サーバー接続・MCP ONと公開API照合を完了した。
 
 ## 修正内容
 
@@ -70,7 +70,7 @@ aod-mimoidの隔離Dockerで、東向きの梯子と同じ小数位置の入口�
 
 Java 1,693＋harness 14＋admin bridge 28＝1,735件、build・harness隔離・PowerShell/Python source checksが成功。公開15ツールとschemaは変更なし。元world・設定・JARの66ファイルをハッシュ一致で復元した。[再現手順・結果・未確認範囲](experiments/20261010_v2_ladder_docker.md)。
 
-差し替え用製品JARのSHA-256：`55f1703ed44cd1cec6fd8b199d2702e5964a3278a26161352d9c4008aaea0a94`。ローカル保存先は `artifacts/v2-ladder-20261010/package-r3`。通常profileの交換・再接続・MCP ONは、利用者指定の差し替え担当へ引き継ぐ。
+製品JARのSHA-256：`55f1703ed44cd1cec6fd8b199d2702e5964a3278a26161352d9c4008aaea0a94`。ローカル保存先は `artifacts/v2-ladder-20261010/package-r3`。通常profileの交換・再接続・MCP ONは利用者指定の差し替え担当が完了した。旧版バックアップ、導入先hash、交換後起動のJVM、新session、READY/jobなし、15ツール全schema一致を同担当の `artifacts/v2-ladder-install-20261010/normal-verification.json` で確認。現場での追加移動・試験は行っていない。
 
 ## 残件
 
