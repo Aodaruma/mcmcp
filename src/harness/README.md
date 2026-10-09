@@ -6,7 +6,8 @@ The additional `-Dmcmcp.fixture.v2Priorities=true` flag enables fixed test prepa
 `config/mcmcp-v2-priorities/request.txt`. Write a fresh integer followed by a colon and one of
 `components`, `cake`, `cancel`, `blueprint`, `inventory`, `water`, `water_air`, `boat`, `minecart`, `horse`, `mod_break`,
 `trade`, `trade_full`, `trade_change`, `elytra_step`, `mechanisms`, `dimension_end`, `dimension_overworld`,
-`ladder_down`, `ladder_long`, `ladder_up`, `ladder_long_up`, `ladder_gap`, `ladder_enclosed`, or `report`.
+`ladder_down`, `ladder_long`, `ladder_up`, `ladder_long_up`, `ladder_gap`, `ladder_enclosed`,
+`storage_plain`, `storage_upgraded`, `storage_tab`, or `report`.
 The receipt is written to `receipt.json`. This accepts no commands, paths, coordinates or item IDs.
 It uses the same private integrated-server owner checks below. Production JARs do not include it.
 
@@ -34,6 +35,16 @@ Cases `Down`, `LongDown`, `Up`, `LongUp`, `Gap` match those five preparations. `
 The runner checks the full public catalog, session,
 fixture bounds, health, terminal status and idle control; issue `report` afterward for server-side
 landing evidence. Cancellation releases inputs and does not freeze Vanilla ladder gravity.
+
+The storage cases initialize a netherite backpack in player slot 6 and put 32 black concrete in the
+player inventory. `storage_plain` puts 64 white and 64 black concrete into the bag. `storage_upgraded`
+adds two tier-2 and one tier-1 stack upgrades, pickup and magnet upgrades, and stores 2048 white
+concrete. `storage_tab` also leaves pickup tab 3 open. Setup removes dropped items only within
+300,100,300 through 320,115,320 to prevent fixture leftovers from entering pickup/magnet storage.
+`report` includes storage quantities, upgrade slots and open-tab identity for server-side comparison.
+Use `Invoke-McmcpV2BackpackSmoke.ps1 -BackpackCase Plain|Upgraded|Tab|Cancel|Budget` with the same
+token/session/artifact arguments. The last two cases use `storage_tab`; compare server reports
+before/after for unchanged upgrades and an empty cursor. Runner availability is not a live pass.
 
 ## Original fixed arenas
 

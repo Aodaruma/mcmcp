@@ -336,7 +336,8 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
             var availableSources = sources.stream().filter(slot -> capacities.get(slot) > 0).toList();
             var availableDestinations = destinations.stream().filter(slot -> capacities.get(slot) > 0).toList();
             var plan = ExactInventoryTransfer.plan(context.snapshot().slots(), availableSources, availableDestinations,
-                    item, fingerprint.itemAndComponentsHash(), true, quantity, 14, stack.getMaxStackSize(), capacities);
+                    item, fingerprint.itemAndComponentsHash(), true, quantity, 14, stack.getMaxStackSize(), capacities,
+                    context.pickupLimit(stack));
             if (plan.isPresent()) return plan;
         }
         return Optional.empty();

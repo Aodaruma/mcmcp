@@ -78,8 +78,18 @@ public final class ExactInventoryTransfer {
             List<StackFingerprint> initial, List<Integer> sources, List<Integer> destinations,
             String item, int defaultHash, boolean defaultOnly,
             int quantity, int maxSources, int stackLimit, List<Integer> capacities) {
+        return plan(initial, sources, destinations, item, defaultHash, defaultOnly,
+                quantity, maxSources, stackLimit, capacities, Integer.MAX_VALUE);
+    }
+
+    /** A verified menu provider may cap the amount picked up before applying a secondary split. */
+    public static Optional<ExactInventoryTransfer> plan(
+            List<StackFingerprint> initial, List<Integer> sources, List<Integer> destinations,
+            String item, int defaultHash, boolean defaultOnly,
+            int quantity, int maxSources, int stackLimit, List<Integer> capacities, int pickupLimit) {
         if (quantity < 1 || quantity > 896 || maxSources < 1 || maxSources > 14
                 || stackLimit < 1 || stackLimit > 64
+                || pickupLimit < stackLimit
                 || capacities.size() != initial.size()
                 || capacities.stream().anyMatch(limit -> limit == null || limit < 0)
                 || sources.isEmpty() || destinations.isEmpty()
@@ -110,7 +120,7 @@ public final class ExactInventoryTransfer {
                 int moved = Math.min(remaining, Math.min(from.count(), destinationLimit - to.count()));
                 if (moved == 0) continue;
                 var path = split(from.count(), to.count(), moved, sourceLimit, destinationLimit,
-                        MAX_CLICKS - clicks.size());
+                        MAX_CLICKS - clicks.size(), pickupLimit);
                 if (path.isEmpty()) return Optional.empty();
                 var transitions = path.orElseThrow();
                 for (int i = 0; i < transitions.size(); i++) {
@@ -132,7 +142,7 @@ public final class ExactInventoryTransfer {
     /** Simulate ordinary Menu PICKUP transitions with a finite search bound. */
     private static Optional<List<Transition>> split(
             int source, int destination, int quantity,
-            int sourceLimit, int destinationLimit, int maxClicks) {
+            int sourceLimit, int destinationLimit, int maxClicks, int pickupLimit) {
         var start = new Counts(source, destination, 0);
         var goal = new Counts(source - quantity, destination + quantity, 0);
         var queue = new ArrayDeque<Search>();
@@ -156,8 +166,9 @@ public final class ExactInventoryTransfer {
                     int slot = fromSource ? before.source() : before.destination();
                     int cursor = before.cursor();
                     int limit = fromSource ? sourceLimit : destinationLimit;
+                    int pickup = Math.min(slot, pickupLimit);
                     int amount = cursor == 0
-                            ? (button == 0 ? slot : Math.ceilDiv(slot, 2))
+                            ? (button == 0 ? pickup : Math.ceilDiv(pickup, 2))
                             : Math.min(button == 0 ? cursor : 1, limit - slot);
                     if (amount == 0) continue;
                     int afterSlot = cursor == 0 ? slot - amount : slot + amount;

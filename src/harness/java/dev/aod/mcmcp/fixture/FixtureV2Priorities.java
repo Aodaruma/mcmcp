@@ -82,6 +82,7 @@ final class FixtureV2Priorities {
                         player.fallDistance = 0;
                         player.setHealth(player.getMaxHealth());
                         if (kind.equals("water_air")) player.setAirSupply(120);
+                        if (kind.startsWith("storage_")) prepareBackpack(player, kind);
                         if (kind.equals("trade") || kind.equals("trade_full")) {
                             var villager = new net.minecraft.world.entity.npc.villager.Villager(net.minecraft.world.entity.EntityTypes.VILLAGER, player.level());
                             villager.setPos(305.5, 101, 303.5);
@@ -105,6 +106,10 @@ final class FixtureV2Priorities {
                                 "count", stack.getCount(), "components", stack.getComponents().toString()));
                     }
                     report.put("inventory", inventory);
+                    if (BuiltInRegistries.ITEM.getKey(player.getInventory().getItem(6).getItem()).toString()
+                            .equals("sophisticatedbackpacks:netherite_backpack")) {
+                        report.put("storage", backpackReport(player.getInventory().getItem(6)));
+                    }
                     report.put("cursor_empty", player.containerMenu.getCarried().isEmpty());
                     var merchants = new ArrayList<Object>();
                     for (var entity : player.level().getEntitiesOfClass(net.minecraft.world.entity.npc.villager.Villager.class,
@@ -146,6 +151,58 @@ final class FixtureV2Priorities {
                 && !input.pickOwned() && !input.goalProofRetained();
     }
 
+    private static Object backpackWrapper(net.minecraft.world.item.ItemStack stack) throws ReflectiveOperationException {
+        return Class.forName("net.p3pp3rf1y.sophisticatedbackpacks.backpack.wrapper.BackpackWrapper")
+                .getMethod("fromStack", net.minecraft.world.item.ItemStack.class).invoke(null, stack);
+    }
+
+    private static void prepareBackpack(net.minecraft.server.level.ServerPlayer player, String kind)
+            throws ReflectiveOperationException {
+        var stack = player.getInventory().getItem(6);
+        var wrapper = backpackWrapper(stack);
+        // Creating the fixed test inventory initializes its identity on the integrated server.
+        Object inventory = wrapper.getClass().getMethod("getInventoryHandler").invoke(wrapper);
+        if (!kind.equals("storage_plain")) {
+            Object upgrades = wrapper.getClass().getMethod("getUpgradeHandler").invoke(wrapper);
+            var setter = upgrades.getClass().getMethod("setStackInSlot", int.class, net.minecraft.world.item.ItemStack.class);
+            var ids = List.of("stack_upgrade_tier_2", "stack_upgrade_tier_2", "stack_upgrade_tier_1", "pickup_upgrade", "magnet_upgrade");
+            for (int slot = 0; slot < ids.size(); slot++) {
+                String id = "sophisticatedbackpacks:" + ids.get(slot);
+                var item = BuiltInRegistries.ITEM.keySet().stream().filter(key -> key.toString().equals(id)).findFirst().orElseThrow();
+                setter.invoke(upgrades, slot, new net.minecraft.world.item.ItemStack(BuiltInRegistries.ITEM.getValue(item)));
+            }
+            inventory = wrapper.getClass().getMethod("getInventoryHandler").invoke(wrapper);
+        }
+        var setter = inventory.getClass().getMethod("setStackInSlot", int.class, net.minecraft.world.item.ItemStack.class);
+        setter.invoke(inventory, 0, new net.minecraft.world.item.ItemStack(BuiltInRegistries.ITEM.getValue(
+                net.minecraft.resources.Identifier.parse("minecraft:white_concrete")),
+                kind.equals("storage_plain") ? 64 : 2048));
+        setter.invoke(inventory, 1, new net.minecraft.world.item.ItemStack(BuiltInRegistries.ITEM.getValue(
+                net.minecraft.resources.Identifier.parse("minecraft:black_concrete")), 64));
+        if (kind.equals("storage_tab")) wrapper.getClass().getMethod("setOpenTabId", int.class).invoke(wrapper, 3);
+        player.inventoryMenu.broadcastChanges();
+    }
+
+    private static Map<String, Object> backpackReport(net.minecraft.world.item.ItemStack stack)
+            throws ReflectiveOperationException {
+        Object wrapper = backpackWrapper(stack);
+        Object inventory = wrapper.getClass().getMethod("getInventoryHandler").invoke(wrapper);
+        Object upgrades = wrapper.getClass().getMethod("getUpgradeHandler").invoke(wrapper);
+        int size = (int) inventory.getClass().getMethod("size").invoke(inventory);
+        var contents = new ArrayList<Object>();
+        for (int slot = 0; slot < size; slot++) {
+            var item = (net.minecraft.world.item.ItemStack) inventory.getClass().getMethod("getStackInSlot", int.class).invoke(inventory, slot);
+            if (!item.isEmpty()) contents.add(Map.of("slot", slot, "item", BuiltInRegistries.ITEM.getKey(item.getItem()).toString(), "count", item.getCount()));
+        }
+        var installed = new ArrayList<Object>();
+        for (int slot = 0; slot < (int) upgrades.getClass().getMethod("size").invoke(upgrades); slot++) {
+            var item = (net.minecraft.world.item.ItemStack) upgrades.getClass().getMethod("getStackInSlot", int.class).invoke(upgrades, slot);
+            if (!item.isEmpty()) installed.add(Map.of("slot", slot, "item", BuiltInRegistries.ITEM.getKey(item.getItem()).toString()));
+        }
+        return Map.of("size", size, "slots", contents, "upgrades", installed,
+                "open_tab", wrapper.getClass().getMethod("getOpenTabId").invoke(wrapper).toString());
+    }
+
     private static List<String> commands(String kind) {
         var result = new ArrayList<>(List.of("gamemode creative @s", "ride @s dismount",
                 "kill @e[tag=mcmcp_v2_fixture,x=300,y=100,z=300,dx=20,dy=8,dz=20]", "fill 300 100 300 320 100 320 minecraft:stone",
@@ -175,6 +232,10 @@ final class FixtureV2Priorities {
                         + (slot < 9 ? "hotbar." + slot : "inventory." + (slot - 9)) + " with minecraft:stone 64");
             }
             case "blueprint" -> result.add("give @s minecraft:cobblestone 32");
+            case "storage_plain", "storage_upgraded", "storage_tab" -> result.addAll(List.of(
+                    "kill @e[type=minecraft:item,x=300,y=100,z=300,dx=20,dy=15,dz=20]",
+                    "item replace entity @s hotbar.6 with sophisticatedbackpacks:netherite_backpack",
+                    "give @s minecraft:black_concrete 32"));
             case "ladder_down", "ladder_long", "ladder_up", "ladder_long_up", "ladder_gap", "ladder_enclosed" -> {
                 int top = kind.equals("ladder_long") || kind.equals("ladder_long_up") || kind.equals("ladder_enclosed") ? 112 : 104;
                 result.addAll(List.of("fill 300 101 300 320 115 320 minecraft:air",

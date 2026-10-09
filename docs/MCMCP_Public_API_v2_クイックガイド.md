@@ -58,6 +58,8 @@
 
 収納の作業台等のupgradeタブは、通常UIで閉じてからAPI操作してください。開いたタブで停止できなかった問題は修正し、失敗時の解放とタブ閉鎖後の読み取り成功を[実機確認](experiments/20260929_v2_storage_cleanup.md)しました。`result.storage_progress`に開封・同期・対応layout・解放待ちの状態を記録します。`complete:false`や`release_pending:true`のまま同じ操作を再送しないでください。
 
+通常導入済み版では、スタック数拡張付きバッグからの取り出しにも不具合があります。未導入候補 `backpack-r11` は回収upgradeタブを開いたままのinspect・数量移送と、2048個の収納から64個だけを取り出す動作を隔離Dockerで確認しました。端数・取消・上限の実機追試が残るため、候補を通常版の対応範囲と混同しないでください。[追加検証状況](experiments/20261010_v2_backpack_docker.md)。
+
 `agent_run_script`の`source`には、次のような同期scriptを渡せます。
 
 ```js

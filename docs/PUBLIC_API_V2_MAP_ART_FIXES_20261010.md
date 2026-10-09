@@ -82,7 +82,7 @@ Java 1,693＋harness 14＋admin bridge 28＝1,735件、build・harness隔離・P
 
 ## 残件
 
-- Sophisticated Backpacksのネザライトバッグで報告された `storage_layout_unsupported`：未解決。実際のupgrade・スロット構造に合わせた隔離再現が必要。判定を一括解除する変更はしていない。
+- Sophisticated Backpacksのネザライトバッグ：回収upgradeタブを開くと `storage_layout_unsupported`、拡張収納のPICKUP予測不一致で停止する2件を隔離再現して修正。未導入候補 `backpack-r11` でinspect・take64・store16・再開封照合を確認。端数・取消・上限の追試はSSH再認証待ち。[検証記録](experiments/20261010_v2_backpack_docker.md)。
 - Waystonesの行き先一覧／選択：公開provider未実装。
 - raw入力がポータルや梯子の縁で止まる報告：raw入力としての再検証は未実施。`agent_move` は現場の上段配置を再現した固定fixtureで修正確認済み。現場の下階全体、MOD製の梯子、通信遅延は未検証。
 - 金床・エンチャント、MOD収納の対応拡大、施工全体の保存・再開は引き続き残件。取引の追加は[取引仕様](PUBLIC_API_V2_MERCHANTS_20261010.md)を参照。
