@@ -45,9 +45,24 @@ Prism Launcher起動済み・Minecraft終了済みを確認し、旧R7のJARを�
 
 ローカル記録と旧JARの保存先は `artifacts/v2-merchants-install-20261010`。`normal-installation.json`、`normal-verification.json`、`normal-before/`にそれぞれ導入・API照合・バックアップを保存した。
 
+## 梯子下降の追加報告と案内の訂正
+
+R4導入後、地図アート担当から次の再現情報を受領した。通常ゲームは同担当が所有し、この調査では操作・再起動していない。以下は担当からの報告であり、こちらでの隔離再現は未実施。
+
+- 梯子は `(93,49..47,4)`、`facing=east`、背面の壁はx=92、上の足場はy=49。
+- 開始 `(93.5814,49,3.7269)` → 目標 `(93,48,4)`、`clear_path=false`、`max_distance=3`、`max_ticks=180`、`auto_replan=false`。結果は `distance_limit`、終了 `(92.5876,49,3.5235)`。
+- 続けて目標 `(93,49,4)`、`max_distance=3.5`、`max_ticks=180`でも `distance_limit`。終了 `(92.3317,50,3.8785)`で隣の縁に登った。
+- 梯子49/48/47の可視情報はあるが、公開traversabilityに下降edgeがなかった。目標 `(93,50,4)` はsupport absent／BLOCKED。扉は明示interactで開け、内外の短区間を往復できた。
+
+**以前の「観測した次の梯子1段を `agent_move` の終点にする」という案内は撤回する。** 現行の `KnownTraversabilitySnapshot.containsDestination` と `DeterministicAStar` は、足場のない梯子セルを通過点としてのみ扱い、終点には認めない。既存試験 `KnownTraversabilityNavigationTest.climbableRoutesUseUnsupportedCellsOnlyAsInternalTransitNodes` もこの契約を確認している。終点には梯子を経由した先の安定した足場が必要だが、今回の配置でそれを指定すれば成功するとは未確認。
+
+ソースでは `CoordinateGoalPlanner` が既知の安全な候補へ部分経路を選び、`tickV2Move` が毎tickの実移動距離の累積で `distance_limit` を判定する。従って、直線距離が1ブロックでも迂回によって距離上限に達し得る。報告された迂回との整合はあるが、実際に選ばれたrouteの証拠がないため原因と断定しない。
+
+下降edgeが生成されない条件は別に残る。`LocalObservationVolume.addClimbableColumn` は入口から上下各4段までを調べ、梯子の存続・全身の衝突・液体・局所安全と安定した出口を検査する。可視blockが返ることだけでは通過可能の証拠にならない。次の隔離再現では同じ東向きの入口・縁と、下の足場までの高さを分けて、入口接続・縦edge・出口接続・終点選択を確認する。今回、製品コード・導入JAR・落下防止判定は変更していない。
+
 ## 残件
 
 - Sophisticated Backpacksのネザライトバッグで報告された `storage_layout_unsupported`：未解決。実際のupgrade・スロット構造に合わせた隔離再現が必要。判定を一括解除する変更はしていない。
 - Waystonesの行き先一覧／選択：公開provider未実装。
-- raw入力がポータルや梯子の縁で止まる報告：原因は未断定。強制sneakの追加はなく、入力の成功は到達成功を意味しない。衝突直前の足場判定との関係を切り分け中。梯子の上下は観測した次の段への `agent_move` を案内した。
+- raw入力がポータルや梯子の縁で止まる報告とR4での梯子下降失敗：未解決。上記の通り、途中の梯子セルを終点にする案内を訂正した。下降edgeの不在とraw入力の停止を同一原因とは断定していない。
 - 金床・エンチャント、MOD収納の対応拡大、施工全体の保存・再開は引き続き残件。取引の追加は[取引仕様](PUBLIC_API_V2_MERCHANTS_20261010.md)を参照。
