@@ -47,7 +47,12 @@ final class FixtureV2Priorities {
                     var decision = FixtureSecurity.authorize(player.createCommandSourceStack());
                     if (!decision.allowed()) throw new IllegalStateException(decision.rejection());
                     String kind = value.substring(value.indexOf(':') + 1);
-                    if (!kind.equals("report")) {
+                    if (kind.equals("trade_change")) {
+                        for (var entity : player.level().getEntitiesOfClass(net.minecraft.world.entity.npc.villager.Villager.class,
+                                new net.minecraft.world.phys.AABB(300, 100, 300, 320, 109, 320))) {
+                            if (entity.entityTags().contains("mcmcp_v2_fixture")) entity.getOffers().getFirst().addToSpecialPriceDiff(1);
+                        }
+                    } else if (!kind.equals("report")) {
                         if (!inputIdle()) throw new IllegalStateException("input owned");
                         // Fixed arena preparation must work even when the owner starts far away.
                         for (int x = 300 >> 4; x <= 320 >> 4; x++) {
@@ -64,6 +69,21 @@ final class FixtureV2Priorities {
                         player.fallDistance = 0;
                         player.setHealth(player.getMaxHealth());
                         if (kind.equals("water_air")) player.setAirSupply(120);
+                        if (kind.equals("trade") || kind.equals("trade_full")) {
+                            var villager = new net.minecraft.world.entity.npc.villager.Villager(net.minecraft.world.entity.EntityTypes.VILLAGER, player.level());
+                            villager.setPos(305.5, 101, 303.5);
+                            villager.setNoAi(true);
+                            villager.addTag("mcmcp_v2_fixture");
+                            villager.setVillagerData(villager.getVillagerData().withProfession(player.registryAccess(),
+                                    net.minecraft.world.entity.npc.villager.VillagerProfession.LIBRARIAN).withLevel(5));
+                            var offers = new net.minecraft.world.item.trading.MerchantOffers();
+                            offers.add(new net.minecraft.world.item.trading.MerchantOffer(
+                                    new net.minecraft.world.item.trading.ItemCost(net.minecraft.world.item.Items.EMERALD, 3),
+                                    Optional.of(new net.minecraft.world.item.trading.ItemCost(net.minecraft.world.item.Items.BOOK)),
+                                    new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.BREAD, 2), 16, 0, 0.0F));
+                            villager.setOffers(offers);
+                            player.level().addFreshEntity(villager);
+                        }
                     }
                     var inventory = new ArrayList<Object>();
                     for (int slot = 0; slot <= 40; slot++) {
@@ -73,6 +93,13 @@ final class FixtureV2Priorities {
                     }
                     report.put("inventory", inventory);
                     report.put("cursor_empty", player.containerMenu.getCarried().isEmpty());
+                    var merchants = new ArrayList<Object>();
+                    for (var entity : player.level().getEntitiesOfClass(net.minecraft.world.entity.npc.villager.Villager.class,
+                            new net.minecraft.world.phys.AABB(300, 100, 300, 320, 109, 320))) {
+                        if (entity.entityTags().contains("mcmcp_v2_fixture")) merchants.add(Map.of("id", entity.getUUID().toString(),
+                                "uses", entity.getOffers().stream().map(net.minecraft.world.item.trading.MerchantOffer::getUses).toList()));
+                    }
+                    report.put("merchants", merchants);
                     report.put("position", List.of(player.getX(), player.getY(), player.getZ()));
                     report.put("air", player.getAirSupply());
                     if (player.getVehicle() != null) {
@@ -124,6 +151,11 @@ final class FixtureV2Priorities {
             case "cake" -> result.addAll(List.of("give @s minecraft:milk_bucket 6", "give @s minecraft:wheat 6",
                     "give @s minecraft:sugar 4", "give @s minecraft:egg 2"));
             case "cancel" -> result.add("give @s minecraft:oak_log[minecraft:custom_name='Cancel material'] 64");
+            case "trade", "trade_full" -> {
+                result.addAll(List.of("setblock 305 101 303 minecraft:air", "give @s minecraft:emerald 30", "give @s minecraft:book 10"));
+                if (kind.equals("trade_full")) for (int slot = 2; slot < 35; slot++) result.add("item replace entity @s "
+                        + (slot < 9 ? "hotbar." + slot : "inventory." + (slot - 9)) + " with minecraft:stone 64");
+            }
             case "blueprint" -> result.add("give @s minecraft:cobblestone 32");
             case "water", "water_air" -> result.addAll(List.of("fill 305 100 305 315 104 315 minecraft:stone",
                     "fill 306 101 306 314 104 314 minecraft:water", "tp @s 310.5 102 310.5 0 0"));

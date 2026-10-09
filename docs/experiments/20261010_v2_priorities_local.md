@@ -54,6 +54,6 @@
 
 Prism GUIから通常profileを起動し、02:07 JSTに公開15ツールの全input/output schemaが正本catalogと一致することを確認。Minecraft 26.2／NeoForge 26.2.0.59／32 modsのタイトル画面、MCP OFF、world未接続で引き渡した。通常worldは開いていない。証拠は `normal-installation.json` と `normal-verification.json`、元JARは導入artifactの `normal-before` に保存。
 
-先行のリモートDockerはSSH timeoutのため、66ファイルの復旧をまだ確認できていない。利用者へ接続確認を依頼済み。ローカル成功をリモート復旧完了として扱わない。
+先行のリモートDockerも、2026-10-10 02:32 JSTに元world・設定・JARの66ファイルをハッシュ一致で復元し、fixture除去・検証container停止を確認。02:34 JSTにDocker Desktopの停止も確認した。証拠は導入artifactの `remote-restoration.json` と `remote-desktop-restoration.json`。
 
 生の実験結果と復旧用ファイルは親workspaceの `artifacts/v2-priorities-local-20261010` と `artifacts/v2-priorities-install-20261010` に保存し、Gitへ含めない。main統合・タグ・Release公開は行わない。

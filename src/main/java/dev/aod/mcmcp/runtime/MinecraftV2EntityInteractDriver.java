@@ -52,6 +52,13 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
     private String failure;
     private long passengerRevision = -1;
     private boolean mountConfirmed;
+    private MinecraftV2MenuDriver menu;
+
+    MinecraftV2EntityInteractDriver withMenu(MinecraftV2MenuDriver menu) {
+        if (begun) throw new IllegalStateException("entity interaction already begun");
+        this.menu = Objects.requireNonNull(menu);
+        return this;
+    }
 
     MinecraftV2EntityInteractDriver(Minecraft minecraft, Supplier<WorldSessionTracker.Snapshot> sessions,
             AgentObservations observations, V2EntityInteractArguments request, Entity entity,
@@ -73,6 +80,7 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
         begun = true;
         player = minecraft.player;
         level = minecraft.level;
+        if (menu != null) menu.begin(tick, outputAllowed);
         var passengers = VehiclePassengerSignals.global().snapshot(entity);
         passengerRevision = passengers == null ? -1 : passengers.revision();
         if (!minecraft.isSameThread() || !outputAllowed.getAsBoolean() || !contextValid()
@@ -92,6 +100,14 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
             return fail("entity_context_changed");
         }
         if (dispatched) {
+            if (menu != null) {
+                if (!targetValid() || !player.isWithinEntityInteractionRange(entity, 0.0D)) return fail("merchant_unavailable");
+                return switch (menu.tickMenu(tick, outputAllowed)) {
+                    case RUNNING -> V2OperationJobExecution.Step.RUNNING;
+                    case CONFIRMED -> V2OperationJobExecution.Step.CONFIRMED;
+                    case FAILED, SKIPPED -> V2OperationJobExecution.Step.FAILED;
+                };
+            }
             if (request.operation().equals("mount")) {
                 var passengers = VehiclePassengerSignals.global().snapshot(entity);
                 mountConfirmed = passengers != null && passengers.revision() > passengerRevision
@@ -143,6 +159,8 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
                 || !player.isWithinEntityInteractionRange(entity, 0.0D)) return fail("entity_unavailable");
         held = new V2HeldStackEvidence(StackFingerprint.fromServerPacket(player.getMainHandItem()),
                 HotbarPayloadSyncSignals.global().bindAndSnapshot(level, session).revision());
+        if (menu != null && !menu.beforeUse(entityId.toString(),
+                BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString(), tick)) return fail("menu_open_denied");
         dispatched = true; // Even a throwing native call must never be replayed.
         var hit = (EntityHitResult) minecraft.hitResult;
         var result = minecraft.gameMode.interact(player, entity, hit, InteractionHand.MAIN_HAND);
@@ -153,8 +171,9 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
     private boolean contextValid() {
         return player != null && level != null && minecraft.player == player && minecraft.level == level
                 && session.equals(sessions.get().worldSessionId()) && minecraft.gameMode != null
-                && minecraft.getConnection() != null && player.containerMenu == player.inventoryMenu
-                && player.inventoryMenu.getCarried().isEmpty();
+                && minecraft.getConnection() != null
+                && (menu != null && dispatched || player.containerMenu == player.inventoryMenu
+                    && player.inventoryMenu.getCarried().isEmpty());
     }
 
     static boolean confirmed(boolean clientConsumed, String resultItem, V2HeldStackEvidence held) {
@@ -243,6 +262,7 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
         if (held != null && held.after() != null) result.put("held_after", Map.of(
                 "item", held.after().itemId(), "count", held.after().count()));
         if (failure != null) result.put("failure", failure);
+        if (menu != null) result.putAll(menu.result());
         return result;
     }
 
@@ -251,11 +271,13 @@ final class MinecraftV2EntityInteractDriver implements V2OperationJobExecution.D
     }
 
     public boolean allowsRiding() { return request.operation().equals("mount") && (player == null || !player.isPassenger() || player.getVehicle() == entity); }
+    public boolean allowsScreenChange() { return menu != null && menu.allowsScreenChange(); }
 
     @Override
     public void close() {
         if (navigation != null) navigation.close();
         closeFacing();
+        if (menu != null) menu.close();
         captureStack();
         if (selection != null) selection.close();
     }

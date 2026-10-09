@@ -25,6 +25,7 @@ final class MinecraftV2MenuDriver implements V2OperationJobExecution.Driver {
     private final ScreenOwnershipSignals screens = ScreenOwnershipSignals.global();
     private final UUID owner = UUID.randomUUID();
     private final V2MenuArguments request;
+    private final String menuType;
     private final MinecraftV2BlockInteractDriver opener;
     private boolean started;
     private boolean expectedOpen;
@@ -58,8 +59,18 @@ final class MinecraftV2MenuDriver implements V2OperationJobExecution.Driver {
         this.minecraft = minecraft;
         this.sessions = sessions;
         this.request = request;
+        this.menuType = request.menuType();
         opener = new MinecraftV2BlockInteractDriver(minecraft, sessions, observations,
                 reconciliation, ClientPredictionSignals.global(), remainingDistance, this);
+    }
+
+    /** Entity openers use the same causal screen ledger and cleanup as block openers. */
+    MinecraftV2MenuDriver(Minecraft minecraft, Supplier<WorldSessionTracker.Snapshot> sessions, String menuType) {
+        this.minecraft = minecraft;
+        this.sessions = sessions;
+        this.menuType = menuType;
+        request = null;
+        opener = null;
     }
 
     public void begin(long tick, BooleanSupplier allowed) {
@@ -82,9 +93,13 @@ final class MinecraftV2MenuDriver implements V2OperationJobExecution.Driver {
     }
 
     boolean beforeUse(NavCell target, BlockStateFingerprint before, long tick) {
+        return beforeUse(target.toString(), before.toString(), tick);
+    }
+
+    boolean beforeUse(String target, String before, long tick) {
         if (expectedOpen) return false;
         var token = new ExpectedOpenToken(sessions.get().worldSessionId(), owner,
-                target.toString(), before.toString(), request.menuType(), screens.currentTick() + 80);
+                target, before, menuType, screens.currentTick() + 80);
         expectedOpen = screens.beginExpectedOpen(token);
         openedTick = tick;
         return expectedOpen;
@@ -100,7 +115,7 @@ final class MinecraftV2MenuDriver implements V2OperationJobExecution.Driver {
         var live = minecraft.player.containerMenu;
         if (!(minecraft.gui.screen() instanceof AbstractContainerScreen<?> container)
                 || container.getMenu() != live || live.containerId != content.containerId()
-                || !request.menuType().equals(ScreenOwnershipSignals.registeredMenuTypeId(live).orElse(null))
+                || !menuType.equals(ScreenOwnershipSignals.registeredMenuTypeId(live).orElse(null))
                 || live.slots.size() != content.slots().size() || live.slots.size() > 256
                 // Craft work validates its intermediate PICKUP cursor against server snapshots.
                 || work == null && (!live.getCarried().isEmpty() || !content.carried().empty())
@@ -178,7 +193,9 @@ final class MinecraftV2MenuDriver implements V2OperationJobExecution.Driver {
         }
         if (work != null) screens.ownedSession().filter(value -> value.token().routineId().equals(owner))
                 .ifPresent(value -> work.observeBeforeClose(minecraft.player.containerMenu, value.serverSnapshot()));
-        var barrier = prediction == null ? ScreenOwnershipSignals.CausalBarrierStatus.NOT_REQUIRED
+        // Entity use has no prediction ACK: retain authority for a late OpenScreen after cancel.
+        var barrier = prediction == null ? (opener == null ? ScreenOwnershipSignals.CausalBarrierStatus.WAITING_ACK
+                : ScreenOwnershipSignals.CausalBarrierStatus.NOT_REQUIRED)
                 : switch (prediction.acknowledgement().status()) {
                     case ACKNOWLEDGED -> ScreenOwnershipSignals.CausalBarrierStatus.ACKNOWLEDGED;
                     case IDENTITY_RELEASED -> ScreenOwnershipSignals.CausalBarrierStatus.IDENTITY_RELEASED;
@@ -200,7 +217,7 @@ final class MinecraftV2MenuDriver implements V2OperationJobExecution.Driver {
     }
 
     public boolean allowsScreenChange() { return expectedOpen; }
-    public void close() { opener.close(); }
+    public void close() { if (opener != null) opener.close(); else releaseMenu(null); }
     public Map<String, Object> result() {
         var result = new LinkedHashMap<String, Object>();
         if (work != null) {

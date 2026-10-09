@@ -127,6 +127,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final DeterministicAStar agentPathfinder = new DeterministicAStar();
     private final AgentActionStore agentActions = new AgentActionStore();
     private final AgentJobStore v2Jobs = new AgentJobStore();
+    private final V2MerchantReferences merchantReferences = new V2MerchantReferences();
     private final AgentJobStore scriptJobs = new AgentJobStore();
     private final AtomicReference<UUID> scriptChildActionId = new AtomicReference<>();
     private final AtomicReference<UUID> scriptChildCancelSent = new AtomicReference<>();
@@ -2001,13 +2002,18 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 ? V2ProductionArguments.parse(arguments, session.dimension()) : null;
         var itemUse = !lookOnly && "item".equals(arguments.get("target"))
                 ? V2ItemUseArguments.parse(arguments) : null;
-        var entityUse = !lookOnly && "entity".equals(arguments.get("target"))
+        var trade = !lookOnly && V2TradeArguments.matches(arguments) ? V2TradeArguments.parse(arguments) : null;
+        var entityUse = trade != null ? trade.entity() : !lookOnly && "entity".equals(arguments.get("target"))
                 ? V2EntityInteractArguments.parse(arguments) : null;
         var menuUse = !lookOnly && "menu".equals(arguments.get("target"))
                 ? V2MenuArguments.parse(arguments, session.dimension()) : null;
         var dismount = !lookOnly && "vehicle".equals(arguments.get("target")) ? V2DismountArguments.parse(arguments) : null;
         var entity = entityUse == null ? null : resolveV2VisibleEntity(minecraft, session,
                 new V2ClickArguments.EntityRefTarget(entityUse.ref(), entityUse.type()), entityUse.advance());
+        if (trade != null && !(entity instanceof net.minecraft.world.entity.npc.villager.AbstractVillager))
+            throw new IllegalArgumentException("merchant operations require an observed villager or wandering trader");
+        var offer = trade != null && trade.offerRef() != null ? merchantReferences.resolve(trade.offerRef(),
+                session.worldSessionId(), session.dimension(), entity.getUUID(), session.clientTick()) : null;
         var request = !lookOnly && production == null && itemUse == null && entityUse == null && menuUse == null && dismount == null
                 ? V2BlockInteractArguments.parse(arguments, session.dimension()) : null;
         int maxTicks = dismount != null ? dismount.maxTicks() : production != null ? production.maxTicks() : look != null ? look.maxTicks() : itemUse != null ? itemUse.maxTicks()
@@ -2072,10 +2078,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         session.worldSessionId(), new MinecraftV2ItemUseDriver(
                                 minecraft, session.worldSessionId(), itemUse), release);
             } else if (entityUse != null) {
+                var driver = new MinecraftV2EntityInteractDriver(minecraft, sessions::snapshot,
+                        agentObservations, entityUse, entity, () -> v2InteractMaxDistance - v2InteractTravelled);
+                if (trade != null) driver.withMenu(new MinecraftV2MenuDriver(minecraft, sessions::snapshot, "minecraft:merchant")
+                        .withWork(new V2MerchantWork(minecraft, session, entity.getUUID(), trade, merchantReferences, offer)));
                 v2InteractExecution = new V2OperationJobExecution(v2Jobs, actionId,
-                        session.worldSessionId(), new MinecraftV2EntityInteractDriver(
-                                minecraft, sessions::snapshot, agentObservations, entityUse, entity,
-                                () -> v2InteractMaxDistance - v2InteractTravelled), release);
+                        session.worldSessionId(), driver, release);
             } else {
                 var driver = new MinecraftV2BlockInteractDriver(minecraft, sessions::snapshot,
                         agentObservations, reconciliationSignals, ClientPredictionSignals.global(),
