@@ -29,7 +29,8 @@ against the ladder's thin side. Use only a backed-up disposable world.
 Run `tools/eval/Invoke-McmcpV2LadderSmoke.ps1 -TokenPath <private-token-file> -Endpoint <endpoint>
 -ExpectedWorldSession <session> -ArtifactDirectory <fresh-directory> -LadderCase <case>` after setup.
 Cases `Down`, `LongDown`, `Up`, `LongUp`, `Gap` match those five preparations. `Cancel` uses
-`ladder_long`; `TickLimit` uses `ladder_down`; `Enclosed` uses `ladder_enclosed`.
+`ladder_long`; `TickLimit` uses `ladder_down`; `Enclosed` and `FarGoal` use `ladder_enclosed`.
+`FarGoal` targets the lower floor at 313,101,301, with replanning enabled, 40 blocks and 800 ticks.
 The runner checks the full public catalog, session,
 fixture bounds, health, terminal status and idle control; issue `report` afterward for server-side
 landing evidence. Cancellation releases inputs and does not freeze Vanilla ladder gravity.

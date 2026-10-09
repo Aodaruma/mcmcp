@@ -62,3 +62,25 @@ R3で33tickの `movement_stalled` と終了位置z=304.606786を再現した。�
 8ケースともREADY・jobなし。成功5ケースは足場中心の水平0.25ブロック以内。Java 1,693＋harness 14＋admin bridge 28＝1,735件、build・harness隔離・PowerShell/Python source checksも成功した。公開15ツールの全schemaは既存catalogと一致する。
 
 製品JAR SHA-256：`ee1a94e94cecdf3962b1cdc05fef0433b2836c8a2ae124399a6ce0d626aaa57c`。ローカル記録は `artifacts/v2-ladder-field-20261010/r7-evidence`、製品は同ディレクトリの `package-r7/mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar`。05:57 JSTに元world・設定・JARの66ファイルを全hash一致で復元し、fixtureを退避、containerを停止した。05:59 JSTにはDocker Desktop/backendの終了も確認した。通常ゲームは地図アート担当が操作を保留し、差し替え担当へ引き継ぐ。通常サーバーでの修正版の動作確認は別途必要。
+
+実装commit `91f490b` の[CI build](https://github.com/Aodaruma/mcmcp/actions/runs/37990744113)は成功。06:03 JST、差し替え担当の `artifacts/v2-ladder-field-install-20261010/normal-verification.json` で通常profileへの導入を確認した。製品hash、旧版backup、交換後のPrism GUI起動・サーバー再接続、新session、READY/jobなし、全15ツールschema一致を記録し、操作権を地図アート担当へ返した。
+
+地図アート担当の通常サーバーでの追試では、梯子近くの下階足場を経由し、11段下降164tick、回収床までの移動156tick、上階への上り135tickが成功した。全行程で体力20、READY/jobなし。16箱のinspectと完成品104個のtakeも確認したとの報告を受領した。一方、上階から横にも離れた下階目標を直接指定すると、上階を探索して800tickに達するケースが残った。R7では先に梯子近くの既知の足場を指定することで回避できる。
+
+## 遠い下階目標の追加修正 `ladder-far-r8`
+
+同じ囲い付きfixtureで目標を `(313,101,301)` へ離し、`auto_replan:true`、距離40、800tickで実行。R7は上階を探索し続け、643tickの `distance_limit` で停止した。候補を3D直線距離だけで比較していたため、下りるよりも上階で横に近づく候補を先に選び、近づいた後は梯子へ戻る候補を距離増加として除外していた。
+
+R8は既知の最終目的地を最優先に保ち、その次に、目標の高さへ進む安全確認済みの梯子区間を優先する。横方向に一時的に遠ざかる経路も許すが、次の1段の確認、除外セル、到達可能性、既訪問終点の抑制、全体の有限予算は維持する。未知の下階へ直接経路を作る変更ではない。
+
+旧実装で失敗する2件の単体試験を追加し、Java 1,695＋harness 14＋admin bridge 28＝1,737件、build・harness隔離・source checksに成功。製品 `0f05022b5cf8a67b0ee20f3e0e7c665f0ad25358eaab397ed30a7244d527e15e` で次を確認した。
+
+| ケース | 結果 | ticks |
+| --- | --- | ---: |
+| FarGoal：離れた下階足場 | succeeded | 274 |
+| Enclosed：梯子近くの下階足場 | succeeded | 119 |
+| LongUp | succeeded | 125 |
+| Gap | failed / tick_limit | 600 |
+| Cancel | cancelled / client_request | 24 |
+
+全5ケース体力20、READY/jobなし。成功3ケースはserver側の接地を確認。記録は `artifacts/v2-ladder-far-20261010/r8-evidence.zip`、製品JARは同ディレクトリの `package-r8`。通常profileはR7のまま。地図アート担当からの依頼により、梯子だけの追加差し替えは急がず、Waystones／バッグ対応候補とまとめる。隔離環境はその継続検証に使用中であり、この段階では復旧完了を意味しない。

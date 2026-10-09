@@ -76,7 +76,8 @@ public final class CoordinateGoalPlanner {
         if (map.edges().size() > budget.edges()) return empty(Status.LIMIT, 0, 0);
 
         var candidates = new TreeSet<NavCell>(Comparator
-                .comparingInt((NavCell cell) -> reached(cell) ? 0 : 1)
+                // A known route toward the target floor beats exploring horizontally on the wrong floor.
+                .comparingInt((NavCell cell) -> reached(cell) ? 0 : ladderWaypoint(map, start, cell) ? 1 : 2)
                 .thenComparingDouble(cell -> reached(cell)
                         ? cell.distanceTo(start) : cell.distanceTo(goal))
                 .thenComparing(Comparator.naturalOrder()));
@@ -176,8 +177,7 @@ public final class CoordinateGoalPlanner {
         int direction = Integer.compare(goal.y(), start.y());
         if (direction == 0 || reached(cell) || !map.containsLadderTransit(cell)
                 || Integer.compare(cell.y(), start.y()) != direction
-                || Integer.compare(goal.y(), cell.y()) != direction
-                || cell.distanceTo(goal) >= start.distanceTo(goal)) return false;
+                || Integer.compare(goal.y(), cell.y()) != direction) return false;
         // Leave another verified rung beyond the handoff while the next local snapshot arrives.
         return map.outgoing(cell).stream().anyMatch(edge -> edge.traversable()
                 && edge.locomotion() == Locomotion.LADDER

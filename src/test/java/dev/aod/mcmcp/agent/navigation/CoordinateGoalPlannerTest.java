@@ -60,6 +60,29 @@ class CoordinateGoalPlannerTest {
 
     private static NavCell rung(int y) { return new NavCell("overworld", 0, y, 0); }
 
+    @Test
+    void aKnownLadderTowardTheTargetFloorPrecedesExploringTheWrongFloor() {
+        var map = map();
+        for (int y = 80; y > 76; y--) map.observe(ladder(rung(y), rung(y - 1)));
+        for (int x = 0; x < 6; x++) map.observe(edge(
+                new NavCell("overworld", x, 80, 0), new NavCell("overworld", x + 1, 80, 0)));
+        var planner = new CoordinateGoalPlanner(SESSION, new NavCell("overworld", 8, 69, -4));
+        var result = plan(planner, map, rung(80));
+        assertThat(result.route().orElseThrow().cells().getLast()).isEqualTo(rung(77));
+        assertThat(result.route().orElseThrow().endsOnLadderTransit()).isTrue();
+    }
+
+    @Test
+    void reachingTheTargetFloorMayRequireReturningToAKnownLadder() {
+        var map = map();
+        for (int y = 80; y > 76; y--) map.observe(ladder(rung(y), rung(y - 1)));
+        for (int x = 6; x > 0; x--) map.observe(edge(
+                new NavCell("overworld", x, 80, 0), new NavCell("overworld", x - 1, 80, 0)));
+        var start = new NavCell("overworld", 6, 80, 0);
+        var result = plan(new CoordinateGoalPlanner(SESSION, new NavCell("overworld", 8, 69, -4)), map, start);
+        assertThat(result.route().orElseThrow().cells().getLast()).isEqualTo(rung(77));
+    }
+
     private static TraversabilityEdge ladder(NavCell from, NavCell to) {
         return new TraversabilityEdge(SESSION, new TraversabilityEdge.Key(from, to),
                 TraversabilityEdge.Status.PROBE_ALLOWED, TraversabilityEdge.TargetSupport.ABSENT,

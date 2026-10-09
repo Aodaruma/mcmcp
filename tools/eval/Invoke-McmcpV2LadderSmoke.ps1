@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param([string]$TokenPath,[string]$Endpoint='http://127.0.0.1:8765/mcp',
     [string]$ExpectedWorldSession,[string]$ArtifactDirectory,
-    [ValidateSet('Down','LongDown','Up','LongUp','Gap','Cancel','TickLimit','Enclosed')][string]$LadderCase='Down',
+    [ValidateSet('Down','LongDown','Up','LongUp','Gap','Cancel','TickLimit','Enclosed','FarGoal')][string]$LadderCase='Down',
     [switch]$LibraryOnly)
 $runLadder=-not $LibraryOnly
 . (Join-Path $PSScriptRoot 'Invoke-McmcpV2Smoke.ps1') -TokenPath $TokenPath -Endpoint $Endpoint `
@@ -20,13 +20,16 @@ function Get-V2SmokeState {
 
 function Invoke-V2SmokeCore {
     $before=Get-V2SmokeState
-    $top=if($LadderCase -cin @('LongDown','LongUp','Cancel','Enclosed')){112}else{104}
+    $top=if($LadderCase -cin @('LongDown','LongUp','Cancel','Enclosed','FarGoal')){112}else{104}
     $ascending=$LadderCase -cin @('Up','LongUp')
     $startY=if($ascending){101}else{$top}
     Assert-V2Smoke ([Math]::Abs($before.player.position.y-$startY) -lt 0.01) 'Unexpected ladder start height'
     $targetY=if($ascending){$top}else{101}
-    $arguments=@{x=306;y=$targetY;z=305;clear_path=$false;auto_replan=$false;max_distance=24;
-        max_ticks=$(if($LadderCase -ceq 'TickLimit'){3}else{600})}
+    $far=$LadderCase -ceq 'FarGoal'
+    $targetX=if($far){313}else{306}
+    $targetZ=if($far){301}else{305}
+    $arguments=@{x=$targetX;y=$targetY;z=$targetZ;clear_path=$false;auto_replan=$far;
+        max_distance=$(if($far){40}else{24});max_ticks=$(if($LadderCase -ceq 'TickLimit'){3}elseif($far){800}else{600})}
     $id=Start-V2SmokeJob 'agent_move' $arguments
     if($LadderCase -ceq 'Cancel') {
         $watch=[Diagnostics.Stopwatch]::StartNew()
@@ -46,10 +49,10 @@ function Invoke-V2SmokeCore {
     }
     $after=Get-V2SmokeState
     Assert-V2Smoke ($after.player.health -eq $before.player.health) 'Ladder movement lost health'
-    if($LadderCase -cin @('Down','LongDown','Up','LongUp','Enclosed')) {
+    if($LadderCase -cin @('Down','LongDown','Up','LongUp','Enclosed','FarGoal')) {
         $p=$after.player.position
         Assert-V2Smoke ([Math]::Abs($p.y-$targetY) -lt 0.05 -and
-            [Math]::Sqrt([Math]::Pow($p.x-306.5,2)+[Math]::Pow($p.z-305.5,2)) -le 0.25) 'Ladder destination mismatch'
+            [Math]::Sqrt([Math]::Pow($p.x-($targetX+0.5),2)+[Math]::Pow($p.z-($targetZ+0.5),2)) -le 0.25) 'Ladder destination mismatch'
     }
     $script:SmokeEvents.Add(@{before=$before.player;after=$after.player;case=$LadderCase})
 }

@@ -78,6 +78,8 @@ Java 1,693＋harness 14＋admin bridge 28＝1,735件、build・harness隔離・P
 
 同候補は囲まれた入口からの11段下降、通常の短い／長い梯子上下、取消、tick上限、欠損梯子の8ケースに合格。全ケース体力20、終了時READY/jobなし。公開15ツール/schemaは変更なし。製品JARはローカル `artifacts/v2-ladder-field-20261010/package-r7`、SHA-256 `ee1a94e94cecdf3962b1cdc05fef0433b2836c8a2ae124399a6ce0d626aaa57c`。通常ゲームの所有を地図アート担当から差し替え担当へ渡した後に導入する。Waystones・バッグ対応はこのJARには含まない。[追加検証の詳細](experiments/20261010_v2_ladder_docker.md#囲まれた入口の追加修正-ladder-field-r7)。
 
+06:03 JSTに差し替え担当が旧版backup・製品hash・交換後起動・再接続・MCP ON・新session・READY/jobなし・15ツール全schema一致を確認し、地図アート担当へ所有を返した。記録は `artifacts/v2-ladder-field-install-20261010/normal-verification.json`。開発側は通常ゲームを並行操作していない。
+
 ## 残件
 
 - Sophisticated Backpacksのネザライトバッグで報告された `storage_layout_unsupported`：未解決。実際のupgrade・スロット構造に合わせた隔離再現が必要。判定を一括解除する変更はしていない。
