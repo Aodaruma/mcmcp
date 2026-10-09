@@ -39,3 +39,26 @@ Java 1,693件、harness 14件、admin bridge 28件の計1,735件、`verifyHarnes
 通常profileへの交換・Prism GUI起動・サーバー再接続・MCP ONは利用者指定の差し替え担当が行い、05:27 JSTまでに完了報告と `artifacts/v2-ladder-install-20261010/normal-verification.json` を確認した。旧版バックアップ・導入先hash・交換後起動のJVM・新session・READY/jobなし・15ツール全schema一致を記録し、チャット表示状態で入力を終了した。開発担当は通常ゲームを並行操作していない。実装commit `a86ae3c` の[CI build](https://github.com/Aodaruma/mcmcp/actions/runs/37986473252)も成功している。
 
 元の地図アート現場そのもの、MOD製の梯子、梯子途中の動的破壊、マルチプレイの通信遅延、raw入力によるポータル・縁の通過は実機未検証。足場のない梯子途中を最終目的地にする用途は対象外。先行する取引・生産・飛行の全ケースを今回のJARで再実行したものではない。
+
+## 囲まれた入口の追加修正 `ladder-field-r7`
+
+R3導入後の地図アート担当の現場試験では、入口から1歩で `movement_stalled` となった。新しい固定fixture `ladder_enclosed` は、東向き梯子の上段に東・南の壁と上のwall torchを追加し、開始位置を `(305.456794159,112,304.508786297)` とする。公開目標は実在する下階の足場 `(306,101,305)`。現場の下階全体を複製したものではなく、上段での進入停止を切り分ける再現である。
+
+R3で33tickの `movement_stalled` と終了位置z=304.606786を再現した。梯子はセル幅の3/16を占め、プレイヤーの身体の端が梯子の薄い側面に重なっていた。経路はセル中央の通路を検証していたが、実際の入力は横位置のずれを許容して前進し、各tickの安全判定に止められていた。
+
+修正版は最新revisionで安全確認したVanilla梯子の空き幅の中央を狙い、同じ高さの入口では、今の横位置で進入すると当たる場合に先に横へ寄せる。executorは引き続き局所安全層の検証結果を使う。最終の衝突・落下判定、公開の到着条件、経路・時間・距離の予算は緩めない。診断用ログは製品候補から除いた。
+
+| ケース | 結果 | ticks | server側の確認 |
+| --- | --- | ---: | --- |
+| Enclosed：囲まれた入口からy112→101 | succeeded | 119 | y101、接地、体力20 |
+| LongDown：y112→101 | succeeded | 105 | y101、接地、体力20 |
+| LongUp：y101→112 | succeeded | 125 | y112、接地、体力20 |
+| Down：y104→101 | succeeded | 54 | y101、接地、体力20 |
+| Up：y101→104 | succeeded | 62 | y104、接地、体力20 |
+| Cancel | cancelled / client_request | 22 | 梯子接触、体力20 |
+| TickLimit | failed / tick_limit | 3 | y104、接地、体力20 |
+| Gap | failed / tick_limit | 600 | y104、接地、体力20 |
+
+8ケースともREADY・jobなし。成功5ケースは足場中心の水平0.25ブロック以内。Java 1,693＋harness 14＋admin bridge 28＝1,735件、build・harness隔離・PowerShell/Python source checksも成功した。公開15ツールの全schemaは既存catalogと一致する。
+
+製品JAR SHA-256：`ee1a94e94cecdf3962b1cdc05fef0433b2836c8a2ae124399a6ce0d626aaa57c`。ローカル記録は `artifacts/v2-ladder-field-20261010/r7-evidence`、製品は同ディレクトリの `package-r7/mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar`。05:57 JSTに元world・設定・JARの66ファイルを全hash一致で復元し、fixtureを退避、containerを停止した。05:59 JSTにはDocker Desktop/backendの終了も確認した。通常ゲームは地図アート担当が操作を保留し、差し替え担当へ引き継ぐ。通常サーバーでの修正版の動作確認は別途必要。

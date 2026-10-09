@@ -72,9 +72,15 @@ Java 1,693＋harness 14＋admin bridge 28＝1,735件、build・harness隔離・P
 
 製品JARのSHA-256：`55f1703ed44cd1cec6fd8b199d2702e5964a3278a26161352d9c4008aaea0a94`。ローカル保存先は `artifacts/v2-ladder-20261010/package-r3`。通常profileの交換・再接続・MCP ONは利用者指定の差し替え担当が完了した。旧版バックアップ、導入先hash、交換後起動のJVM、新session、READY/jobなし、15ツール全schema一致を同担当の `artifacts/v2-ladder-install-20261010/normal-verification.json` で確認。現場での追加移動・試験は行っていない。
 
+## 囲まれた梯子の入口の追加修正
+
+通常 `ladder-r3` 導入後、壁に囲まれた入口で1歩進んで停止する追加報告があった。現場の入口座標の小数部分と上段の壁・たいまつを隔離fixtureへ再現し、`movement_stalled` を確認。梯子の薄い当たり判定へ身体の端が重なる一方、経路制御が横ずれを許容して前進していた。追加候補 `ladder-field-r7` は確認済みの通路内で先に横位置を合わせる。衝突・落下の安全判定は緩めない。
+
+同候補は囲まれた入口からの11段下降、通常の短い／長い梯子上下、取消、tick上限、欠損梯子の8ケースに合格。全ケース体力20、終了時READY/jobなし。公開15ツール/schemaは変更なし。製品JARはローカル `artifacts/v2-ladder-field-20261010/package-r7`、SHA-256 `ee1a94e94cecdf3962b1cdc05fef0433b2836c8a2ae124399a6ce0d626aaa57c`。通常ゲームの所有を地図アート担当から差し替え担当へ渡した後に導入する。Waystones・バッグ対応はこのJARには含まない。[追加検証の詳細](experiments/20261010_v2_ladder_docker.md#囲まれた入口の追加修正-ladder-field-r7)。
+
 ## 残件
 
 - Sophisticated Backpacksのネザライトバッグで報告された `storage_layout_unsupported`：未解決。実際のupgrade・スロット構造に合わせた隔離再現が必要。判定を一括解除する変更はしていない。
 - Waystonesの行き先一覧／選択：公開provider未実装。
-- raw入力がポータルや梯子の縁で止まる報告：raw入力としての再検証は未実施。`agent_move` の梯子下降は上記の固定fixtureで修正確認済み。地図アート現場の配置、MOD製の梯子、通信遅延は未検証。
+- raw入力がポータルや梯子の縁で止まる報告：raw入力としての再検証は未実施。`agent_move` は現場の上段配置を再現した固定fixtureで修正確認済み。現場の下階全体、MOD製の梯子、通信遅延は未検証。
 - 金床・エンチャント、MOD収納の対応拡大、施工全体の保存・再開は引き続き残件。取引の追加は[取引仕様](PUBLIC_API_V2_MERCHANTS_20261010.md)を参照。

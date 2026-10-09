@@ -472,6 +472,40 @@ public final class LocalObservationVolume {
                 && goalIntendedMovementSafe(atTick(evaluated.record(), observedTick));
     }
 
+    /** Centers the body in a verified ladder's free space before entering from a side landing. */
+    public synchronized Optional<LadderSteering> ladderSteering(
+            LocalPlayer player, Vec3 target, long worldRevision) {
+        if (latestFor(player).filter(frame -> frame.worldRevision() == worldRevision).isEmpty())
+            return Optional.empty();
+        var level = (ClientLevel) player.level();
+        var box = player.getBoundingBox();
+        var origin = point(box.getCenter());
+        var targetBox = box.move(target.subtract(box.getCenter()));
+        if (!safeLadderCell(player, level, origin, targetBox)) return Optional.empty();
+        var position = BlockPos.containing(target.x, targetBox.minY + MOVEMENT_EPSILON, target.z);
+        var facing = level.getBlockState(position).getValue(net.minecraft.world.level.block.LadderBlock.FACING);
+        // A vanilla ladder occupies 3/16 of its cell; the free interval's center is offset by 3/32.
+        var centered = target.add(facing.getStepX() * 3.0D / 32.0D, 0, facing.getStepZ() * 3.0D / 32.0D);
+        targetBox = box.move(centered.subtract(box.getCenter()));
+        if (!safeLadderCell(player, level, origin, targetBox)) return Optional.empty();
+        var steering = centered;
+        if (!player.onClimbable() && Math.abs(targetBox.minY - box.minY) < MOVEMENT_EPSILON) {
+            int dx = position.getX() - Mth.floor(player.getX());
+            int dz = position.getZ() - Mth.floor(player.getZ());
+            // The route proves a centered corridor. Align the actual body before crossing its lip.
+            if (dx == 0 && Math.abs(dz) == 1
+                    && !level.noCollision(player, targetBox.move(player.getX() - centered.x, 0, 0))) {
+                steering = new Vec3(centered.x, centered.y, player.getZ());
+            } else if (dz == 0 && Math.abs(dx) == 1
+                    && !level.noCollision(player, targetBox.move(0, 0, player.getZ() - centered.z))) {
+                steering = new Vec3(player.getX(), centered.y, centered.z);
+            }
+        }
+        return Optional.of(new LadderSteering(centered, steering));
+    }
+
+    public record LadderSteering(Vec3 target, Vec3 steeringTarget) { }
+
     /** Allows only the selected one-block vertical edge to relax the horizontal ground preview. */
     public synchronized boolean verifiesNavigationResolvedMovement(
             LocalPlayer player,

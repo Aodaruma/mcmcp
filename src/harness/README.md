@@ -6,7 +6,7 @@ The additional `-Dmcmcp.fixture.v2Priorities=true` flag enables fixed test prepa
 `config/mcmcp-v2-priorities/request.txt`. Write a fresh integer followed by a colon and one of
 `components`, `cake`, `cancel`, `blueprint`, `inventory`, `water`, `water_air`, `boat`, `minecart`, `horse`, `mod_break`,
 `trade`, `trade_full`, `trade_change`, `elytra_step`, `mechanisms`, `dimension_end`, `dimension_overworld`,
-`ladder_down`, `ladder_long`, `ladder_up`, `ladder_long_up`, `ladder_gap`, or `report`.
+`ladder_down`, `ladder_long`, `ladder_up`, `ladder_long_up`, `ladder_gap`, `ladder_enclosed`, or `report`.
 The receipt is written to `receipt.json`. This accepts no commands, paths, coordinates or item IDs.
 It uses the same private integrated-server owner checks below. Production JARs do not include it.
 
@@ -23,11 +23,14 @@ so run its retreat test immediately. `cake`/`cancel` use the existing production
 The ladder cases additionally clear **300,101,300 through 320,115,320**. They prepare an east-facing
 ladder at x=305, z=305 between feet heights 101 and 104 (short) or 112 (long). Downward cases start
 at x=305.5814, z=304.7269 on the upper floor lip. Upward cases start at x=306.5, z=305.5 on the lower
-floor. `ladder_gap` removes the rung at y=102. Use only a backed-up disposable world.
+floor. `ladder_gap` removes the rung at y=102. `ladder_enclosed` surrounds the long ladder's upper
+entry with walls and starts at x=305.456794159, z=304.508786297 to reproduce shoulder collision
+against the ladder's thin side. Use only a backed-up disposable world.
 Run `tools/eval/Invoke-McmcpV2LadderSmoke.ps1 -TokenPath <private-token-file> -Endpoint <endpoint>
 -ExpectedWorldSession <session> -ArtifactDirectory <fresh-directory> -LadderCase <case>` after setup.
 Cases `Down`, `LongDown`, `Up`, `LongUp`, `Gap` match those five preparations. `Cancel` uses
-`ladder_long`; `TickLimit` uses `ladder_down`. The runner checks the full public catalog, session,
+`ladder_long`; `TickLimit` uses `ladder_down`; `Enclosed` uses `ladder_enclosed`.
+The runner checks the full public catalog, session,
 fixture bounds, health, terminal status and idle control; issue `report` afterward for server-side
 landing evidence. Cancellation releases inputs and does not freeze Vanilla ladder gravity.
 

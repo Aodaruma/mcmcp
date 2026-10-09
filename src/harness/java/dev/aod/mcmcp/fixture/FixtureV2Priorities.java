@@ -175,8 +175,8 @@ final class FixtureV2Priorities {
                         + (slot < 9 ? "hotbar." + slot : "inventory." + (slot - 9)) + " with minecraft:stone 64");
             }
             case "blueprint" -> result.add("give @s minecraft:cobblestone 32");
-            case "ladder_down", "ladder_long", "ladder_up", "ladder_long_up", "ladder_gap" -> {
-                int top = kind.equals("ladder_long") || kind.equals("ladder_long_up") ? 112 : 104;
+            case "ladder_down", "ladder_long", "ladder_up", "ladder_long_up", "ladder_gap", "ladder_enclosed" -> {
+                int top = kind.equals("ladder_long") || kind.equals("ladder_long_up") || kind.equals("ladder_enclosed") ? 112 : 104;
                 result.addAll(List.of("fill 300 101 300 320 115 320 minecraft:air",
                         "fill 300 " + (top - 1) + " 300 310 " + (top - 1) + " 310 minecraft:stone",
                         "fill 305 101 305 305 " + top + " 305 minecraft:air",
@@ -185,6 +185,13 @@ final class FixtureV2Priorities {
                         "tp @s 305.5814 " + top + " 304.7269 0 35"));
                 if (kind.equals("ladder_up") || kind.equals("ladder_long_up")) result.add("tp @s 306.5 101 305.5 90 0");
                 if (kind.equals("ladder_gap")) result.add("setblock 305 102 305 minecraft:air");
+                if (kind.equals("ladder_enclosed")) result.addAll(List.of(
+                        "fill 306 110 305 306 113 305 minecraft:iron_block",
+                        "fill 305 110 306 305 113 306 minecraft:iron_block",
+                        "setblock 306 112 304 minecraft:cobblestone",
+                        "setblock 306 113 304 minecraft:deepslate",
+                        "setblock 305 113 305 minecraft:wall_torch[facing=north]",
+                        "tp @s 305.456794159 112 304.508786297 0 85"));
             }
             case "elytra_step" -> result.addAll(List.of("item replace entity @s armor.chest with minecraft:elytra",
                     "fill 306 101 304 310 101 306 minecraft:stone", "tp @s 305.5 101 305.5 -90 0"));

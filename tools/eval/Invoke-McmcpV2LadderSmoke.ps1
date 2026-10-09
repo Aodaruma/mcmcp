@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param([string]$TokenPath,[string]$Endpoint='http://127.0.0.1:8765/mcp',
     [string]$ExpectedWorldSession,[string]$ArtifactDirectory,
-    [ValidateSet('Down','LongDown','Up','LongUp','Gap','Cancel','TickLimit')][string]$LadderCase='Down',
+    [ValidateSet('Down','LongDown','Up','LongUp','Gap','Cancel','TickLimit','Enclosed')][string]$LadderCase='Down',
     [switch]$LibraryOnly)
 $runLadder=-not $LibraryOnly
 . (Join-Path $PSScriptRoot 'Invoke-McmcpV2Smoke.ps1') -TokenPath $TokenPath -Endpoint $Endpoint `
@@ -20,7 +20,7 @@ function Get-V2SmokeState {
 
 function Invoke-V2SmokeCore {
     $before=Get-V2SmokeState
-    $top=if($LadderCase -cin @('LongDown','LongUp','Cancel')){112}else{104}
+    $top=if($LadderCase -cin @('LongDown','LongUp','Cancel','Enclosed')){112}else{104}
     $ascending=$LadderCase -cin @('Up','LongUp')
     $startY=if($ascending){101}else{$top}
     Assert-V2Smoke ([Math]::Abs($before.player.position.y-$startY) -lt 0.01) 'Unexpected ladder start height'
@@ -46,7 +46,7 @@ function Invoke-V2SmokeCore {
     }
     $after=Get-V2SmokeState
     Assert-V2Smoke ($after.player.health -eq $before.player.health) 'Ladder movement lost health'
-    if($LadderCase -cin @('Down','LongDown','Up','LongUp')) {
+    if($LadderCase -cin @('Down','LongDown','Up','LongUp','Enclosed')) {
         $p=$after.player.position
         Assert-V2Smoke ([Math]::Abs($p.y-$targetY) -lt 0.05 -and
             [Math]::Sqrt([Math]::Pow($p.x-306.5,2)+[Math]::Pow($p.z-305.5,2)) -le 0.25) 'Ladder destination mismatch'

@@ -316,10 +316,19 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         // a caller that wants camera motion must declare and execute face_known_position.
         double brakingTicks = locomotion.aerial() ? 11.0D
                 : locomotion == Locomotion.WATER && player.isInWater() ? 3.0D : 0.0D;
+        var target = new Vec3(waypoint.x() + 0.5D,
+                waypoint.y() + player.getBbHeight() * 0.5D + (locomotion.aerial() ? Locomotion.FLIGHT_FEET_OFFSET : 0.0D),
+                waypoint.z() + 0.5D);
+        var ladder = locomotion == Locomotion.LADDER
+                ? movementSafety.ladderSteering(player, target, snapshot.worldRevision())
+                : java.util.Optional.<LocalObservationVolume.LadderSteering>empty();
+        if (ladder.isPresent()) target = ladder.orElseThrow().target();
+        var steeringTarget = ladder.map(LocalObservationVolume.LadderSteering::steeringTarget).orElse(target);
         Set<MovementInputLease.MovementKey> desired = steering(
                 player.getX() + brakingTicks * player.getDeltaMovement().x,
                 player.getZ() + brakingTicks * player.getDeltaMovement().z,
-                player.getYRot(), waypoint, waypointTolerance);
+                player.getYRot(), steeringTarget.x, steeringTarget.z,
+                ladder.isPresent() ? Math.min(waypointTolerance, 0.08D) : waypointTolerance);
         if (locomotion.aerial() && Math.hypot(
                 waypoint.x() + 0.5D - player.getX() - brakingTicks * player.getDeltaMovement().x,
                 waypoint.z() + 0.5D - player.getZ() - brakingTicks * player.getDeltaMovement().z) <= waypointTolerance)
@@ -384,10 +393,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                     snapshot.worldRevision(),
                     remainingDistance,
                     new AgentInputState.NavigationIntent(
-                            new Vec3(
-                                    waypoint.x() + 0.5D,
-                                    waypoint.y() + player.getBbHeight() * 0.5D + (locomotion.aerial() ? Locomotion.FLIGHT_FEET_OFFSET : 0.0D),
-                                    waypoint.z() + 0.5D),
+                            target,
                             verticalDelta,
                             locomotion,
                             waypointTolerance));
