@@ -15,6 +15,89 @@ class ExactInventoryTransferTest {
     private static final UUID SESSION = UUID.randomUUID();
 
     @Test
+    void storageBoundaryUsesWholeStackDestinationsWithinTheSameClickBudget() {
+        var initial = boundarySlots();
+        var plan = ExactInventoryTransfer.plan(initial, List.of(0, 1, 2, 3, 4, 5, 6), List.of(7, 8),
+                ITEM, 77, true, 448, 7, 64, boundaryCapacities(2048), 64).orElseThrow();
+        assertThat(plan.clickCount()).isEqualTo(14);
+        var current = snapshot(initial, EMPTY, 1);
+        for (var click : plan.clicks()) {
+            assertThat(plan.beginClick(current, current.packetLedgerRevision())).isTrue();
+            assertThat(click.slots().stream().mapToInt(StackFingerprint::count).sum() + click.cursor().count()).isEqualTo(2264);
+            current = snapshot(click.slots(), click.cursor(), current.packetLedgerRevision() + 1);
+            assertThat(plan.confirm(current, current.packetLedgerRevision())).isTrue();
+        }
+        assertThat(current.slots().subList(0, 7)).containsOnly(EMPTY);
+        assertThat(current.slots().subList(7, 9)).containsExactly(stack(2008), stack(256));
+        assertThat(current.carried()).isEqualTo(EMPTY);
+        assertThat(plan.confirmedCount()).isEqualTo(448);
+        assertThat(plan.reconcileReadback(current)).isTrue();
+        assertThat(initial.get(7)).isEqualTo(stack(1816));
+    }
+
+    @Test
+    void fittingBoundaryTransferStillFillsTheExistingStackFirst() {
+        var plan = ExactInventoryTransfer.plan(boundarySlots(), List.of(0, 1, 2, 3, 4, 5, 6), List.of(7, 8),
+                ITEM, 77, true, 232, 7, 64, boundaryCapacities(2048), 64).orElseThrow();
+        assertThat(plan.clickCount()).isLessThanOrEqualTo(14);
+        assertThat(plan.clicks().getLast().slots().subList(7, 9)).containsExactly(stack(2048), EMPTY);
+    }
+
+    @Test
+    void nearbyCapacityBoundariesKeepQuantityAndBothDestinationLimits() {
+        for (int count : new int[]{1791, 1792, 1793, 1816, 1984, 1985, 2047, 2048}) {
+            var slots = new java.util.ArrayList<>(boundarySlots());
+            slots.set(7, stack(count));
+            var plan = ExactInventoryTransfer.plan(slots, List.of(0, 1, 2, 3, 4, 5, 6), List.of(7, 8),
+                    ITEM, 77, true, 448, 7, 64, boundaryCapacities(2048), 64).orElseThrow();
+            assertThat(plan.clickCount()).isLessThanOrEqualTo(14);
+            var last = plan.clicks().getLast();
+            assertThat(last.slots().subList(0, 7)).containsOnly(EMPTY);
+            assertThat(last.slots().subList(7, 9)).allSatisfy(stack -> assertThat(stack.count()).isBetween(0, 2048));
+            assertThat(last.slots().stream().mapToInt(StackFingerprint::count).sum()).isEqualTo(count + 448);
+            assertThat(last.cursor()).isEqualTo(EMPTY);
+        }
+    }
+
+    @Test
+    void boundaryFallbackDoesNotRelaxTotalCapacityOrTheClickLimit() {
+        for (int secondCapacity : new int[]{0, 215, 216}) {
+            assertThat(ExactInventoryTransfer.plan(boundarySlots(), List.of(0, 1, 2, 3, 4, 5, 6), List.of(7, 8),
+                    ITEM, 77, true, 448, 7, 64, boundaryCapacities(secondCapacity), 64)).isEmpty();
+        }
+    }
+
+    @Test
+    void cancellationOfBoundaryFallbackReturnsOnlyOwnedCursorAndCountsOnlyProvenMoves() {
+        var initial = boundarySlots();
+        var plan = ExactInventoryTransfer.plan(initial, List.of(0, 1, 2, 3, 4, 5, 6), List.of(7, 8),
+                ITEM, 77, true, 448, 7, 64, boundaryCapacities(2048), 64).orElseThrow();
+        var current = snapshot(initial, EMPTY, 1);
+        for (int index = 0; index < 7; index++) {
+            assertThat(plan.beginClick(current, current.packetLedgerRevision())).isTrue();
+            var click = plan.next();
+            current = snapshot(click.slots(), click.cursor(), current.packetLedgerRevision() + 1);
+            assertThat(plan.confirm(current, current.packetLedgerRevision())).isTrue();
+        }
+        assertThat(plan.confirmedCount()).isEqualTo(192);
+        assertThat(current.carried().count()).isEqualTo(64);
+        var recovery = plan.cursorReturn(current).orElseThrow();
+        assertThat(recovery.slot()).isEqualTo(3);
+        assertThat(plan.confirmRelease(snapshot(recovery.slots(), EMPTY, 9))).isTrue();
+        assertThat(plan.confirmedCount()).isEqualTo(192);
+        assertThat(recovery.slots().subList(7, 9)).containsExactly(stack(2008), EMPTY);
+        assertThat(plan.exhausted()).isTrue();
+    }
+
+    private static List<StackFingerprint> boundarySlots() {
+        return List.of(stack(64), stack(64), stack(64), stack(64), stack(64), stack(64), stack(64), stack(1816), EMPTY);
+    }
+
+    private static List<Integer> boundaryCapacities(int last) {
+        return List.of(64, 64, 64, 64, 64, 64, 64, 2048, last);
+    }
+
+    @Test
     void cleanupReturnsOnlyFreshExpectedCursorWithoutConfirmingConcurrentSourceChanges() {
         var initial = List.of(stack(668), EMPTY);
         var plan = ExactInventoryTransfer.plan(initial, List.of(0), List.of(1),

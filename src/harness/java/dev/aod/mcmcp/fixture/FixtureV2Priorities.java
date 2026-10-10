@@ -229,6 +229,12 @@ final class FixtureV2Priorities {
                 kind.equals("storage_plain") ? 64 : food ? 668 : 2048));
         setter.invoke(inventory, 1, new net.minecraft.world.item.ItemStack(BuiltInRegistries.ITEM.getValue(
                 net.minecraft.resources.Identifier.parse("minecraft:black_concrete")), 64));
+        if (kind.equals("storage_boundary")) {
+            var redPowder = BuiltInRegistries.ITEM.getValue(net.minecraft.resources.Identifier.parse("minecraft:red_concrete_powder"));
+            setter.invoke(inventory, 0, new net.minecraft.world.item.ItemStack(redPowder, 1816));
+            for (int slot = 9; slot < 16; slot++) player.getInventory().setItem(slot,
+                    new net.minecraft.world.item.ItemStack(redPowder, 64));
+        }
         if (kind.equals("storage_tab")) wrapper.getClass().getMethod("setOpenTabId", int.class).invoke(wrapper, 3);
         if (food) player.getFoodData().setFoodLevel(20);
         player.inventoryMenu.broadcastChanges();
@@ -323,7 +329,7 @@ final class FixtureV2Priorities {
                         + (slot < 9 ? "hotbar." + slot : "inventory." + (slot - 9)) + " with minecraft:stone 64");
             }
             case "blueprint" -> result.add("give @s minecraft:cobblestone 32");
-            case "storage_plain", "storage_upgraded", "storage_tab", "storage_food", "storage_drift", "storage_cursor_drift" -> result.addAll(List.of(
+            case "storage_plain", "storage_upgraded", "storage_tab", "storage_food", "storage_drift", "storage_cursor_drift", "storage_boundary" -> result.addAll(List.of(
                     "kill @e[type=minecraft:item,x=300,y=100,z=300,dx=20,dy=15,dz=20]",
                     "item replace entity @s hotbar.6 with sophisticatedbackpacks:netherite_backpack",
                     "give @s minecraft:black_concrete 32"));

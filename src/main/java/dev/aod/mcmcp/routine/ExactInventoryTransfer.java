@@ -98,6 +98,18 @@ public final class ExactInventoryTransfer {
                 || new HashSet<>(sources).size() != sources.size()
                 || new HashSet<>(destinations).size() != destinations.size()
                 || sources.stream().anyMatch(destinations::contains)) return Optional.empty();
+        var preferred = planInOrder(initial, sources, destinations, item, defaultHash, defaultOnly,
+                quantity, maxSources, stackLimit, capacities, pickupLimit, false);
+        // A partly filled destination can force extra split/return clicks although a whole-stack
+        // destination fits. Try one other finite plan before dispatch, keeping the same click cap.
+        return preferred.isPresent() ? preferred : planInOrder(initial, sources, destinations, item,
+                defaultHash, defaultOnly, quantity, maxSources, stackLimit, capacities, pickupLimit, true);
+    }
+
+    private static Optional<ExactInventoryTransfer> planInOrder(
+            List<StackFingerprint> initial, List<Integer> sources, List<Integer> destinations,
+            String item, int defaultHash, boolean defaultOnly, int quantity, int maxSources,
+            int stackLimit, List<Integer> capacities, int pickupLimit, boolean preferWholeStacks) {
         var slots = new ArrayList<>(initial);
         var clicks = new ArrayList<Click>();
         int remaining = quantity;
@@ -107,7 +119,17 @@ public final class ExactInventoryTransfer {
             if (original.empty() || !original.itemId().equals(item)
                     || (defaultOnly && original.itemAndComponentsHash() != defaultHash)) continue;
             if (original.count() > capacities.get(source) || ++usedSources > maxSources) return Optional.empty();
-            for (int destination : destinations) {
+            List<Integer> orderedDestinations = destinations;
+            if (preferWholeStacks) {
+                orderedDestinations = new ArrayList<>(destinations);
+                int wanted = Math.min(remaining, original.count());
+                orderedDestinations.sort(java.util.Comparator.comparingInt(destination -> {
+                    var to = slots.get(destination);
+                    return (to.empty() || sameItem(original, to))
+                            && capacities.get(destination) - to.count() >= wanted ? 0 : 1;
+                }));
+            }
+            for (int destination : orderedDestinations) {
                 var from = slots.get(source);
                 var to = slots.get(destination);
                 if (from.empty() || remaining == 0) break;
