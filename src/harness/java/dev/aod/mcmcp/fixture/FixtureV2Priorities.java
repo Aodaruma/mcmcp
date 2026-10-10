@@ -382,8 +382,28 @@ final class FixtureV2Priorities {
                 result.addAll(List.of("fill 300 101 300 320 116 320 minecraft:air", "tp @s 305.5 101 305.5 -90 0"));
                 if (kind.equals("move_exact_slab")) result.add("fill 306 101 304 308 101 306 minecraft:stone_slab[type=bottom]");
             }
-            case "portal_end" -> result.addAll(List.of("setblock 305 100 303 minecraft:end_portal",
+            case "portal_end" -> result.addAll(List.of("setblock 305 101 303 minecraft:air", "setblock 305 100 303 minecraft:end_portal",
                     "tp @s 305.5 101 304.5 180 40"));
+            case "scaffold_column", "scaffold_top", "seed_piston", "seed_scaffold" -> {
+                result.add("fill 300 101 300 320 116 320 minecraft:air");
+                if (kind.startsWith("scaffold")) {
+                    result.addAll(List.of("fill 305 101 303 305 103 303 minecraft:scaffolding",
+                            "fill 306 103 303 308 103 303 minecraft:scaffolding"));
+                    result.add(kind.equals("scaffold_top") ? "tp @s 305.5 104 303.5 -90 0"
+                            : "tp @s 305.5 101 305.5 180 0");
+                } else {
+                    result.addAll(List.of("fill 307 101 303 307 102 303 minecraft:stone",
+                            "setblock 308 102 303 minecraft:redstone_block",
+                            "setblock 307 102 303 minecraft:piston[facing=up,extended=true]",
+                            "setblock 307 103 303 minecraft:piston_head[facing=up,type=normal,short=false]",
+                            "setblock 307 104 303 minecraft:black_concrete_powder",
+                            "item replace entity @s hotbar.0 with minecraft:netherite_pickaxe",
+                            "item replace entity @s hotbar.1 with minecraft:gray_concrete_powder 16"));
+                    if (kind.equals("seed_scaffold")) result.add("fill 305 101 305 305 103 305 minecraft:scaffolding");
+                    else result.add("fill 304 101 304 306 103 306 minecraft:stone");
+                    result.add("tp @s 305.5 104 305.5 -135 25");
+                }
+            }
             case "portal_nether" -> result.addAll(List.of("fill 304 100 303 307 104 303 minecraft:obsidian",
                     "fill 305 101 303 306 103 303 minecraft:nether_portal[axis=x]", "tp @s 305.5 101 304.5 180 10"));
             case "move_gap", "move_gap_two", "move_gap_roof", "move_drop3", "move_drop4", "move_drop5", "move_drop_ff", "move_drop_protection", "move_drop_cumulative" -> {
