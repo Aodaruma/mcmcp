@@ -1,6 +1,6 @@
 # v2 地図アート利用時の修正
 
-最新候補R18は、収納の同期不一致後も数量未確定を保持して所有cursorを回収し、終了待ち中の状態取得・取消が拒否され続ける問題を修正した。[隔離検証と通常R15の復旧手順](experiments/20261010_v2_storage_recovery_docker.md)。通常profileへのR18導入はまだ行っていない。上段chestへの屋上迂回と移動中の被ダメージ原因、下記のscript停止child診断は別の残件。
+最新候補R18は、収納の同期不一致後も数量未確定を保持して所有cursorを回収し、終了待ち中の状態取得・取消が拒否され続ける問題を修正した。[隔離検証と通常R15の復旧手順](experiments/20261010_v2_storage_recovery_docker.md)。通常profileへのR18導入・新sessionは2026-10-10 13:17 JSTに差し替え担当が確認し、地図アート担当へ所有を返した。上段chestへの屋上迂回と移動中の被ダメージ原因、下記のscript停止child診断は別の残件。
 
 この文書は開発候補 `merchants-r4` と後続の `ladder-r3` の追加仕様をまとめる。`merchants-r4` は2026-10-10 03:38 JSTに通常の「くらふとぶ！-v01.2」へ導入した。後続の `ladder-r3` も隔離Dockerで検証後、差し替え担当が導入し、05:27 JSTまでにPrism起動・サーバー接続・MCP ONと公開API照合を完了した。
 
@@ -104,3 +104,8 @@ Java 1,693＋harness 14＋admin bridge 28＝1,735件、build・harness隔離・P
 ## R19候補での実装（実機未確認）
 
 上記の停止child診断と、操作できない屋根を選ぶ接近処理を修正した。親scriptの `result.last_command` はreportと独立してID・結果・UNKNOWN/effectsを有界に保存する。収納・設備・interact・破壊では、近傍の終点に目線からのreachと対象へのrayを要求し、経路なしで移動し続けない。下降制限は維持した。Java等1,765件とbuildが成功。R18のJARは固定し、R19の隔離実機試験と通常導入は未実施。[仕様・試験・次回手順](experiments/20261010_v2_approach_script_candidate.md)。
+
+
+## R20候補：収納枠境界（R18ベース、実機未確認）
+
+R18導入後、既存収納1,816個から448個を一度にstoreすると、14クリック内の計画を作れず事前拒否するモデルをソースで再現した。従来順序で計画できない場合だけ、全スタックが入る枠を優先する有限な別計画を1回試す。上限・同期確認・UNKNOWN非再送を維持し、モデルでは2,008＋256個へ14クリックで収納できる。R18ベースで自動1,754件・build成功。R19とは別の候補で、実機確認・通常差し替えは未実施。[詳細と新fixture](experiments/20261010_v2_storage_boundary_candidate.md)。
