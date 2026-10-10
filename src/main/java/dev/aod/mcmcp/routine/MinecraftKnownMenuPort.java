@@ -613,23 +613,22 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
             return false;
         }
         long cursorProof = signals.cursorProofRevision(minecraft.level);
+        long lastDispatch = state.cursorReturn == null
+                ? state.exactTransfer.dispatchRevision() : state.cursorReturnRevision;
+        // Menu release needs a fresh empty cursor, not proof that a concurrently changing
+        // inventory completed the requested transfer. Its inconclusive result is retained.
+        if (server.carried().empty() && server.packetLedgerRevision() > lastDispatch
+                && cursorProof > lastDispatch) {
+            state.cursorReleaseProven = true;
+            return true;
+        }
         if (state.cursorReturn != null) {
-            if (server.packetLedgerRevision() > state.cursorReturnRevision
-                    && cursorProof > state.cursorReturnRevision && state.cursorReturn.confirmed(server)) {
-                state.cursorReleaseProven = true;
-                return true;
-            }
             if (currentTick() > state.releaseDeadline) state.releaseFault = true;
             return false; // A possibly sent cleanup click is never retried.
         }
         var plan = state.exactTransfer;
         if (plan.awaitingAcknowledgement()) plan.confirm(server, cursorProof);
-        if (plan.awaitingAcknowledgement() || !plan.matchesConfirmed(server)) {
-            if (currentTick() > state.releaseDeadline) state.releaseFault = true;
-            return false;
-        }
-        if (server.carried().empty()) return true;
-        var cleanup = plan.cursorReturn(server).orElse(null);
+        var cleanup = plan.cursorReturnForRelease(server, cursorProof).orElse(null);
         if (cleanup == null || !context.supportsExactPickup()) {
             state.releaseFault = true;
             return false;

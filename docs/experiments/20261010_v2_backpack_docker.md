@@ -1,5 +1,7 @@
 # 2026-10-10 Sophisticated Backpacksの追加検証
 
+後続R18では、並行在庫変化後の終了待ち・診断と取消の拒否を修正した。数量UNKNOWNを保持したcursor回収と、予想外のcursorでは停止を維持したまま診断できることを確認。[終了待ち修正の検証記録](20261010_v2_storage_recovery_docker.md)。以下はR15までの先行記録。
+
 通常ゲームで報告されたネザライトバッグの `storage_layout_unsupported` を、aod-mimoidの既存隔離Dockerで調査した。通常ゲームは地図アート担当が所有し、開発側は操作していない。以下は候補の検証記録であり、通常導入の完了ではない。
 
 ## 再現と修正

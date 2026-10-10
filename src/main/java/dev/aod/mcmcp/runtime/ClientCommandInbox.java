@@ -416,8 +416,7 @@ public final class ClientCommandInbox {
             catch (RuntimeException | LinkageError failure) {
                 handlerProgress = StopProgress.FAILED;
             }
-            int discarded = failPending(
-                    new CommandInvalidatedException("invalidated by emergency stop"));
+            int discarded = failPendingForStop();
             pendingStopDiscardedStarts = Math.addExact(
                     pendingStopDiscardedStarts, discarded);
             if (retainPendingStop(handlerProgress, request.keepReady())) {
@@ -464,9 +463,30 @@ public final class ClientCommandInbox {
     }
 
     private int failPending(Throwable failure) {
+        return failPending(failure, false);
+    }
+
+    int failPendingForStop() {
+        synchronized (admissionGate) {
+            return failPending(new CommandInvalidatedException("invalidated by emergency stop"), true);
+        }
+    }
+
+    private int failPending(Throwable failure, boolean retainRecoveryCommands) {
         var pending = new ArrayList<PendingCommand<?>>();
-        normalQueue.drainTo(pending);
-        controlQueue.drainTo(pending);
+        for (var queue : java.util.List.of(normalQueue, controlQueue)) {
+            queue.removeIf(command -> {
+                // A retained cleanup must not starve fresh diagnostics or cancellation.
+                if (retainRecoveryCommands && command.safetyEpoch() == safetyEpoch.get()
+                        && switch (command.name()) {
+                            case "agent_get_state", "agent_get_mcp_status",
+                                    "agent_cancel_action", "cancel_routine" -> true;
+                            default -> false;
+                        }) return false;
+                pending.add(command);
+                return true;
+            });
+        }
         int discardedStarts = Math.toIntExact(pending.stream()
                 .filter(command -> command.name().equals("start_routine")
                         || command.name().equals("agent_start_action")

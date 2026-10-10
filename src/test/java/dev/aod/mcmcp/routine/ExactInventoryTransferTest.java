@@ -15,6 +15,29 @@ class ExactInventoryTransferTest {
     private static final UUID SESSION = UUID.randomUUID();
 
     @Test
+    void cleanupReturnsOnlyFreshExpectedCursorWithoutConfirmingConcurrentSourceChanges() {
+        var initial = List.of(stack(668), EMPTY);
+        var plan = ExactInventoryTransfer.plan(initial, List.of(0), List.of(1),
+                ITEM, 77, true, 2, 1, 64, List.of(2048, 64), 64).orElseThrow();
+        assertThat(plan.beginClick(snapshot(initial, EMPTY, 1), 1)).isTrue();
+        var expected = plan.next();
+        var changed = new java.util.ArrayList<>(expected.slots());
+        changed.set(0, changed.get(0).withCount(changed.get(0).count() - 1));
+        var server = snapshot(changed, expected.cursor(), 2);
+        assertThat(plan.confirm(server, 2)).isFalse();
+        assertThat(plan.cursorReturnForRelease(server, 1)).isEmpty();
+        var cleanup = plan.cursorReturnForRelease(server, 2).orElseThrow();
+        assertThat(cleanup.slot()).isZero();
+        assertThat(cleanup.slots().getFirst().count()).isEqualTo(667);
+        assertThat(plan.confirmedCount()).isZero();
+        assertThat(plan.awaitingAcknowledgement()).isTrue();
+        assertThat(plan.cursorReturnForRelease(snapshot(changed, expected.cursor().withCount(1), 3), 3)).isEmpty();
+        assertThat(plan.cursorReturnForRelease(snapshot(List.of(stack(2048), EMPTY), expected.cursor(), 3), 3)).isEmpty();
+        assertThat(plan.cursorReturnForRelease(snapshot(List.of(new StackFingerprint("minecraft:stone", 1, 99), EMPTY),
+                expected.cursor(), 3), 3)).isEmpty();
+    }
+
+    @Test
     void fullInventorySwapNeedsNoSpareSlotAndCanRecoverTheSecondCursor() {
         var other = new StackFingerprint("minecraft:stone", 32, 99);
         var initial = List.of(stack(64), other);

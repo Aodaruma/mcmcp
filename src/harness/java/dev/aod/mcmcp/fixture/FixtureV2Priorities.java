@@ -14,11 +14,51 @@ final class FixtureV2Priorities {
     private String previous = "";
     private int ticks;
     private volatile boolean pending;
+    private FixtureSecurity.Context storageDrift;
+    private int storageDriftDeadline;
+    private boolean storageDriftApplied;
+    private boolean storageCursorDrift;
 
     static void install() {
         if (Boolean.getBoolean("mcmcp.fixture.v2Priorities")) {
-            net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(new FixtureV2Priorities()::tick);
+            var fixture = new FixtureV2Priorities();
+            net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(fixture::tick);
+            net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(fixture::driftStorage);
             LOGGER.warn("MCMCP v2 priorities fixture enabled; fixed setup cases only");
+        }
+    }
+
+    private void driftStorage(net.neoforged.neoforge.event.tick.ServerTickEvent.Post event) {
+        var context = storageDrift;
+        if (context == null) return;
+        if (event.getServer() != context.server() || event.getServer().getTickCount() > storageDriftDeadline
+                || !FixtureSecurity.reauthorize(context).allowed()) {
+            storageDrift = null;
+            return;
+        }
+        var player = context.player();
+        if (!player.containerMenu.getCarried().is(net.minecraft.world.item.Items.PUMPKIN_PIE)) return;
+        storageDrift = null;
+        try {
+            var wrapper = backpackWrapper(player.getInventory().getItem(6));
+            var inventory = wrapper.getClass().getMethod("getInventoryHandler").invoke(wrapper);
+            var stack = ((net.minecraft.world.item.ItemStack) inventory.getClass()
+                    .getMethod("getStackInSlot", int.class).invoke(inventory, 0)).copy();
+            if (!stack.is(net.minecraft.world.item.Items.PUMPKIN_PIE) || stack.getCount() < 2)
+                throw new IllegalStateException("fixed food source changed");
+            if (storageCursorDrift) {
+                var cursor = player.containerMenu.getCarried().copy();
+                if (cursor.getCount() < 2) throw new IllegalStateException("fixed cursor changed");
+                cursor.shrink(1);
+                player.containerMenu.setCarried(cursor);
+                stack.grow(1);
+            } else stack.shrink(1);
+            inventory.getClass().getMethod("setStackInSlot", int.class, net.minecraft.world.item.ItemStack.class)
+                    .invoke(inventory, 0, stack);
+            player.containerMenu.broadcastChanges();
+            storageDriftApplied = true;
+        } catch (ReflectiveOperationException failure) {
+            LOGGER.error("MCMCP fixed storage drift failed", failure);
         }
     }
 
@@ -83,6 +123,10 @@ final class FixtureV2Priorities {
                         player.setHealth(player.getMaxHealth());
                         if (kind.equals("water_air")) player.setAirSupply(120);
                         if (kind.startsWith("storage_")) prepareBackpack(player, kind);
+                        storageDriftApplied = false;
+                        storageCursorDrift = kind.equals("storage_cursor_drift");
+                        storageDrift = kind.equals("storage_drift") || storageCursorDrift ? decision.context() : null;
+                        storageDriftDeadline = server.getTickCount() + 1200;
                         if (kind.equals("waystones")) prepareWaystones(player);
                         if (kind.equals("trade") || kind.equals("trade_full")) {
                             var villager = new net.minecraft.world.entity.npc.villager.Villager(net.minecraft.world.entity.EntityTypes.VILLAGER, player.level());
@@ -101,6 +145,7 @@ final class FixtureV2Priorities {
                         }
                     }
                     var inventory = new ArrayList<Object>();
+                    report.put("storage_drift_applied", storageDriftApplied);
                     for (int slot = 0; slot <= 40; slot++) {
                         var stack = player.getInventory().getItem(slot);
                         if (!stack.isEmpty()) inventory.add(Map.of("slot", slot, "item", BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(),
@@ -163,12 +208,14 @@ final class FixtureV2Priorities {
             throws ReflectiveOperationException {
         var stack = player.getInventory().getItem(6);
         var wrapper = backpackWrapper(stack);
+        boolean food = List.of("storage_food", "storage_drift", "storage_cursor_drift").contains(kind);
         // Creating the fixed test inventory initializes its identity on the integrated server.
         Object inventory = wrapper.getClass().getMethod("getInventoryHandler").invoke(wrapper);
         if (!kind.equals("storage_plain")) {
             Object upgrades = wrapper.getClass().getMethod("getUpgradeHandler").invoke(wrapper);
             var setter = upgrades.getClass().getMethod("setStackInSlot", int.class, net.minecraft.world.item.ItemStack.class);
-            var ids = List.of("stack_upgrade_tier_2", "stack_upgrade_tier_2", "stack_upgrade_tier_1", "pickup_upgrade", "magnet_upgrade");
+            var ids = List.of("stack_upgrade_tier_2", "stack_upgrade_tier_2", "stack_upgrade_tier_1", "pickup_upgrade",
+                    food ? "feeding_upgrade" : "magnet_upgrade");
             for (int slot = 0; slot < ids.size(); slot++) {
                 String id = "sophisticatedbackpacks:" + ids.get(slot);
                 var item = BuiltInRegistries.ITEM.keySet().stream().filter(key -> key.toString().equals(id)).findFirst().orElseThrow();
@@ -178,11 +225,12 @@ final class FixtureV2Priorities {
         }
         var setter = inventory.getClass().getMethod("setStackInSlot", int.class, net.minecraft.world.item.ItemStack.class);
         setter.invoke(inventory, 0, new net.minecraft.world.item.ItemStack(BuiltInRegistries.ITEM.getValue(
-                net.minecraft.resources.Identifier.parse("minecraft:white_concrete")),
-                kind.equals("storage_plain") ? 64 : 2048));
+                net.minecraft.resources.Identifier.parse(food ? "minecraft:pumpkin_pie" : "minecraft:white_concrete")),
+                kind.equals("storage_plain") ? 64 : food ? 668 : 2048));
         setter.invoke(inventory, 1, new net.minecraft.world.item.ItemStack(BuiltInRegistries.ITEM.getValue(
                 net.minecraft.resources.Identifier.parse("minecraft:black_concrete")), 64));
         if (kind.equals("storage_tab")) wrapper.getClass().getMethod("setOpenTabId", int.class).invoke(wrapper, 3);
+        if (food) player.getFoodData().setFoodLevel(20);
         player.inventoryMenu.broadcastChanges();
     }
 
@@ -275,7 +323,7 @@ final class FixtureV2Priorities {
                         + (slot < 9 ? "hotbar." + slot : "inventory." + (slot - 9)) + " with minecraft:stone 64");
             }
             case "blueprint" -> result.add("give @s minecraft:cobblestone 32");
-            case "storage_plain", "storage_upgraded", "storage_tab" -> result.addAll(List.of(
+            case "storage_plain", "storage_upgraded", "storage_tab", "storage_food", "storage_drift", "storage_cursor_drift" -> result.addAll(List.of(
                     "kill @e[type=minecraft:item,x=300,y=100,z=300,dx=20,dy=15,dz=20]",
                     "item replace entity @s hotbar.6 with sophisticatedbackpacks:netherite_backpack",
                     "give @s minecraft:black_concrete 32"));

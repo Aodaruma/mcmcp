@@ -232,13 +232,30 @@ public final class ExactInventoryTransfer {
 
     private Optional<CursorReturn> plannedCursorReturn() {
         if (confirmedCursor.empty() || cursorOrigin < 0) return Optional.empty();
-        var source = confirmedSlots.get(cursorOrigin);
-        if (!source.empty() && !sameItem(source, confirmedCursor)) return Optional.empty();
-        long count = (long) source.count() + confirmedCursor.count();
-        if (count > capacities.get(cursorOrigin)) return Optional.empty();
-        var after = new ArrayList<>(confirmedSlots);
-        after.set(cursorOrigin, withCount(confirmedCursor, (int) count));
-        return Optional.of(new CursorReturn(cursorOrigin, List.copyOf(after)));
+        return cursorReturn(confirmedSlots, confirmedCursor, cursorOrigin);
+    }
+
+    /** Cleanup only: a fresh expected cursor may be returned even when concurrent slot changes
+     * prevent confirming the transfer. This never advances the plan or confirms a quantity. */
+    public Optional<CursorReturn> cursorReturnForRelease(ContainerSnapshot snapshot, long cursorProofRevision) {
+        if (snapshot.slots().size() != capacities.size()
+                || snapshot.packetLedgerRevision() <= dispatchRevision || cursorProofRevision <= dispatchRevision)
+            return Optional.empty();
+        var expected = inFlight ? next().cursor() : confirmedCursor;
+        if (expected.empty() || !expected.equals(snapshot.carried())) return Optional.empty();
+        int origin = cursorOrigin;
+        if (origin < 0 && inFlight && confirmedCursor.empty()) origin = next().slot();
+        return origin < 0 ? Optional.empty() : cursorReturn(snapshot.slots(), expected, origin);
+    }
+
+    private Optional<CursorReturn> cursorReturn(List<StackFingerprint> slots, StackFingerprint cursor, int origin) {
+        var source = slots.get(origin);
+        if (!source.empty() && !sameItem(source, cursor)) return Optional.empty();
+        long count = (long) source.count() + cursor.count();
+        if (count > capacities.get(origin)) return Optional.empty();
+        var after = new ArrayList<>(slots);
+        after.set(origin, withCount(cursor, (int) count));
+        return Optional.of(new CursorReturn(origin, List.copyOf(after)));
     }
 
     public boolean awaitingAcknowledgement() { return inFlight; }
