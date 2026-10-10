@@ -115,3 +115,7 @@ R18導入後、既存収納1,816個から448個を一度にstoreすると、14�
 通常R18の上段扉付近でmove失敗後、新規move／観測scriptが `SAFETY_PRECONDITION` となった。局所衝突でREPLANになった場合の受付拒否はソースで確認したが、当時のhazard明細がなく現場原因は未確定。後続の位置変更と復帰は手動操作によるもので、公開APIの退避成功には含めない。
 
 判定順序・許可条件を維持して、公開エラーmessageへ固定の拒否理由、局所安全による拒否なら保持しているhazard分類・観測tick／revisionを追加した。自動1,774件・build成功。R18～R20の固定配布物は維持し、追加差し替えは依頼しない。直接state/status/observationによる採取手順と、扉・感圧板の隔離再現、自律退避の未実装範囲は[調査記録](experiments/20261010_v2_safe_local_diagnosis.md)を参照。
+
+## 破壊failed後の対象消失（診断改善の残件）
+
+R18の黄緑→白の種交換で、breakは `block_runtime_failed` / broken_blocks:0だが直後のfresh観測ではair・直下glassを確認した。破壊を再送せず、別の白設置と再観測で復旧済み。失敗と観測された効果を分けて保持し、再起動・差し替えは不要。[事実・ソース候補・未実装の診断案](experiments/20261010_v2_break_post_effect_diagnosis.md)。長い上階目標で停止し短いwaypointでは到達した報告も同記録に残す。

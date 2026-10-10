@@ -64,3 +64,5 @@ R18／R19／R20の固定済み配布artifactは変更しない。通常導入・
 - 自律退避は別の未実装項目。開閉待ちの有限再観測や、現在AABBから新しい衝突を増やさず既知安全地点へ戻る移動を検討するが、危険下の入力許可を緩める前にfixtureで経路・tickごとの証明、予算、取消を確認する。
 
 自動試験はJava 1,732件、harness 14件、admin bridge 28件、計1,774件が失敗・skipなしで成功。buildとverifyHarnessIsolationも成功。現在AABBの衝突をREPLANとして公開hazardへ写す試験、診断本文と公開エラーへの写像、観測がない場合の診断を含む。現場の根本原因の特定・自律退避・隔離実機確認は未完了。
+
+製品ソース `dd032ecfbc4ee0e00fdc5d40a32d5fd57255d74f` の[CI](https://github.com/Aodaruma/mcmcp/actions/runs/38026267817)も成功し、Releaseはskip。共通 `tools/check-source.ps1 -SkipJava` の通信15件・blueprint 4件と保存再開／capability／各v2 runnerのmock試験も成功した。
