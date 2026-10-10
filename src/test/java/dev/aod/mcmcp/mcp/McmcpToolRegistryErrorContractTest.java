@@ -11,6 +11,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class McmcpToolRegistryErrorContractTest {
     @Test
+    void safetyDiagnosisSurvivesMappingWithoutAddingFieldsToThePublicErrorEnvelope() throws Exception {
+        String message = "Move requires a safe local world state. Reason: local_safety_unconfirmed. "
+                + "Local hazard: collision; observed_tick: 3859; world_revision: 42.";
+        var registry = new McmcpToolRegistry(
+                (command, context) -> CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.failure(
+                        "unsafe_state", message, true, java.util.Map.of("private_detail", "not public"))),
+                Duration.ofSeconds(1));
+        var result = registry.call("agent_move", JsonParser.parseString(
+                "{\"x\":101,\"y\":49,\"z\":1}").getAsJsonObject());
+        assertError(result, "SAFETY_PRECONDITION");
+        var error = JsonParser.parseString(result.getAsJsonArray("content").get(0)
+                .getAsJsonObject().get("text").getAsString()).getAsJsonObject();
+        assertThat(error.get("message").getAsString()).isEqualTo(message);
+        assertThat(error.keySet()).containsExactlyInAnyOrder("code", "message", "recoverable");
+    }
+
+    @Test
     void dispatchPressureIsServerBusyAndTaskBusyMustBeExplicit() throws Exception {
         var timedOut = new McmcpToolRegistry(
                 (command, context) -> new CompletableFuture<>(), Duration.ofNanos(1));

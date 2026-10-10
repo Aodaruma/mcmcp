@@ -148,6 +148,29 @@ class LocalObservationProjectorTest {
     }
 
     @Test
+    void currentDoorContactRemainsReplanAndPublishesCollisionWithoutARecoveryBypass() {
+        var center = new ObservationRecord.Point(98.0, 49.9, -1.5);
+        var current = record(3859, 42, 0, center, center, center,
+                ObservationRecord.Transition.STATIONARY,
+                ObservationRecord.Clearance.BLOCKED,
+                ObservationRecord.Hazard.COLLISION);
+        var snapshot = new LocalObservationVolume.Snapshot(3859, 42, center, current, List.of());
+        var projection = LocalObservationProjector.project(
+                snapshot, UUID.randomUUID(), "minecraft:the_end", 42, 49.0D);
+
+        assertThat(projection.currentSafety()).isEqualTo(LocalObservationProjector.CurrentSafety.REPLAN);
+        assertThat(projection.edges()).isEmpty();
+        assertThat(projection.records()).singleElement().satisfies(record -> {
+            var hazard = (dev.aod.mcmcp.agent.observation.ObservationRecord.Hazard) record;
+            assertThat(hazard.hazardType()).isEqualTo(
+                    dev.aod.mcmcp.agent.observation.ObservationRecord.HazardType.COLLISION);
+            assertThat(hazard.position()).isEqualTo(hazard.observerPosition());
+            assertThat(hazard.observedTick()).isEqualTo(3859);
+            assertThat(hazard.worldRevision()).isEqualTo(42);
+        });
+    }
+
+    @Test
     void projectsShallowLandingsIntoTheFeetCellForEachPlayerPoseHeight() {
         for (double height : List.of(1.8D, 1.5D)) {
             double halfHeight = height * 0.5D;

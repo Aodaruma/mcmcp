@@ -1499,12 +1499,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             V2ScriptArguments request, RuntimeCallContext context) {
         assertClientThread(minecraft);
         RuntimeFailures.requireReady(session);
-        if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
-                || endpointFaultCode != null || !multiplayerPolicyAllows(minecraft)
-                || v2InputWorldUnsafeReason(minecraft, session, false, false, true) != null) {
-            throw new RuntimeInvocationException(
-                    "unsafe_state", "Script requires a safe local world state.", true, Map.of());
-        }
+        requireV2WorldSafe(minecraft, session, "Script", true);
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
                 || scriptJobs.active().isPresent() || scriptExecution != null
@@ -1776,13 +1771,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         String toolName = request instanceof V2CraftArguments ? "agent_craft" : "agent_inventory";
         assertClientThread(minecraft);
         RuntimeFailures.requireReady(session);
-        if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
-                || endpointFaultCode != null || !multiplayerPolicyAllows(minecraft)
-                || !v2InputWorldSafe(minecraft, session)) {
-            throw new RuntimeInvocationException(
-                    "unsafe_state", "Inventory requires a safe local world state.",
-                    true, Map.of());
-        }
+        requireV2WorldSafe(minecraft, session, "Inventory", false);
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
                 || scriptJobs.active().isPresent() && !context.scriptChild()
@@ -1883,12 +1872,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         assertClientThread(minecraft);
         RuntimeFailures.requireReady(session);
         var request = V2BreakArguments.parse(arguments, session.dimension());
-        if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
-                || endpointFaultCode != null || !multiplayerPolicyAllows(minecraft)
-                || !v2InputWorldSafe(minecraft, session)) {
-            throw new RuntimeInvocationException(
-                    "unsafe_state", "Break requires a safe local world state.", true, Map.of());
-        }
+        requireV2WorldSafe(minecraft, session, "Break", false);
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
                 || scriptJobs.active().isPresent() && !context.scriptChild()
@@ -1947,12 +1931,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         assertClientThread(minecraft);
         RuntimeFailures.requireReady(session);
         var request = V2PlaceArguments.parse(arguments, session.dimension());
-        if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
-                || endpointFaultCode != null || !multiplayerPolicyAllows(minecraft)
-                || !v2InputWorldSafe(minecraft, session)) {
-            throw new RuntimeInvocationException(
-                    "unsafe_state", "Place requires a safe local world state.", true, Map.of());
-        }
+        requireV2WorldSafe(minecraft, session, "Place", false);
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
                 || scriptJobs.active().isPresent() && !context.scriptChild()
@@ -2039,12 +2018,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         double maxDistance = dismount != null ? 8.0D : production != null ? production.maxDistance() : look != null ? 0.25D : request != null ? request.maxDistance()
                 : entityUse != null ? entityUse.maxDistance()
                 : menuUse != null ? menuUse.block().maxDistance() : 64.0D;
-        if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
-                || endpointFaultCode != null || !multiplayerPolicyAllows(minecraft)
-                || v2InputWorldUnsafeReason(minecraft, session, false, false, dismount != null) != null) {
-            throw new RuntimeInvocationException(
-                    "unsafe_state", "Interact requires a safe local world state.", true, Map.of());
-        }
+        requireV2WorldSafe(minecraft, session, "Interact", dismount != null);
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
                 || scriptJobs.active().isPresent() && !context.scriptChild()
@@ -2146,12 +2120,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         var request = V2MoveArguments.parse(arguments,
                 ActionPlanning.playerCell(minecraft.player, session.dimension()));
-        if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
-                || endpointFaultCode != null || !multiplayerPolicyAllows(minecraft)
-                || v2InputWorldUnsafeReason(minecraft, session, false, false, true) != null) {
-            throw new RuntimeInvocationException(
-                    "unsafe_state", "Move requires a safe local world state.", true, Map.of());
-        }
+        requireV2WorldSafe(minecraft, session, "Move", true);
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
                 || scriptJobs.active().isPresent() && !context.scriptChild()
@@ -2263,12 +2232,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             String toolName, RuntimeCallContext context, V2InputSequenceArguments.Request options) {
         assertClientThread(minecraft);
         RuntimeFailures.requireReady(session);
-        if (!localControlAvailable(minecraft, session) || paused || minecraft.isPaused()
-                || endpointFaultCode != null || !multiplayerPolicyAllows(minecraft)
-                || !v2InputWorldSafe(minecraft, session)) {
-            throw new RuntimeInvocationException(
-                    "unsafe_state", "Input sequence requires a safe local world state.", true, Map.of());
-        }
+        requireV2WorldSafe(minecraft, session, "Input sequence", false);
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
                 || scriptJobs.active().isPresent() && !context.scriptChild()
@@ -3658,6 +3622,21 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 McmcpMod.LOGGER.error("MCMCP v2 inventory cleanup failed", cleanupFailure);
                 arming.lock("v2_inventory_cleanup_failed");
             }
+        }
+    }
+
+    private void requireV2WorldSafe(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            String operation, boolean navigation) {
+        String reason;
+        if (!localControlAvailable(minecraft, session)) reason = "world_unavailable";
+        else if (paused || minecraft.isPaused()) reason = "game_paused";
+        else if (endpointFaultCode != null) reason = "endpoint_fault";
+        else if (!multiplayerPolicyAllows(minecraft)) reason = "multiplayer_policy";
+        else reason = v2InputWorldUnsafeReason(minecraft, session, false, false, navigation);
+        if (reason != null) {
+            var local = agentObservations.localObservation();
+            throw RuntimeFailures.v2SafetyPrecondition(
+                    operation, reason, local == null ? null : local.current());
         }
     }
 
