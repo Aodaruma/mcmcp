@@ -119,3 +119,7 @@ R18導入後、既存収納1,816個から448個を一度にstoreすると、14�
 ## 破壊failed後の対象消失（診断改善の残件）
 
 R18の黄緑→白の種交換で、breakは `block_runtime_failed` / broken_blocks:0だが直後のfresh観測ではair・直下glassを確認した。破壊を再送せず、別の白設置と再観測で復旧済み。失敗と観測された効果を分けて保持し、再起動・差し替えは不要。[事実・ソース候補・未実装の診断案](experiments/20261010_v2_break_post_effect_diagnosis.md)。長い上階目標で停止し短いwaypointでは到達した報告も同記録に残す。
+
+## 通常R18の収納release_pending再発（復旧未確認）
+
+黒パウダーstore64で同期の期限を超え、UNKNOWNとrelease_pendingが残った。state/statusと1回のcancelは通るが、62秒でも終了していない。R18の修正で読取りは維持できている一方、cursorの解放を証明できない場合の待機は残る。所持black640だけで未移送と判定しない。現行の公開APIでは強制解放できず、cleanup成立条件・所有者側の通常world終了による復帰例・不足する公開診断を[再発記録](experiments/20261010_v2_r18_storage_release_pending.md)にまとめた。通常ゲームは操作していない。
