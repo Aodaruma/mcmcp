@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.*;
 class FixtureV2PrioritiesTest {
     @Test void onlyFixedCasesWithAnExplicitNewRequestNumberAreAccepted() {
         assertThat(FixtureV2PrioritiesConfig.validRequest("1:water")).isTrue();
-        for (String kind : java.util.List.of("ladder_down", "ladder_long", "ladder_up", "ladder_long_up", "ladder_gap", "ladder_enclosed", "storage_plain", "storage_upgraded", "storage_tab", "storage_food", "storage_drift", "storage_cursor_drift", "waystones"))
+        for (String kind : java.util.List.of("ladder_down", "ladder_long", "ladder_up", "ladder_long_up", "ladder_gap", "ladder_enclosed", "storage_boundary", "storage_plain", "storage_upgraded", "storage_tab", "storage_food", "storage_drift", "storage_cursor_drift", "waystones"))
             assertThat(FixtureV2PrioritiesConfig.validRequest("2:" + kind)).isTrue();
         for(String value:java.util.List.of("water", "1:function x", "1:water\n2:boat", "1:../water", "123456789:boat"))
             assertThat(FixtureV2PrioritiesConfig.validRequest(value)).isFalse();
