@@ -84,3 +84,5 @@ R8は既知の最終目的地を最優先に保ち、その次に、目標の高
 | Cancel | cancelled / client_request | 24 |
 
 全5ケース体力20、READY/jobなし。成功3ケースはserver側の接地を確認。記録は `artifacts/v2-ladder-far-20261010/r8-evidence.zip`、製品JARは同ディレクトリの `package-r8`。通常profileはR7のまま。地図アート担当からの依頼により、梯子だけの追加差し替えは急がず、Waystones／バッグ対応候補とまとめる。隔離環境はその継続検証に使用中であり、この段階では復旧完了を意味しない。
+
+統合候補R15でもFarGoalを再確認し、server位置313.4994／101／301.5398、接地・体力20・cursor空で成功した。10:30 JSTに今回の元66ファイルをhash一致で復元し、10:32 JSTにcontainer／Docker Desktop停止と維持用SSH終了を確認した。[統合検証・製品hash・証拠](20261010_v2_waystones_docker.md)。

@@ -9,7 +9,7 @@
 1. R9ではplain／upgradedのinspectが成功し、tabは65tickで `storage_layout_unsupported`。R10はupgradeタブを操作対象から除いたまま、通常収納のinspectを許可し、tabでも6tickで成功した。全slot構造、正規player枠、MOD版／JAR hash、cursor・同期証拠の確認は維持する。QUICK_MOVEは開いたupgradeへ流入し得るため、引き続き許可しない。
 2. R10のupgradedからtake64を行うと、実際には64個をcursorへ取り出す一方、計画は2048個全量を取り出すと予測し、照合に失敗して `release_pending:true` になった。R11は検証済みbackpackのPICKUP上限をitem標準stack数に限定し、その上限を適用してから右クリックの半分を計算する。Vanillaの全量PICKUP契約は別に維持する。誤った残数を受け入れたり、未確認clickを再送したりする変更ではない。
 
-R10失敗時は取消・Escでも自動解放を確定できなかった。隔離fixtureのdimension往復でidentityを破棄し、OFF・jobなしを確認してR11へ切り替えた。この操作は修正版の取消成功の証拠ではない。元worldへの復元は下記のとおり未完了。
+R10失敗時は取消・Escでも自動解放を確定できなかった。隔離fixtureのdimension往復でidentityを破棄し、OFF・jobなしを確認してR11へ切り替えた。この操作は修正版の取消成功の証拠ではない。元worldへの復元は後述のR15終了後に完了した。
 
 ## 確認済みの範囲
 
@@ -24,12 +24,14 @@ R11製品SHA-256：`03ef18085d6fb7998297631093ba7b505862b032759b0d58ca34685017b6
 | 32倍・pickupタブ開放 | 黒store16 | succeeded、64→80、手元32→16 |
 | 32倍・pickupタブ開放 | 再open inspect | 白1984／黒80 |
 
-上記の最終server側reportは体力20・cursor空。upgrade設定の比較、端数24個、移送中取消、14clickを超える数量の拒否を確認する追加runner `Invoke-McmcpV2BackpackSmoke.ps1` を用意したが、実行前のSSH接続でCloudflare再認証が必要になり、まだ実施していない。
+上記の最終server側reportは体力20・cursor空。認証復旧後、追加runner `Invoke-McmcpV2BackpackSmoke.ps1` でPlain／Upgraded／Tabのtake24・store16・再open、448個移送中の取消、896個要求のクリック予算超過拒否を確認した。5ケースとも数量保存・upgrade設定・open tab不変・cursor空・体力20が合格。同じ5ケースを統合候補R15でも再実行し、全件成功した。
+
+最初の取消runnerは`result.unconfirmed`を待ったため取消前に448個の移送が完了し、runnerが不合格となった。取消成功とは数えない。`storage_progress.phase=exact_update`を確認して取消するよう修正し、要求直前のjob状態も記録した。R15では4tick時に取消を要求し、confirmed_count=0・cursor回収・再open後の収支を確認した。配送確認前の`unconfirmed`状態も実行前の待機として扱う。
 
 ローカルJava 1,697＋harness 14＋admin bridge 28＝1,739件、build・harness隔離・PowerShell/Python source checksが成功。追加単体試験は64個上限／右クリック32個／保護slotの不変性、およびserver証拠と一致したcursorだけを元slotへ返す取消処理を検証する。公開15ツールのschemaは変更していない。
 
-## 残りの検証と復元
+## 統合候補と復元
 
-候補と準備scriptはローカル `artifacts/v2-ladder-far-20261010`、実機結果はリモートの同名評価ディレクトリに保存。R11の残試験・証拠回収・元66ファイルのhash照合復元・containerとDocker Desktopの停止は、SSH再認証待ちで未完了。先行R7検証の復旧receiptを今回の復旧証拠として扱わない。
+最終候補R15の製品SHA-256は`c913077ad3b72a187493a0872b232dd7158541e4fb4b5e01c00114df50642e68`。候補と準備scriptはローカル `artifacts/v2-ladder-far-20261010`、R11追加試験とR15の証拠は`r15-evidence.zip`に回収済み。10:30 JSTに元66ファイルをhash一致で復元し、fixture除去・container停止、10:32 JSTにDocker Desktop停止・維持用SSH終了を確認した。
 
-通常profileへの導入は未実施。検証を完了してから、利用者指定の差し替え担当へ製品JARだけを引き継ぐ。Waystonesの行き先一覧・選択、任意のupgrade／MOD収納への一般対応はこの修正に含まない。
+通常profileへの導入は未実施。R15は遠方下階の梯子修正・Waystonesの行き先一覧／選択とまとめ、地図アート担当による通常ゲームの所有引継ぎ後に、差し替え担当が製品JARだけを導入する。[統合検証記録](20261010_v2_waystones_docker.md)。任意のupgrade／MOD収納への一般対応は対象外。

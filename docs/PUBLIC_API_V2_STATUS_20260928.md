@@ -1,6 +1,12 @@
 # 公開API v2：進捗と再開メモ（2026-09-28）
 
-## 最新更新：優先機能の実機確認（2026-10-10）
+## 最新更新：梯子・拡張バッグ・Waystones（2026-10-10 10:32 JST）
+
+統合候補R15を準備した。遠い下階目標への梯子移動、拡張ネザライトバッグの端数移送・取消・予算拒否、Waystonesの一覧・経験値上限・参照拒否・使用中取消・Esc停止・End往復をaod-mimoid隔離Dockerで確認。自動試験1,746件、実行中JARと公開15ツール全定義の一致、元66ファイルのhash一致復元、container・Docker Desktop停止が完了した。[統合検証記録](experiments/20261010_v2_waystones_docker.md)、[試用メモ](PUBLIC_API_V2_TRIAL_20261010.md)を参照。通常profileはR7のままで、地図アート担当から操作権を受けた差し替え担当が更新する。
+
+Cloudflare認証後もSSHが止まる原因と、同じ症状の再発時に開発担当で進める[復旧手順](experiments/20261010_cloudflared_ssh_recovery.md)を記録した。認証期間72時間の案は記録のみで、Cloudflare設定は変更していない。
+
+## 先行更新：優先機能の実機確認（2026-10-10）
 
 クラフトの材料データ、4 MOD破壊、5 水中／乗り物、6 整理、8 条件・scriptを最終候補priorities-r7で確認。このPCの実機13ケースとJava等1,719件が成功した。外部source・JSON/CSV、小規模blueprintの中断・再開・再実行も確認済み。147,456セル全量の実施工は未検証。ローカル検証profileの292ファイルを復元し、Prism起動後に「くらふとぶ！-v01.2」へ導入済み。通常profileの再起動後、公開15ツールの全入出力schema一致も確認した。[試用メモと導入状況](PUBLIC_API_V2_TRIAL_20261010.md)、[実機記録](experiments/20261010_v2_priorities_local.md)を参照。先行Docker環境も10月10日02:34 JSTに66ファイルのハッシュ一致で復元し、containerとDocker Desktopを停止済み。
 

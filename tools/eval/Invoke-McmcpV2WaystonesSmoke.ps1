@@ -29,7 +29,7 @@ function Invoke-V2SmokeCore {
             $watch=[Diagnostics.Stopwatch]::StartNew()
             do {
                 $running=Invoke-V2SmokeTool 'agent_get_action' @{action_id=$id;wait_timeout_ms=10;include_result=$true}
-                Assert-V2Smoke ($running.state -cin @('queued','running') -and $watch.Elapsed.TotalSeconds -lt 15) 'Use ended before cancellation'
+                Assert-V2Smoke ($running.state -cin @('unconfirmed','queued','running') -and $watch.Elapsed.TotalSeconds -lt 15) 'Use ended before cancellation'
             } while(-not (Get-PropertyValue (Get-PropertyValue $running 'result') 'dispatched'))
             [void](Invoke-V2SmokeTool 'agent_cancel_action' @{action_id=$id})
         }

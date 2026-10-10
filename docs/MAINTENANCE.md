@@ -5,6 +5,10 @@ This guide covers issue triage, PR review, verification, and release decisions. 
 
 **現在のowner指示:** 追加の明示指示があるまで変更はPR作成までとし、下記の通常merge手順は適用しません。main統合、タグ、Release公開を自動で行わないでください。公開API v2の目標と現行v1の区別は[PUBLIC_API_V2.md](PUBLIC_API_V2.md)に記録します。
 
+## aod-mimoidのSSH復旧
+
+aod-mimoidのSSHがブラウザー認証後も初期応答待ちで止まる場合は、[2026-10-10のCloudflare認証復旧手順](experiments/20261010_cloudflared_ssh_recovery.md)を参照する。利用者は同じ問題の再発時に開発担当側での復旧を希望している。対象版・終了済み認証・空lockを確認してから待機情報だけを退避し、既存接続・token・鍵・常駐サービスは保持する。
+
 ## このPCへの試用JAR導入
 
 JAR差し替え、Minecraft終了、Prism GUIからの指定profile起動、再接続、MCP ONは利用者指定の差し替え担当が行う。開発担当は試験済みJAR・SHA-256・変更内容・必要な公開API確認項目を用意し、現場ゲームへ割り込まない。
