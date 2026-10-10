@@ -75,7 +75,7 @@ final class WaystoneMenuSupport {
         }
     }
 
-    private static Costs readCosts(List<?> requirements) throws ReflectiveOperationException {
+    static Costs readCosts(List<?> requirements) throws ReflectiveOperationException {
         int levels = 0, points = 0;
         boolean supported = true;
         var messages = new ArrayList<String>();
@@ -94,6 +94,11 @@ final class WaystoneMenuSupport {
                 long remaining = ((Number) value.getClass().getMethod("remainingTicks").invoke(value)).longValue();
                 supported &= remaining <= 0;
                 messages.add("cooldown_remaining_ticks:" + Math.max(0, remaining));
+            } else if (value instanceof com.google.gson.JsonPrimitive || value instanceof Boolean
+                    || value instanceof Float || value instanceof Double || value instanceof Integer
+                    || value instanceof Long || value instanceof String) {
+                // Shogi includes assignment/effect return values alongside its typed cost information.
+                // Native Either eligibility still applies; these scalars cannot authorize a denied row.
             } else {
                 // Item costs, custom effects and refusals are visible but cannot authorize payment yet.
                 supported = false;
@@ -118,5 +123,5 @@ final class WaystoneMenuSupport {
         String safe = value.replaceAll("[\\p{Cntrl}]", " ");
         return safe.substring(0, Math.min(256, safe.length()));
     }
-    private record Costs(int levels, int points, boolean supported, List<String> messages) { }
+    record Costs(int levels, int points, boolean supported, List<String> messages) { }
 }

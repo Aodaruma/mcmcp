@@ -16,7 +16,7 @@
 {"target":"item","item":"waystones:warp_stone","operation":"select_destination","destination_ref":"abcdefghijklmnopqrstuvwx","max_xp_levels":3,"max_xp_points":0,"max_ticks":600}
 ```
 
-`destination_ref`は実際の一覧結果を使う。ワールドsession・出発block座標・手に持つitemとcomponentへ結び付け、2400client tickで期限切れにする。保持は最大256件。再開封時に候補・地点・費用・利用可否を照合し、費用上限を守って参照を一度だけ消費する。費用上限の既定値はどちらも0。現在は経験値費用に対応し、item支払い・未知の要件は選択しない。クールダウン中の候補は再度inspectして確認する。
+`destination_ref`は実際の一覧結果を使う。ワールドsession・出発block座標・手に持つitemとcomponentへ結び付け、2400client tickで期限切れにする。保持は最大256件。再開封時に候補・地点・費用・利用可否を照合し、費用上限を守って参照を一度だけ消費する。費用上限の既定値はどちらも0。現在は経験値費用に対応し、item支払い・未知の構造化要件は選択しない。MODのルール評価に含まれる変数代入や効果のスカラー戻り値は費用として扱わず、serverの許可判定と型付き費用を照合する。ワープストーンの耐久はnative転送で消費され得るため、経験値上限では耐久消費を制限しない。クールダウン中の候補は再度inspectして確認する。
 
 ## 選択と到着
 

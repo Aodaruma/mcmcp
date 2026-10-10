@@ -219,6 +219,20 @@ final class FixtureV2Priorities {
         Class<?> api = Class.forName("net.blay09.mods.waystones.api.WaystonesAPI");
         Class<?> type = Class.forName("net.blay09.mods.waystones.api.WaystoneType");
         Class<?> waystone = Class.forName("net.blay09.mods.waystones.api.Waystone");
+        // Clearing blocks does not remove unloaded-dimension entries from the native database.
+        var previous = (java.util.Collection<?>) api.getMethod("getAllWaystones", net.minecraft.server.MinecraftServer.class)
+                .invoke(null, server);
+        for (Object old : List.copyOf(previous)) {
+            var pos = (net.minecraft.core.BlockPos) waystone.getMethod("getPos").invoke(old);
+            var dimension = (net.minecraft.resources.ResourceKey<?>) waystone.getMethod("getDimension").invoke(old);
+            var name = ((net.minecraft.network.chat.Component) waystone.getMethod("getName").invoke(old)).getString();
+            if (pos.equals(new net.minecraft.core.BlockPos(309, 101, 309))
+                    && (dimension.equals(net.minecraft.world.level.Level.END) && name.equals("MCMCP End")
+                    || dimension.equals(net.minecraft.world.level.Level.OVERWORLD) && name.equals("MCMCP Overworld"))) {
+                api.getMethod("deactivateWaystone", net.minecraft.server.level.ServerPlayer.class, waystone).invoke(null, player, old);
+                api.getMethod("removeWaystoneFromDatabase", net.minecraft.server.MinecraftServer.class, waystone).invoke(null, server, old);
+            }
+        }
         Object andesite = Class.forName("net.blay09.mods.waystones.api.WaystoneTypes").getField("ANDESITE").get(null);
         for (var level : List.of(player.level(), end)) {
             Object placed = ((Optional<?>) api.getMethod("placeWaystone", net.minecraft.server.level.ServerLevel.class,
