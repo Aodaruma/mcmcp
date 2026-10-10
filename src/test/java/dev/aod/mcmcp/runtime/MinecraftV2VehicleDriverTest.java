@@ -22,8 +22,10 @@ class MinecraftV2VehicleDriverTest {
     void boatFineApproachSettlesWithVanillaLinearAndAngularWaterDrag() {
         for (double startX : new double[]{-0.8, -0.2, 0.2, 0.8}) {
             for (double startZ : new double[]{-0.8, 0.3}) {
-                for (float startYaw : new float[]{-180, -90, 0, 90}) {
-                    double x = startX, z = startZ, vx = 0, vz = 0;
+                for (float startYaw : new float[]{-180, -90, 0, 90}) for (double initialSpeed : new double[]{0, 0.08}) {
+                    double x = startX, z = startZ, minZ = startZ;
+                    double vx = -Math.sin(Math.toRadians(startYaw)) * initialSpeed;
+                    double vz = Math.cos(Math.toRadians(startYaw)) * initialSpeed;
                     float yaw = startYaw, rotation = 0;
                     int stable = 0;
                     for (int tick = 0; tick < 250 && stable < 4; tick++) {
@@ -43,9 +45,13 @@ class MinecraftV2VehicleDriverTest {
                         vx = vx * 0.9 - Math.sin(Math.toRadians(yaw)) * acceleration;
                         vz = vz * 0.9 + Math.cos(Math.toRadians(yaw)) * acceleration;
                         x += vx; z += vz;
+                        minZ = Math.min(minZ, z);
                     }
                     assertThat(stable).as("start (%s,%s), yaw %s", startX, startZ, startYaw).isEqualTo(4);
                     assertThat(Math.hypot(x, z)).isLessThanOrEqualTo(0.1);
+                    if (startX == -0.8 && startZ == -0.8 && startYaw == -90 && initialSpeed == 0.08)
+                        assertThat(minZ).as("turn without accelerating out toward the nearby shore")
+                                .isGreaterThanOrEqualTo(startZ - 0.1);
                 }
             }
         }

@@ -161,7 +161,11 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
         var desired = EnumSet.noneOf(MovementInputLease.MovementKey.class);
         // Vanilla water drag retains rotation; backward acceleration is 1/8 of forward.
         float correction = reverseTurn - turnSpeed * 9;
-        if (!near && Math.abs(correction) > 6) desired.add(correction > 0 ? RIGHT : LEFT);
+        if (!near && Math.abs(correction) > 6) {
+            desired.add(correction > 0 ? RIGHT : LEFT);
+            // Turning alone also accelerates forward; alternate reverse to avoid a wide turning arc.
+            if (tick % 2 == 0) desired.add(BACK);
+        }
         if (!near && Math.abs(reverseTurn) < 12 && Math.abs(turnSpeed) < 1.5
                 && speed < 0.02 && tick % 4 == 0) desired.add(BACK);
         return desired;
