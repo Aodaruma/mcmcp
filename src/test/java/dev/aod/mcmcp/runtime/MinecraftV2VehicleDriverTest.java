@@ -6,6 +6,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class MinecraftV2VehicleDriverTest {
     @Test
+    void firstRouteEdgeUsesTheActualBoatBodyBesideAShore() {
+        var position = new net.minecraft.world.phys.Vec3(308.819, 101.523, 305.893);
+        var body = new AABB(position.x - 0.6875, position.y, position.z - 0.6875,
+                position.x + 0.6875, position.y + 0.5625, position.z + 0.6875);
+        var current = new dev.aod.mcmcp.agent.navigation.NavCell("minecraft:overworld", 308, 101, 305);
+        var next = new dev.aod.mcmcp.agent.navigation.NavCell("minecraft:overworld", 308, 101, 306);
+        var swept = body.move(MinecraftV2VehicleDriver.routeOriginOffset(current, position))
+                .minmax(body.move(MinecraftV2VehicleDriver.routeOriginOffset(next, position)));
+        assertThat(swept.minZ).as("water starts at z=305; centering the current cell would hit the shore")
+                .isGreaterThanOrEqualTo(305);
+        assertThat(swept.maxZ).isGreaterThanOrEqualTo(306.5 + 0.6875);
+    }
+    @Test
     void boatFineApproachSettlesWithVanillaLinearAndAngularWaterDrag() {
         for (double startX : new double[]{-0.8, -0.2, 0.2, 0.8}) {
             for (double startZ : new double[]{-0.8, 0.3}) {

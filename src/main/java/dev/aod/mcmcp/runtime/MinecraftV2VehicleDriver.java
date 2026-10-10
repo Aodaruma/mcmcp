@@ -192,7 +192,7 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
     private boolean edgeSafe(NavCell from, NavCell to) {
         if (from.distanceTo(to) > 1.75 || Math.hypot(to.x() + 0.5 - vehicle.getX(), to.z() + 0.5 - vehicle.getZ()) > 6) return false;
         var body = ridingVolume(vehicle.getBoundingBox(), player.getBoundingBox());
-        Vec3 a = new Vec3(from.x() + 0.5 - vehicle.getX(), from.y() - Math.floor(vehicle.getY()), from.z() + 0.5 - vehicle.getZ());
+        Vec3 a = routeOriginOffset(from, vehicle.position());
         Vec3 b = new Vec3(to.x() + 0.5 - vehicle.getX(), to.y() - Math.floor(vehicle.getY()), to.z() + 0.5 - vehicle.getZ());
         if (!volumeSafe(body.move(a).move(0, Math.max(0, b.y - a.y), 0).minmax(body.move(b)))) return false;
         if (vehicle instanceof AbstractMinecart) {
@@ -215,6 +215,11 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
                     || state.is(Blocks.MAGMA_BLOCK) || state.is(Blocks.CAMPFIRE) || state.is(Blocks.SOUL_CAMPFIRE)) return false;
         }
         return true;
+    }
+    static Vec3 routeOriginOffset(NavCell from, Vec3 position) {
+        // The current body is already offset within its cell; centering it can invent a shore collision.
+        return from.equals(cell(from.dimension(), position)) ? Vec3.ZERO
+                : new Vec3(from.x() + 0.5 - position.x, from.y() - Math.floor(position.y), from.z() + 0.5 - position.z);
     }
     private boolean volumeSafe(AABB body) {
         for (var pos : BlockPos.betweenClosed(BlockPos.containing(body.minX, body.minY, body.minZ),
