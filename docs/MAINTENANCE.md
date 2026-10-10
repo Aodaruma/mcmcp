@@ -9,6 +9,10 @@ This guide covers issue triage, PR review, verification, and release decisions. 
 
 aod-mimoidのSSHがブラウザー認証後も初期応答待ちで止まる場合は、[2026-10-10のCloudflare認証復旧手順](experiments/20261010_cloudflared_ssh_recovery.md)を参照する。利用者は同じ問題の再発時に開発担当側での復旧を希望している。対象版・終了済み認証・空lockを確認してから待機情報だけを退避し、既存接続・token・鍵・常駐サービスは保持する。
 
+## 隔離Dockerの起動復旧
+
+隔離Dockerが起動前に `dockerInference`／`engine.sock` のWindows error 1920で停止する場合は、[一時ソケットの確認・可逆退避の記録](experiments/20261011_docker_runtime_socket_recovery.md)を参照する。永続データを削除せず、停止・所有・一時IPCだけの範囲を確認して扱う。
+
 ## このPCへの試用JAR導入
 
 JAR差し替え、Minecraft終了、Prism GUIからの指定profile起動、再接続、MCP ONは利用者指定の差し替え担当が行う。開発担当は試験済みJAR・SHA-256・変更内容・必要な公開API確認項目を用意し、現場ゲームへ割り込まない。

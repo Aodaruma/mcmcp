@@ -31,3 +31,11 @@
 利用者は信頼するPCでの認証期間延長を希望している。まず対象SSHアプリのAllow policyまたはapplication sessionを72時間にする案を検討する。**この記録時点ではCloudflare側の設定変更は行っていない。** 他アプリを含むglobal sessionやMFA、対象ユーザーの範囲を一緒に変更しない。
 
 Cloudflareのapplication sessionはpolicyの既定値で、個別policyのdurationが優先する。通常の選択肢は即時timeout～1か月。無期限を前提にせず、設定後に発行されたtokenの期限で反映を確認する。[公式のsession管理](https://developers.cloudflare.com/cloudflare-one/access-controls/access-settings/session-management/)。期間延長だけでは、今回の残存lock問題は解消しない。
+
+## 2026-10-11の再発
+
+06:34 JSTに6時間のアプリ認証が失効した。今回起動した新規SSH/認証だけを終了し、対象の空lock2件を退避して単独quiet loginを試したが、exit 1で再認証は完了しなかった。終了後のlock残存はなく、既存lease接続と常駐サービスを保持した。前回の「lock退避だけで復旧」とは区別する。
+
+利用者の事前許可があるaodのtmpチャットから、hostname・sshd/Cloudflared Running・対象lab・baseline66件・containerとMCP状態を確認し、検証環境の操作を引き継いだ。接続先や認証要件を変更してSSHを迂回したわけではない。Windowsの認証画面を自動操作せず、通常ゲームも操作していない。
+
+期限付きlease中に認証が失効する場合は、再認証だけに依存せず、許可済みの管理経路で元環境復元とDocker停止を確実に行う。今回の復元結果は[移動・結果返却の検証記録](20261011_v2_movement_results.md)へ記載する。認証期間72時間の設定変更は引き続き未実施。

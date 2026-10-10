@@ -1,6 +1,6 @@
 # 公開API v2：進捗と再開メモ（2026-09-28）
 
-2026-10-11追加開発：短いActionの結果待機返却、既定result取得、小数座標、1マス飛び・累計落下ダメージ予算、Nether進入を実装。自動1,838件成功。隔離Dockerで穴越え・落下・小数位置・結果返却を確認し、Portal最終修正の追試と元環境復元は継続中。通常profileは未更新。[仕様](PUBLIC_API_V2_MOVEMENT_RESULTS_20261011.md)、[検証記録](experiments/20261011_v2_movement_results.md)。
+2026-10-11追加開発：短いActionの結果待機返却、既定result取得、小数座標、1マス飛び・累計落下ダメージ予算、Nether/End進入、足場の昇降・上面移動・設置を実装・修正。自動1,847件と製品CI成功。隔離Dockerで穴越え・落下・地上/飛行/水中/馬/ボートの小数位置・結果返却・Nether往復・End進入・足場3段/8段と設置後の高さ維持を確認。最終R13でもボート・馬・徒歩look・足場上の破壊と再設置が成功し、公開16ツール全定義が一致。3つのrunはそれぞれ元66ファイルをhash一致で復元、Docker停止・lease解放済み。通常レールのトロッコの0.1block精密停止、騎乗中lookなどの制限は残る。通常profileは未更新、検証済み製品JARを差し替え担当へ引き継ぐ。[仕様](PUBLIC_API_V2_MOVEMENT_RESULTS_20261011.md)、[検証記録](experiments/20261011_v2_movement_results.md)。
 
 2026-10-11：`agent_get_observation` に可視看板の文字・色・発光と、任意の `include_nbt`（既定false）を追加。client update-tagのSNBTを有界に返し、現在の遮蔽を再検証する。自動1,811件とaod-mimoid隔離Dockerの27項目が成功。通常profileには未導入。[仕様](PUBLIC_API_V2_SIGN_NBT_20261011.md)、[実機・復旧記録](experiments/20261011_v2_sign_nbt.md)。
 

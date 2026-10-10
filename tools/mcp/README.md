@@ -44,11 +44,11 @@ pwsh -NoProfile -File tools/mcp/Invoke-Mcmcp.ps1 `
 ```
 
 - 成功は `ok:true` とschema検証済みの `result`、失敗は `ok:false` と下表の診断を返します。プロセス終了コードはそれぞれ0・1です。`ok:true` は通信・結果形式の成功であり、Actionの完了判定は `result.state` を確認します。
-- `-WaitSeconds` はAction開始成功時の有効なIDだけを待機に使います。各照会は既存の `wait_timeout_ms`（最大25秒）を使います。v2の詳細な作業結果が必要なときは、完了後に `agent_get_action` を `include_result:true` で明示的に呼びます。
+- `-WaitSeconds` はAction開始成功時の有効なIDだけを待機に使います。各照会は既存の `wait_timeout_ms`（最大25秒）を使います。v2の `agent_get_action` は既定で作業結果を含みます。`include_result:false` で進捗だけを取得できます。短い行動ツール自体も既定で最大20秒待ち、完了すれば結果を直接返します。詳細は[移動・結果返却ガイド](../../docs/PUBLIC_API_V2_MOVEMENT_RESULTS_20261011.md)を参照してください。
 - HTTP・JSON-RPC・Toolエラー、ID欠落、schema不一致では待機しません。通信失敗後に開始・移送などのmutationを自動再送しません。応答を失った操作の成否は未確認です。
-- 待機期限やCtrl+Cはクライアントの待機を終えるだけで、Actionを自動cancelしません。取得済みIDがあれば `agent_get_action` で状態を確認し、停止が必要なら `agent_cancel_action` を明示的に呼びます。新しいActionを推測で開始しないでください。
+- `agent_get_action` の照会待機期限やCtrl+Cはクライアントの待機を終えます。一方、行動ツールの同期開始応答中に切断を検知したserverは、その開始済みjobへ取消を要求します。応答を失ったことだけでは取消完了・未実行と判断できません。取得済みIDがあれば状態を確認し、停止が必要なら `agent_cancel_action` を明示的に呼びます。新しいActionを推測で開始しないでください。
 
-Success returns `ok:true` with schema-validated `result`; failure returns `ok:false` and exits with code 1. Check `result.state` for gameplay completion. Waiting uses only the ID from a successful start and stops on any error; No mutation is replayed. A wait timeout or Ctrl+C does not cancel an Action; inspect the known ID or explicitly cancel it.
+Success returns `ok:true` with schema-validated `result`; failure returns `ok:false` and exits with code 1. Check `result.state` for gameplay completion. Waiting uses only the ID from a successful start and stops on any error; no mutation is replayed. v2 `agent_get_action` includes results by default. Ending a result-query wait does not cancel the Action, but a detected disconnect during a synchronous start response requests cancellation of that started job. Response loss does not prove cancellation or non-execution; inspect the known ID or explicitly cancel it.
 
 `script.json`は、例えば`{"source":"move(x=4, y=65, z=8);"}`です。旧`agent_start_action`とJSON Action DSLはv2では公開しません。
 
