@@ -388,8 +388,10 @@ final class FixtureV2Priorities {
                 result.add("fill 300 101 300 320 116 320 minecraft:air");
                 if (kind.startsWith("scaffold")) {
                     int top = kind.equals("scaffold_long") ? 108 : 103;
-                    result.addAll(List.of("fill 305 101 303 305 " + top + " 303 minecraft:scaffolding",
-                            "fill 306 " + top + " 303 308 " + top + " 303 minecraft:scaffolding"));
+                    // Seed supported distances so scheduled ticks cannot drop the fresh platform before propagation.
+                    result.add("fill 305 101 303 305 " + top + " 303 minecraft:scaffolding[distance=0,bottom=false]");
+                    for (int x = 306; x <= 308; x++) result.add("setblock " + x + " " + top
+                            + " 303 minecraft:scaffolding[distance=" + (x - 305) + ",bottom=true]");
                     result.add(kind.equals("scaffold_top") ? "tp @s 305.5 104 303.5 -90 0"
                             : "tp @s 305.5 101 305.5 180 0");
                 } else {
@@ -400,7 +402,7 @@ final class FixtureV2Priorities {
                             "setblock 307 104 303 minecraft:black_concrete_powder",
                             "item replace entity @s hotbar.0 with minecraft:netherite_pickaxe",
                             "item replace entity @s hotbar.1 with minecraft:gray_concrete_powder 16"));
-                    if (kind.equals("seed_scaffold")) result.add("fill 305 101 305 305 103 305 minecraft:scaffolding");
+                    if (kind.equals("seed_scaffold")) result.add("fill 305 101 305 305 103 305 minecraft:scaffolding[distance=0,bottom=false]");
                     else result.add("fill 304 101 304 306 103 306 minecraft:stone");
                     result.add("tp @s 305.5 104 305.5 -135 25");
                 }
