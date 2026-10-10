@@ -62,11 +62,20 @@ final class MinecraftV2PortalPort implements V2PortalJobExecution.Port {
                 new NavCell(request.sourceDimension(), p.getX(), p.getY(), p.getZ()), null,
                 player.getEyePosition(), session, tick, ledger.worldRevision(),
                 ledger.surfaceBarrierWorldRevision(p.getX(), p.getY(), p.getZ()),
-                "minecraft:end_portal"::equals);
+                request.geometry().blockId()::equals);
         if (aim.isEmpty()) { failed = true; return; }
-        facing.beginFace(new MinecraftActionPrimitiveExecutor.KnownFaceTarget(session, ledger.worldRevision(),
-                new ActionDsl.Position(request.sourceDimension(), p.getX(), p.getY(), p.getZ()),
-                p.getX() + 0.5, player.getEyeY(), p.getZ() + 0.5, true), Math.min(80, request.maxTicks()));
+        facing.beginFace(approachFacingTarget(request, session, ledger.worldRevision(), player.getEyeY()),
+                Math.min(80, request.maxTicks()));
+    }
+
+    static MinecraftActionPrimitiveExecutor.KnownFaceTarget approachFacingTarget(
+            V2PortalArguments request, UUID session, long revision, double eyeY) {
+        var p = request.geometry().portal();
+        // The walk direction is level with the eye; the observed portal may be at the feet.
+        var aimCell = net.minecraft.core.BlockPos.containing(p.getX() + 0.5, eyeY, p.getZ() + 0.5);
+        return new MinecraftActionPrimitiveExecutor.KnownFaceTarget(session, revision,
+                new ActionDsl.Position(request.sourceDimension(), aimCell.getX(), aimCell.getY(), aimCell.getZ()),
+                p.getX() + 0.5, eyeY, p.getZ() + 0.5, true);
     }
 
     private boolean contextValid() {
@@ -75,7 +84,7 @@ final class MinecraftV2PortalPort implements V2PortalJobExecution.Port {
                 && minecraft.gameMode != null && minecraft.gameMode.getPlayerMode() == GameType.SURVIVAL
                 && !player.isPassenger() && !player.isFallFlying() && !player.isUsingItem()
                 && level.isLoaded(request.geometry().portal())
-                && level.getBlockState(request.geometry().portal()).is(Blocks.END_PORTAL);
+                && level.getBlockState(request.geometry().portal()).is(request.geometry().nether() ? Blocks.NETHER_PORTAL : Blocks.END_PORTAL);
     }
 
     @Override public boolean currentPositionSafe() {

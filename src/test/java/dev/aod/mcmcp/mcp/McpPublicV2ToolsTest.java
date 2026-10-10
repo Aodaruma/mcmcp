@@ -16,6 +16,25 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class McpPublicV2ToolsTest {
+    @Test void decimalGoalsAndBoundedCompletionWaitArePublicAndTransportOnly() throws Exception {
+        var calls = new ArrayList<McpRuntimePort.RuntimeCommand>();
+        var registry = registry(calls);
+        var args = JsonParser.parseString("{\"x\":-1.8,\"y\":64.5,\"z\":2.15,\"wait_timeout_ms\":1000}").getAsJsonObject();
+        var prepared = registry.prepareCall("agent_move", args);
+        assertThat(prepared.response().get("isError").getAsBoolean()).isFalse();
+        assertThat(((McpRuntimePort.StartMove) calls.getFirst()).arguments()).doesNotContainKey("wait_timeout_ms");
+        assertThat(McmcpToolRegistry.completionWaitMillis("agent_move", args, prepared)).isEqualTo(1000);
+        args.remove("wait_timeout_ms");
+        assertThat(McmcpToolRegistry.completionWaitMillis("agent_move", args, prepared)).isEqualTo(20000);
+        assertThat(McmcpToolRegistry.completionWaitMillis("agent_run_script", args, prepared)).isZero();
+        args.addProperty("dx", 10);
+        assertThat(McmcpToolRegistry.completionWaitMillis("agent_place_block", args, prepared)).isZero();
+        args.remove("dx");
+        for (int wait : new int[] {-1, 25001}) {
+            args.addProperty("wait_timeout_ms", wait);
+            assertThat(registry.prepareCall("agent_move", args).response().get("isError").getAsBoolean()).isTrue();
+        }
+    }
     @Test
     void flightMovementUsesExistingCoordinateAndVerticalDirectionSchemas() {
         var catalog = new McpToolCatalog();

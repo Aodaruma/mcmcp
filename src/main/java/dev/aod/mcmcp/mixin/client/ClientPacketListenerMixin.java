@@ -35,6 +35,25 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class ClientPacketListenerMixin {
     @Shadow private ClientLevel level;
 
+    @Inject(method = "handleDamageEvent", at = @At("TAIL"), require = 1, expect = 1)
+    private void mcmcp$damageEvent(net.minecraft.network.protocol.game.ClientboundDamageEventPacket packet, CallbackInfo callback) {
+        var player = Minecraft.getInstance().player;
+        if (player != null && this.level == player.level() && packet.entityId() == player.getId())
+            dev.aod.mcmcp.runtime.PlayerDamageSignals.global().damage(player,
+                    packet.sourceType().is(net.minecraft.tags.DamageTypeTags.IS_FALL), player.getHealth(), player.getAbsorptionAmount());
+    }
+
+    @Inject(method = "handleSetHealth", at = @At("TAIL"), require = 1, expect = 1)
+    private void mcmcp$healthPacket(net.minecraft.network.protocol.game.ClientboundSetHealthPacket packet, CallbackInfo callback) {
+        mcmcp$recordHealth();
+    }
+
+    private void mcmcp$recordHealth() {
+        var player = Minecraft.getInstance().player;
+        if (player != null && this.level == player.level())
+            dev.aod.mcmcp.runtime.PlayerDamageSignals.global().health(player, player.getHealth(), player.getAbsorptionAmount());
+    }
+
     @Inject(method = "clearLevel", at = @At("HEAD"), require = 1, expect = 1)
     private void mcmcp$closeReconciliationLevel(CallbackInfo callback) {
         ClientReconciliationSignals.global().closeLevel(Minecraft.getInstance().level);
@@ -53,6 +72,7 @@ public abstract class ClientPacketListenerMixin {
     @Inject(method = "handleSetEntityData", at = @At("TAIL"), require = 1, expect = 1)
     private void mcmcp$frameDisplayPacket(
             ClientboundSetEntityDataPacket packet, CallbackInfo callback) {
+        if (Minecraft.getInstance().player != null && packet.id() == Minecraft.getInstance().player.getId()) mcmcp$recordHealth();
         if (this.level == Minecraft.getInstance().level) {
             FrameDisplaySyncSignals.global().onEntityData(
                     this.level, packet, ScreenOwnershipSignals.global().currentTick());

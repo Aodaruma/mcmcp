@@ -97,8 +97,9 @@ public record RoutePlan(
         // Air input cannot sprint and must brake three-dimensional inertia at each segment.
         long flightTicks = edges.stream().filter(edge -> edge.locomotion().aerial()).count() * 20L;
         long diagonalTicks = edges.stream().filter(TraversabilityEdge::supportedDiagonal).count() * 40L;
+        long groundTransferTicks = edges.stream().filter(edge -> edge.locomotion().ballistic()).count() * 100L;
         return Math.addExact(
-                BASE_SETTLE_TICKS + waterTicks + flightTicks + diagonalTicks,
+                BASE_SETTLE_TICKS + waterTicks + flightTicks + diagonalTicks + groundTransferTicks,
                 Math.addExact(
                         Math.multiplyExact(transitions, TICKS_PER_TRANSITION),
                         Math.multiplyExact((long) probes, EXTRA_TICKS_PER_PROBE)));
@@ -106,6 +107,17 @@ public record RoutePlan(
 
     public boolean usesProbeAllowed() {
         return probeEdgeCount > 0;
+    }
+
+    public RoutePlan segment(int fromEdge, int toEdge) {
+        if (fromEdge < 0 || toEdge <= fromEdge || toEdge > edges.size())
+            throw new IllegalArgumentException("invalid route segment");
+        var selected = edges.subList(fromEdge, toEdge);
+        double distance = selected.stream().mapToDouble(edge -> edge.key().length()).sum();
+        int probes = (int) selected.stream().filter(TraversabilityEdge::requiresProbe).count();
+        long ticks = executionTicks(selected, probes);
+        return new RoutePlan(worldSessionId, dimension, worldRevision, cells.subList(fromEdge, toEdge + 1),
+                selected, distance, probes, ticks, ticks * MILLIS_PER_ACTIVE_TICK);
     }
 
     public boolean endsOnLadderTransit() {

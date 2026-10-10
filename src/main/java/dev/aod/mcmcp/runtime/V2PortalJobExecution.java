@@ -31,6 +31,7 @@ final class V2PortalJobExecution implements V2JobExecution {
     private boolean arrived;
     private UUID arrivalSession;
     private String arrivalDimension;
+    private long arrivalReadySince = Long.MIN_VALUE;
     private AgentJobStore.State terminal;
     private String failure;
 
@@ -79,6 +80,7 @@ final class V2PortalJobExecution implements V2JobExecution {
             capture();
             return jobs.get(id);
         } catch (RuntimeException | LinkageError failure) {
+            dev.aod.mcmcp.McmcpMod.LOGGER.warn("MCMCP portal entry failed", failure);
             return stop("portal_entry_runtime_failed");
         }
     }
@@ -105,11 +107,13 @@ final class V2PortalJobExecution implements V2JobExecution {
         if (!awaitingArrival || expired(now)) return stop("portal_arrival_timeout");
         if (currentConnection != connection) return stop("portal_connection_changed");
         if (!inputOwnerNone) { released = false; return stop("portal_arrival_input_owned"); }
-        if (!playerReady || session == null || dimension == null) return job;
+        if (!playerReady || session == null || dimension == null) { arrivalReadySince = Long.MIN_VALUE; return job; }
         arrivalSession = session;
         arrivalDimension = dimension;
         if (sourceSession.equals(session) || !request.expectedDimension().equals(dimension))
             return stop("portal_destination_mismatch");
+        if (arrivalReadySince == Long.MIN_VALUE) arrivalReadySince = now;
+        if (now - arrivalReadySince < 500_000_000L) return job;
         arrived = true;
         terminal = AgentJobStore.State.SUCCEEDED;
         return finish();
@@ -164,7 +168,7 @@ final class V2PortalJobExecution implements V2JobExecution {
         var p = request.geometry().portal();
         var result = new LinkedHashMap<String, Object>();
         result.put("target", "portal");
-        result.put("portal_block", "minecraft:end_portal");
+        result.put("portal_block", request.geometry().blockId());
         result.put("position", java.util.Map.of("x", p.getX(), "y", p.getY(), "z", p.getZ()));
         result.put("source_session_id", sourceSession.toString());
         result.put("source_dimension", request.sourceDimension());
@@ -172,6 +176,7 @@ final class V2PortalJobExecution implements V2JobExecution {
         result.put("phase", terminal != null ? "terminal" : awaitingArrival ? "awaiting_arrival" : "entering");
         result.put("contact_observed", contact);
         result.put("arrival_confirmed", arrived);
+        result.put("arrival_safety_confirmed", arrived);
         result.put("inputs_released", released);
         result.put("release_pending", terminal != null && !released);
         if (arrivalSession != null) result.put("arrival_session_id", arrivalSession.toString());

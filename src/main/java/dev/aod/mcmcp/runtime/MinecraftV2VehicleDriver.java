@@ -63,10 +63,12 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
         if (lastProgress == 0) lastProgress = tick;
         if (lastPosition.distanceTo(vehicle.position()) > 0.15) { lastPosition = vehicle.position(); lastProgress = tick; }
         if (tick - lastProgress > 200) return fail("vehicle_stalled");
-        double distance = Math.hypot(goal.x() + 0.5 - vehicle.getX(), goal.z() + 0.5 - vehicle.getZ());
+        Vec3 goalPosition = request.exactPosition() != null && goal.equals(request.goal())
+                ? request.exactPosition() : new Vec3(goal.x() + 0.5, goal.y(), goal.z() + 0.5);
+        double distance = Math.hypot(goalPosition.x - vehicle.getX(), goalPosition.z - vehicle.getZ());
         double speed = vehicle.getDeltaMovement().horizontalDistance();
-        boolean near = distance <= request.arrivalRadius() + Math.max(0.35, request.tolerance())
-                && Math.abs(vehicle.getY() - goal.y()) < 1;
+        boolean near = distance <= request.arrivalRadius() + (request.exactPosition() == null ? Math.max(0.35, request.tolerance()) : request.tolerance())
+                && Math.abs(vehicle.getY() - goalPosition.y) <= (request.exactPosition() == null ? 1 : 0.20);
         settled = near && speed < 0.025 ? settled + 1 : 0;
         if (settled >= 4) { close(); return new TickResult(Status.SUCCEEDED, Reason.NONE); }
         if (remaining < Math.max(0.25, speed * 12)) return fail("vehicle_stopping_distance_budget");
@@ -84,7 +86,7 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
         }
         if (!near && (route.isEmpty() || waypoint >= route.size())) {
             route = VehicleRoutePlanner.plan(start, goal, this::neighbors);
-            waypoint = 1;
+            waypoint = Math.min(1, route.size() - 1);
             if (route.isEmpty()) {
                 neutral();
                 if (!request.autoReplan() || ++waiting > 80) return fail("vehicle_no_known_path");
@@ -94,7 +96,7 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
         }
         NavCell target = near ? goal : route.get(waypoint);
         double targetDistance = Math.hypot(target.x() + 0.5 - vehicle.getX(), target.z() + 0.5 - vehicle.getZ());
-        if (!near && targetDistance < 0.4 && Math.abs(target.y() - vehicle.getY()) < 1) {
+        if (!near && !target.equals(goal) && targetDistance < 0.4 && Math.abs(target.y() - vehicle.getY()) < 1) {
             waypoint++;
             if (waypoint < route.size()) target = route.get(waypoint);
             else { neutral(); return running(); }
@@ -103,8 +105,11 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
             route = List.of(); neutral();
             return request.autoReplan() ? running() : fail("vehicle_path_changed");
         }
-        targetDistance = Math.hypot(target.x() + 0.5 - vehicle.getX(), target.z() + 0.5 - vehicle.getZ());
-        double dx = target.x() + 0.5 - vehicle.getX(), dz = target.z() + 0.5 - vehicle.getZ();
+        Vec3 targetPosition = target.equals(goal) ? goalPosition : new Vec3(target.x() + 0.5, target.y(), target.z() + 0.5);
+        targetDistance = Math.hypot(targetPosition.x - vehicle.getX(), targetPosition.z - vehicle.getZ());
+        double dx = targetPosition.x - vehicle.getX(), dz = targetPosition.z - vehicle.getZ();
+        if (!volumeSafe(ridingVolume(vehicle.getBoundingBox(), player.getBoundingBox()).expandTowards(
+                Math.max(-1, Math.min(1, dx)), 0, Math.max(-1, Math.min(1, dz))))) return fail("vehicle_target_corridor_unverified");
         float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
         var desired = EnumSet.noneOf(MovementInputLease.MovementKey.class);
         if (vehicle instanceof AbstractBoat) {
@@ -209,6 +214,9 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
         var result = new LinkedHashMap<String, Object>();
         result.put("locomotion", vehicle instanceof AbstractBoat ? "boat" : vehicle instanceof AbstractMinecart ? "minecart" : "horse");
         result.put("path_plans", replans);
+        result.put("position", Map.of("x", vehicle.getX(), "y", vehicle.getY(), "z", vehicle.getZ()));
+        if (request.exactPosition() != null) result.put("requested_position", Map.of(
+                "x", request.exactPosition().x, "y", request.exactPosition().y, "z", request.exactPosition().z));
         result.put("vehicle_may_continue_moving", vehicle.isAlive() && motionSpeedSquared(vehicle) > 0.000625);
         if (failure != null) result.put("failure", failure);
         return result;

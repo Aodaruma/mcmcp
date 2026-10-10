@@ -3,6 +3,8 @@ package dev.aod.mcmcp.agent.safety;
 /** Movement proof required for one traversability edge. */
 public enum Locomotion {
     GROUND,
+    GAP_JUMP,
+    DROP,
     LADDER,
     SCAFFOLDING,
     WATER,
@@ -12,6 +14,7 @@ public enum Locomotion {
     public static final double FLIGHT_FEET_OFFSET = 0.2D;
 
     public boolean aerial() { return this == FLIGHT || this == SPECTATOR; }
+    public boolean ballistic() { return this == GAP_JUMP || this == DROP; }
 
     /** Permission comes from the current vanilla mode and ability, never from a tool argument. */
     public static Locomotion aerialMode(net.minecraft.client.player.LocalPlayer player) {

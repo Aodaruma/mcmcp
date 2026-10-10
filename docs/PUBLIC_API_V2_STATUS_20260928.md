@@ -1,5 +1,7 @@
 # 公開API v2：進捗と再開メモ（2026-09-28）
 
+2026-10-11追加開発：短いActionの結果待機返却、既定result取得、小数座標、1マス飛び・累計落下ダメージ予算、Nether進入を実装。自動1,838件成功。隔離Dockerで穴越え・落下・小数位置・結果返却を確認し、Portal最終修正の追試と元環境復元は継続中。通常profileは未更新。[仕様](PUBLIC_API_V2_MOVEMENT_RESULTS_20261011.md)、[検証記録](experiments/20261011_v2_movement_results.md)。
+
 2026-10-11：`agent_get_observation` に可視看板の文字・色・発光と、任意の `include_nbt`（既定false）を追加。client update-tagのSNBTを有界に返し、現在の遮蔽を再検証する。自動1,811件とaod-mimoid隔離Dockerの27項目が成功。通常profileには未導入。[仕様](PUBLIC_API_V2_SIGN_NBT_20261011.md)、[実機・復旧記録](experiments/20261011_v2_sign_nbt.md)。
 
 2026-10-11：公開16番目の `agent_chat` を追加。新着カーソルによる受信と、共通Actionによる通常発言の送信。[仕様](PUBLIC_API_V2_CHAT_20261011.md)、[検証記録](experiments/20261011_v2_chat.md)。通常R18の差し替えは行わない。

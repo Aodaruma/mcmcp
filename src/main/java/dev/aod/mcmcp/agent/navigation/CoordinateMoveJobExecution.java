@@ -243,6 +243,7 @@ public final class CoordinateMoveJobExecution {
                     () -> jobs.canDispatch(actionId, currentWorldSessionId)
                             && outputAllowed.getAsBoolean());
             jobs.recordOperation(actionId);
+            captureMovementResult();
             return switch (step.status()) {
                 case RUNNING -> jobs.get(actionId);
                 case SUCCEEDED -> {
@@ -330,8 +331,7 @@ public final class CoordinateMoveJobExecution {
     private AgentJobStore.Snapshot publishAfterRelease() {
         try {
             driver.close();
-            if (jobs.get(actionId).state() == AgentJobStore.State.RUNNING && !driver.result().isEmpty())
-                jobs.recordResult(actionId, driver.result());
+            captureMovementResult();
             if (obstacles != null) {
                 try { obstacles.close(); }
                 finally { captureObstacleResult(); }
@@ -372,6 +372,13 @@ public final class CoordinateMoveJobExecution {
         var result = new java.util.LinkedHashMap<>(jobs.get(actionId).result());
         result.remove("unconfirmed_path_target");
         result.putAll(obstacles.result());
+        jobs.recordResult(actionId, result);
+    }
+
+    private void captureMovementResult() {
+        if (jobs.get(actionId).state() != AgentJobStore.State.RUNNING || driver.result().isEmpty()) return;
+        var result = new java.util.LinkedHashMap<>(jobs.get(actionId).result());
+        result.putAll(driver.result());
         jobs.recordResult(actionId, result);
     }
 

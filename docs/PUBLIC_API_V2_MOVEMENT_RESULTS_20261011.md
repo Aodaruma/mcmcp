@@ -1,0 +1,75 @@
+# v2：移動と行動結果（2026-10-11）
+
+Draft PR #85 の追加仕様。通常プロファイルへの差し替え前に、製品JARのSHA-256と起動後の公開schemaを照合する。[実機記録](experiments/20261011_v2_movement_results.md)。
+
+## 行動の結果を返す
+
+`agent_move`、`agent_interact`、視点、単一ブロック作業、inventory、craft、click、input、chat送信は、既定で最大20秒待って、`state`・`progress`・取得できた`result`を返す。`action_id`も保持する。結果がないことを空の収納や変更なしと解釈しない。
+
+- `succeeded` はその操作の契約に沿った完了。item使用等の「client受付」と「serverで効果確認済み」の区別は、従来どおり結果内に残る。
+- `failed`／`cancelled` の同期応答は `isError:true`。ID、失敗理由、確認済みの部分結果も返す。world変更を巻き戻さない。
+- 時間内に終わらない場合は、その時点の状態を返す。`queued`／`running` は完了ではない。
+- `agent_run_script` と `dx/dy/dz` に非ゼロの範囲を指定した作業は、既定でIDを即時返す。
+- 行動ツールの `wait_timeout_ms` は0～25000。0で即時返却、正数でその時間まで待つ。ゲームの実行tick／距離予算は変わらない。サーバーの通信期限が短い設定では待機も短縮される。
+
+継続確認には既存の `agent_get_action` を使う。v2の結果は既定で含まれ、`include_result:false` で進捗のみになる。このツール自体の `wait_timeout_ms` は既定0。
+
+```json
+{"action_id":"受け取ったID","wait_timeout_ms":25000}
+```
+
+取消は `agent_cancel_action({action_id})`。取消要求と入力・menuの後処理が終わったterminalは区別する。同期応答の通信切断を検知した場合も、開始済みの該当jobだけに取消を要求する。応答喪失は失敗・未実行の証明ではないので、同じ変更を自動再送しない。必要なら `agent_get_mcp_status.running_action_id` と結果を確認する。
+
+実装上、同期実行はHTTP応答チャネルを開始・flushしてからjobをconfirmし、完成したJSONを最後に返す。`wait_timeout_ms:0` の経路は、従来どおり開始応答の送信完了後にconfirmする。いずれも無確認の再試行を行わない。
+
+## 小数の移動座標
+
+`agent_move` の `x/y/z` は有限の小数を受け付ける。経路探索はマス単位、最後の位置合わせと到着確認は指定した足元の座標で行う。
+
+```json
+{"x":307.85,"y":106,"z":305.15,"tolerance":0.1,"max_ticks":250,"max_distance":8}
+```
+
+`coordinate_mode` は次のとおり。
+
+| 指定 | 意味 |
+|---|---|
+| `auto`（既定） | 3成分とも整数なら従来のblock指定（X/Zは中心）。いずれかが小数なら3成分すべてを実座標として扱う |
+| `exact` | 整数を含め、3成分すべてを実座標として扱う |
+| `block` | 従来のblock指定。小数は拒否 |
+
+例：`x:10,y:64,z:20` は従来どおり `(10.5,64,20.5)`。`coordinate_mode:"exact"` を添えると `(10,64,20)`。`10` と `10.0` の表記差には依存しない。負数の探索cellは切捨てではなくfloorで決める。
+
+既定の水平 `tolerance` は0.25、範囲0.1～0.49。小数位置の高さ許容は0.20block。`arrival_radius` はその外側に加算する。結果の `requested_position` と `position` を比較できる。乗り物では車体の足元位置を用いる。レールや足場の制約上、その位置へ届かない場合は成功にしない。
+
+## 隙間と落下
+
+通常の地上歩行は、東西南北に1マス空いた同じ高さの足場へジャンプできる。助走・着地・頭上の空間を現地の当たり判定で確認し、通常の移動キーを使う。2マス以上の穴、斜めジャンプ、スニーク中、通常と異なるジャンプ／重力、危険な液体、未ロードの着地は対象外。許可された通常経路があればそちらも探索する。
+
+地上の落下は、隣接方向の支持された着地まで最大5block。`max_fall_damage` は既定0で、**1回のmove全体の累計**に適用する。1は体力1point（ハート半分）。経路再計画でも予算を引き継ぎ、回復では戻らない。
+
+```json
+{"x":311,"y":101,"z":305,"max_fall_damage":3,"max_ticks":350,"max_distance":24}
+```
+
+Vanillaの落下属性、落下耐性・ダメージ軽減エンチャント、十分な残時間の耐性効果を考慮する。着地直後のserver更新を待ち、落下以外の損傷、想定と異なる損傷、上限超過では停止する。致死と予測される落下は許可しない。結果に `gap_jumps`、`drops`、`fall_damage_observed`、`fall_damage_budget_used` を含める。
+
+予測した予算は保守的に予約し、実測が少なくても返還しない。浮動小数のserver体力値には微差がある。MOD／datapackが独自のダメージ式を追加する場合の一致までは保証しない。取消は入力を解放するが、空中の重力を止めたり既に受けた損傷を戻したりはしない。クリエイティブ／スペクターの空中経路は、既存の飛行経路を使う。
+
+## ポータル
+
+Survivalで、近くに見えているVanillaのネザー／エンドポータルへ明示して進入する。経路探索が無断で次元をまたぐことはない。
+
+```json
+{"target":"portal","block":"minecraft:nether_portal","x":305,"y":101,"z":303,"expected_dimension":"minecraft:the_nether","max_ticks":600}
+```
+
+`minecraft:nether_portal` はOverworldとNether間、`minecraft:end_portal` はOverworldとEnd間。入口へ歩いて接触し、通常の次元遷移を待つ。block編集・コマンド・任意packetによる転送は行わない。別接続、想定外の次元、取消、消えた入口では停止する。
+
+既定の `max_ticks` はEnd200／Nether600、範囲20～1200。新session、到着後の支持・空間・危険と入力解放を確認し、0.5秒続けて安全を確認してから完了する。結果の `arrival_confirmed`、`arrival_safety_confirmed`、`arrival_dimension`、`arrival_session_id` を確認する。到着前に向こう側を透視できず、到着後の環境変化にも無期限の安全を保証しない。初回End帰還のクレジット画面やMOD独自ポータルは別途対応・検証が必要。
+
+## 関連する残件
+
+Waystonesの到着は同MODの候補選択に従う。足場だけを増設してもバッグと重なる候補が優先される場合があり、実際の重なりを安全判定で無視しない。現場では利用者によるバッグ移設後に往復・回収が成功したとの報告がある。
+
+稼働中設備の緊急OFFが通常の安全受付に拒否される場合と、scriptの `on_failure:continue` が安全停止後の後始末を保証しない点は別件として残る。一般の安全停止を迂回する変更は含めない。足場の昇降や低い設置物付近で報告された経路の個別問題も、全解消したものとは扱わない。

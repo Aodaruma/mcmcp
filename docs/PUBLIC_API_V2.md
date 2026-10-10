@@ -12,6 +12,10 @@
 
 実ゲームの主要成功・取消・危険停止は[隔離smoke test](../tools/eval/fixtures/public-api-v2/README.md)で検証する。runner／fixtureの単体検査と実ゲーム合格を区別し、対象JAR・action ID・readback・復旧を実験記録へ残す。
 
+## 移動・結果返却の追加（2026-10-11）
+
+1マスの隙間ジャンプ、累計ダメージ上限付き落下、小数座標への移動、明示したポータルへの進入を追加した。仕様・使用例・検証範囲は[移動と行動結果ガイド](PUBLIC_API_V2_MOVEMENT_RESULTS_20261011.md)を参照。
+
 ## 長時間・多回数実行の追加（2026-09-29）
 
 明示した時間・反復・script予算の上限を全行動で見直した。[上限一覧・使用例](PUBLIC_API_V2_LONG_EXECUTION_20260929.md)を参照。共通jobと入力消費側で単調な実時間期限を検査し、子jobは親scriptの総期限を共有する。既定値、短いlease、局所安全・確認待ちと解放後のterminal公開は維持する。秒指定inputは全論理入力で使用でき、材料を明示したuseだけに静止・補充待ちguardを追加した。短い隔離入力試験A–Hを確認済み。長い移動・施工・scriptの最大予算の実機運転、通常profileでの運用、24時間連続実測は残る。
@@ -51,9 +55,9 @@ LLMは行き先、作業範囲、条件、反復の意図を伝える。MODは�
 | `agent_input_sequence` | 同時・順次のsteps、押下tick、間隔、反復数、停止条件 | 複数入力の単一所有、有限実行と解放 |
 | `agent_run_script` | 下記の制限言語のsourceと総予算 | 関数・変数・分岐・反復で複数の基本行動を組み立てて進める |
 
-Draft PRで公開した範囲は、moveの座標／方向、登録MODを含むbreak／Vanillaのplace、block state変更・手持ちitem使用・観測したentityへの通常使用のinteract、プレイヤーinventoryのinspect/swap/drop、座標指定のVanilla収納と対応providerの所持収納のinspect/transfer、world内の有限click、9種類の論理入力、制限付きscriptである。swapはmain inventoryの1 stackとhotbarの指定枠を交換し、両slotのserver更新を確認する。moveの明示許可による局所障害物処理、遠方entityへの接近、基本4種類と複合・player/entityの停止条件、複数cell設置、menuの開封・照合と限定収納のShiftクリック、PC側施工checkpointを追加した。任意MOD収納や任意GUI操作は未対応。v2の`get_action`は進行数を既定で返す。`include_result:true`を指定すると、block作業では確定セル座標と確認済みの変更前後block stateを直近最大128件、総数・保持開始番号・打切り有無とともに返す。block破壊のdrop・消費item等を含む詳細effectは未実装。実ゲームでの成功・取消・危険停止を確認するまでDraftを維持する。
+Draft PRで公開した範囲は、moveの座標／方向、登録MODを含むbreak／Vanillaのplace、block state変更・手持ちitem使用・観測したentityへの通常使用のinteract、プレイヤーinventoryのinspect/swap/drop、座標指定のVanilla収納と対応providerの所持収納のinspect/transfer、world内の有限click、9種類の論理入力、制限付きscriptである。swapはmain inventoryの1 stackとhotbarの指定枠を交換し、両slotのserver更新を確認する。moveの明示許可による局所障害物処理、遠方entityへの接近、基本4種類と複合・player/entityの停止条件、複数cell設置、menuの開封・照合と限定収納のShiftクリック、PC側施工checkpointを追加した。任意MOD収納や任意GUI操作は未対応。v2の`get_action`は進行数と取得できた結果を既定で返す。`include_result:false`で詳細結果を省略できる。block作業では確定セル座標と確認済みの変更前後block stateを直近最大128件、総数・保持開始番号・打切り有無とともに返す。block破壊のdrop・消費item等を含む詳細effectは未実装。実ゲームでの成功・取消・危険停止を確認するまでDraftを維持する。
 
-これらの一呼出しは共通の`action_id`を返す。現在の開始応答は`queued`と`action_id`を返す。完了までは同じIDを照会する。`agent_get_action({action_id})`は**その一件**の進行、成功／失敗を短く返す。確定した変更と途中までの結果は`include_result:true`で明示要求する。`agent_cancel_action({action_id})`は**その一件**の停止を要求する。たとえば範囲指定の`agent_break_block(advance:true)`が坑道を掘り進めている間も、同じIDで進行を見て中止できる。中止は既に壊したblockを戻さない。名前は既存互換のため残し、v2では共通の「作業結果・中止」ツールとして説明する。
+短い行動ツールは既定で最大20秒待ち、終了状態・進捗・取得できた結果と共通の`action_id`を返す。スクリプトと範囲作業は既定でIDを即時返す。`wait_timeout_ms`（0～25000）で変更でき、0は即時返却。時間内に終わらない場合はその時点の進捗を返し、同じIDを`agent_get_action({action_id})`で照会する。`queued`／`running`は完了ではない。同期の失敗／取消では`isError:true`になるが、結果とIDは保持する。`agent_get_action`はその一件の確定した変更と途中までの結果も既定で返す。通信切断では開始済みの該当操作へ取消を要求し、自動再実行しない。`agent_cancel_action({action_id})`は**その一件**の停止を要求する。たとえば範囲指定の`agent_break_block(advance:true)`が坑道を掘り進めている間も、同じIDで進行を見て中止できる。中止は既に壊したblockを戻さない。名前は既存互換のため残し、v2では共通の「作業結果・中止」ツールとして説明する。
 
 内部の`AgentJobStore`はDSLから独立した共通job状態を保持する。HTTP応答の配送確認前は開始できず、world session違い・取消・操作回数上限で次の操作を拒否する。取消と既に発行した操作の結果が競合しても進行数を記録し、入力解放が確認されるまでterminal結果を公表しない。保持する結果は最新jobと直前の完了jobに限る。内部のinput sequenceと座標moveはruntimeのclient tick、配送確認、進行取得、取消へ接続済み。公開toolへ接続済み。基本入力の取消・危険停止と、shield使用中の取消・Esc・UI OFF・次元移動で入力所有終了を実機確認した。部分結果の詳細は引き続き実装・試験する。
 

@@ -85,8 +85,8 @@ final class FixtureV2Priorities {
                     var player = server.getPlayerList().getPlayer(playerId);
                     if (player == null) throw new IllegalStateException("owner missing");
                     String kind = value.substring(value.indexOf(':') + 1);
-                    var decision = kind.equals("dimension_overworld") || kind.equals("report") && player.level().dimension() == net.minecraft.world.level.Level.END
-                            ? FixtureSecurity.authorizeReturnFromEnd(player.createCommandSourceStack())
+                    var decision = kind.equals("dimension_overworld") || kind.equals("report") && player.level().dimension() != net.minecraft.world.level.Level.OVERWORLD
+                            ? FixtureSecurity.authorizePortalReturn(player.createCommandSourceStack())
                             : FixtureSecurity.authorize(player.createCommandSourceStack());
                     if (!decision.allowed()) throw new IllegalStateException(decision.rejection());
                     if (kind.equals("dimension_end") || kind.equals("dimension_overworld")) {
@@ -128,6 +128,7 @@ final class FixtureV2Priorities {
                         storageDrift = kind.equals("storage_drift") || storageCursorDrift ? decision.context() : null;
                         storageDriftDeadline = server.getTickCount() + 1200;
                         if (kind.equals("waystones")) prepareWaystones(player);
+                        if (kind.equals("portal_nether") || kind.equals("portal_end")) preparePortalDestination(player, kind);
                         if (kind.startsWith("signs_")) prepareSigns(player, kind);
                         if (kind.equals("trade") || kind.equals("trade_full")) {
                             var villager = new net.minecraft.world.entity.npc.villager.Villager(net.minecraft.world.entity.EntityTypes.VILLAGER, player.level());
@@ -163,6 +164,16 @@ final class FixtureV2Priorities {
                         Object wrapper = placedBag.getClass().getMethod("getBackpackWrapper").invoke(placedBag);
                         report.put("placed_storage", backpackReport((net.minecraft.world.item.ItemStack)
                                 wrapper.getClass().getMethod("getBackpack").invoke(wrapper)));
+                        var pos = placedBag.getBlockPos();
+                        var shape = placedBag.getBlockState().getCollisionShape(player.level(), pos,
+                                net.minecraft.world.phys.shapes.CollisionContext.of(player));
+                        var boxes = shape.toAabbs().stream().map(box -> box.move(pos)).toList();
+                        var body = player.getBoundingBox();
+                        report.put("placed_storage_geometry", Map.of(
+                                "collision_boxes", boxes.stream().map(FixtureV2Priorities::boxCoordinates).toList(),
+                                "player_box", boxCoordinates(body),
+                                "block_intersects_player", boxes.stream().anyMatch(body::intersects),
+                                "world_collision_free", player.level().noCollision(player, body)));
                     }
                     var merchants = new ArrayList<Object>();
                     for (var entity : player.level().getEntitiesOfClass(net.minecraft.world.entity.npc.villager.Villager.class,
@@ -260,6 +271,16 @@ final class FixtureV2Priorities {
                 for (int slot = 0; slot < 9; slot++) player.getInventory().setItem(slot,
                         new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.WATER_BUCKET));
             }
+            if (kind.equals("storage_placed_inside") || kind.equals("storage_placed_top")) {
+                var shape = entity.getBlockState().getCollisionShape(level, pos,
+                        net.minecraft.world.phys.shapes.CollisionContext.of(player));
+                double feetY = pos.getY() + (kind.equals("storage_placed_inside") ? 0.5D
+                        : shape.max(net.minecraft.core.Direction.Axis.Y));
+                var source = player.createCommandSourceStack()
+                        .withMaximumPermission(level.getServer().operatorUserPermissions()).withSuppressedOutput();
+                level.getServer().getCommands().performPrefixedCommand(source,
+                        "tp @s 305.5 " + feetY + " 303.5 180 90");
+            }
         }
         player.inventoryMenu.broadcastChanges();
     }
@@ -282,6 +303,10 @@ final class FixtureV2Priorities {
         }
         return Map.of("size", size, "slots", contents, "upgrades", installed,
                 "open_tab", wrapper.getClass().getMethod("getOpenTabId").invoke(wrapper).toString());
+    }
+
+    private static List<Double> boxCoordinates(net.minecraft.world.phys.AABB box) {
+        return List.of(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
     }
 
     private static void prepareWaystones(net.minecraft.server.level.ServerPlayer player) throws ReflectiveOperationException {
@@ -353,6 +378,34 @@ final class FixtureV2Priorities {
                 "tp @s 305.5 101 305.5 180 0", "setblock 305 101 303 minecraft:crafting_table",
                 "recipe give @s *", "time set noon", "weather clear"));
         switch (kind) {
+            case "move_exact", "move_exact_slab", "move_exact_creative", "move_exact_spectator" -> {
+                result.addAll(List.of("fill 300 101 300 320 116 320 minecraft:air", "tp @s 305.5 101 305.5 -90 0"));
+                if (kind.equals("move_exact_slab")) result.add("fill 306 101 304 308 101 306 minecraft:stone_slab[type=bottom]");
+            }
+            case "portal_end" -> result.addAll(List.of("setblock 305 100 303 minecraft:end_portal",
+                    "tp @s 305.5 101 304.5 180 40"));
+            case "portal_nether" -> result.addAll(List.of("fill 304 100 303 307 104 303 minecraft:obsidian",
+                    "fill 305 101 303 306 103 303 minecraft:nether_portal[axis=x]", "tp @s 305.5 101 304.5 180 10"));
+            case "move_gap", "move_gap_two", "move_gap_roof", "move_drop3", "move_drop4", "move_drop5", "move_drop_ff", "move_drop_protection", "move_drop_cumulative" -> {
+                result.addAll(List.of("fill 300 101 300 320 116 320 minecraft:air", "gamerule natural_health_regeneration false"));
+                if (kind.startsWith("move_gap")) {
+                    int far = kind.equals("move_gap_two") ? 308 : 307;
+                    result.addAll(List.of("fill 300 101 300 305 105 320 minecraft:stone",
+                            "fill " + far + " 101 300 320 105 320 minecraft:stone", "tp @s 305.5 106 305.5 -90 0"));
+                    if (kind.equals("move_gap_roof")) result.add("fill 300 108 300 320 108 320 minecraft:stone");
+                } else if (kind.equals("move_drop_cumulative")) {
+                    result.addAll(List.of("fill 300 101 300 305 112 320 minecraft:stone", "fill 306 101 300 307 108 320 minecraft:stone",
+                            "fill 308 101 300 309 104 320 minecraft:stone", "tp @s 305.5 113 305.5 -90 0"));
+                } else {
+                    int height = kind.equals("move_drop3") ? 3 : kind.equals("move_drop5") ? 5 : 4;
+                    result.addAll(List.of("fill 300 101 300 305 " + (100 + height) + " 320 minecraft:stone",
+                            "tp @s 305.5 " + (101 + height) + " 305.5 -90 0"));
+                    if (kind.equals("move_drop_ff") || kind.equals("move_drop_protection"))
+                        result.add("item replace entity @s armor.feet with minecraft:diamond_boots[minecraft:enchantments={'minecraft:feather_falling':4}]");
+                    if (kind.equals("move_drop_protection"))
+                        result.add("item replace entity @s armor.chest with minecraft:diamond_chestplate[minecraft:enchantments={'minecraft:protection':4}]");
+                }
+            }
             case "signs_front", "signs_back", "signs_occluded", "signs_large" -> {
                 result.addAll(List.of("setblock 305 101 303 minecraft:oak_sign[rotation=0]",
                         "setblock 307 102 302 minecraft:stone", "setblock 307 102 303 minecraft:oak_wall_sign[facing=south]",
@@ -385,7 +438,7 @@ final class FixtureV2Priorities {
                         + (slot < 9 ? "hotbar." + slot : "inventory." + (slot - 9)) + " with minecraft:stone 64");
             }
             case "blueprint" -> result.add("give @s minecraft:cobblestone 32");
-            case "storage_placed_no_hand", "storage_placed", "storage_plain", "storage_upgraded", "storage_tab", "storage_food", "storage_drift", "storage_cursor_drift", "storage_boundary" -> result.addAll(List.of(
+            case "storage_placed_inside", "storage_placed_top", "storage_placed_no_hand", "storage_placed", "storage_plain", "storage_upgraded", "storage_tab", "storage_food", "storage_drift", "storage_cursor_drift", "storage_boundary" -> result.addAll(List.of(
                     "kill @e[type=minecraft:item,x=300,y=100,z=300,dx=20,dy=15,dz=20]",
                     "item replace entity @s hotbar.6 with sophisticatedbackpacks:netherite_backpack",
                     "give @s minecraft:black_concrete 32"));
@@ -448,7 +501,24 @@ final class FixtureV2Priorities {
             default -> throw new IllegalArgumentException("unknown fixture");
         }
         result.addAll(List.of("gamemode survival @s", "effect give @s minecraft:saturation 120 0 true"));
+        if (kind.equals("move_exact_creative")) result.add("gamemode creative @s");
+        if (kind.equals("move_exact_spectator")) result.add("gamemode spectator @s");
         if (kind.equals("water")) result.add("effect give @s minecraft:water_breathing 120 0 true");
         return List.copyOf(result);
+    }
+
+    private static void preparePortalDestination(net.minecraft.server.level.ServerPlayer player, String kind) {
+        var server = player.level().getServer();
+        boolean nether = kind.equals("portal_nether");
+        var level = server.getLevel(nether ? net.minecraft.world.level.Level.NETHER : net.minecraft.world.level.Level.END);
+        int x = nether ? 38 : 100, z = nether ? 38 : 0;
+        for (int cx = (x - 10) >> 4; cx <= (x + 10) >> 4; cx++)
+            for (int cz = (z - 10) >> 4; cz <= (z + 10) >> 4; cz++) level.getChunk(cx, cz);
+        var source = player.createCommandSourceStack().withMaximumPermission(server.operatorUserPermissions()).withSuppressedOutput();
+        String prefix = "execute in " + (nether ? "minecraft:the_nether" : "minecraft:the_end") + " run ";
+        var commands = nether ? List.of("fill 28 100 28 48 108 48 minecraft:stone", "fill 29 101 29 47 107 47 minecraft:air",
+                "fill 37 100 38 40 104 38 minecraft:obsidian", "fill 38 101 38 39 103 38 minecraft:nether_portal[axis=x]")
+                : List.of("fill 90 48 -10 110 48 10 minecraft:stone", "fill 90 49 -10 110 54 10 minecraft:air");
+        for (String command : commands) server.getCommands().performPrefixedCommand(source, prefix + command);
     }
 }

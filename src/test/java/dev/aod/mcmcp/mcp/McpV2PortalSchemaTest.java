@@ -14,9 +14,11 @@ class McpV2PortalSchemaTest {
         assertThat(valid(request.replace("minecraft:the_end","minecraft:overworld"))).isTrue();
         assertThat(valid(request.replace("minecraft:end_portal","minecraft:air"))).isFalse();
         assertThat(valid(request.replace("minecraft:the_end","minecraft:the_nether"))).isFalse();
-        assertThat(valid(request.replace("200","201"))).isFalse();
+        assertThat(valid(request.replace("200","1201"))).isFalse();
         assertThat(valid(request.replace("200","19"))).isFalse();
         assertThat(valid(request.replace("\"z\":0,", ""))).isFalse();
         assertThat(valid(request.replace("\"max_ticks\":200", "\"force\":true"))).isFalse();
+        assertThat(valid(request.replace("minecraft:end_portal","minecraft:nether_portal")
+                .replace("minecraft:the_end","minecraft:the_nether").replace("200","600"))).isTrue();
     }
 }

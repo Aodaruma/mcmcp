@@ -3,15 +3,18 @@ package dev.aod.mcmcp.agent.safety;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.AABB;
 
-/** A short approach to one observed End portal cell, never an arbitrary drop corridor. */
-public record PortalEntryGeometry(BlockPos portal) {
+/** A short approach to one observed vanilla portal cell. */
+public record PortalEntryGeometry(BlockPos portal, boolean nether) {
     private static final double EPSILON = 1.0E-6;
+    public PortalEntryGeometry(BlockPos portal) { this(portal, false); }
     public PortalEntryGeometry { portal = portal.immutable(); }
+
+    public String blockId() { return nether ? "minecraft:nether_portal" : "minecraft:end_portal"; }
 
     public boolean nearby(AABB body) {
         return body.getXsize() <= 0.7 && body.getZsize() <= 0.7
-                && body.minY >= portal.getY() + 0.25 - EPSILON
-                && body.minY <= portal.getY() + 1.05 + EPSILON
+                && body.minY >= portal.getY() + (nether ? -0.05 : 0.25) - EPSILON
+                && body.minY <= portal.getY() + (nether ? 0.05 : 1.05) + EPSILON
                 && horizontalDistanceSquared(body) <= 1.75 * 1.75;
     }
 
@@ -21,6 +24,7 @@ public record PortalEntryGeometry(BlockPos portal) {
     }
 
     public boolean contact(AABB body) {
+        if (nether) return nearby(body) && overPortal(body);
         return nearby(body) && overPortal(body) && body.intersects(new AABB(
                 portal.getX(), portal.getY() + 0.375, portal.getZ(),
                 portal.getX() + 1, portal.getY() + 0.75, portal.getZ() + 1));

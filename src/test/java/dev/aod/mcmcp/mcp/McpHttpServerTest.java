@@ -41,6 +41,107 @@ class McpHttpServerTest {
             .build();
     private McpHttpServer server;
 
+    @Test void shortActionsReturnTerminalResultsOnModernAndLegacyTransports() throws Exception {
+        for (boolean legacy : new boolean[] {false, true}) for (String state : List.of("succeeded", "failed")) {
+            UUID id = UUID.randomUUID();
+            var confirmed = new java.util.concurrent.atomic.AtomicBoolean();
+            start((command, context) -> {
+                if (command instanceof McpRuntimePort.StartMove move) {
+                    assertThat(move.arguments()).doesNotContainKey("wait_timeout_ms");
+                    return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of(
+                            "schema_version", 2, "action_id", id.toString(), "state", "queued")));
+                }
+                if (command instanceof McpRuntimePort.ConfirmActionDelivery) confirmed.set(true);
+                if (command instanceof McpRuntimePort.GetAction) {
+                    assertThat(confirmed).isTrue();
+                    return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(completion(id, state)));
+                }
+                return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
+            }, config("complete-" + legacy + state).rateLimit(100, 100).build());
+            var params = legacy ? new JsonObject() : metaParams();
+            params.addProperty("name", "agent_move");
+            params.add("arguments", JsonParser.parseString("{\"x\":1.8,\"y\":64,\"z\":2.2,\"wait_timeout_ms\":1000}"));
+            var response = send(legacy ? codexLegacyPost(requestBody("tools/call", params),
+                    McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null)
+                    : request("tools/call", "agent_move", params, McpTestFixtures.TOKEN));
+            var result = json(response).getAsJsonObject("result");
+            assertThat(result.get("isError").getAsBoolean()).isEqualTo(state.equals("failed"));
+            var data = result.getAsJsonObject("structuredContent");
+            assertThat(data.get("state").getAsString()).isEqualTo(state);
+            assertThat(data.getAsJsonObject("result").get("gap_jumps").getAsInt()).isEqualTo(1);
+            assertThat(CatalogSchemaValidator.matches(new McpToolCatalog().outputSchema("agent_move"), data)).isTrue();
+        }
+    }
+
+    @Test void completionTimeoutReturnsProgressAndZeroKeepsImmediateReceipt() throws Exception {
+        UUID id = UUID.randomUUID();
+        var polls = new AtomicInteger();
+        start((command, context) -> {
+            if (command instanceof McpRuntimePort.StartMove) return CompletableFuture.completedFuture(
+                    McpRuntimePort.RuntimeReply.success(Map.of("schema_version", 2, "action_id", id.toString(), "state", "queued")));
+            if (command instanceof McpRuntimePort.GetAction) {
+                polls.incrementAndGet();
+                return CompletableFuture.supplyAsync(() -> McpRuntimePort.RuntimeReply.success(completion(id, "running")),
+                        CompletableFuture.delayedExecutor(50, TimeUnit.MILLISECONDS));
+            }
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
+        }, config("timeout").rateLimit(100, 100).build());
+        for (int wait : new int[] {0, 10}) {
+            var params = metaParams(); params.addProperty("name", "agent_move");
+            params.add("arguments", JsonParser.parseString("{\"x\":1,\"y\":64,\"z\":2,\"wait_timeout_ms\":" + wait + "}"));
+            var data = json(send(request("tools/call", "agent_move", params, McpTestFixtures.TOKEN)))
+                    .getAsJsonObject("result").getAsJsonObject("structuredContent");
+            assertThat(data.get("state").getAsString()).isEqualTo(wait == 0 ? "queued" : "running");
+            assertThat(polls.get()).isEqualTo(wait == 0 ? 0 : 1);
+        }
+    }
+
+    @Test void disconnectAfterStartingRequestsCancellationOfOnlyThatJob() throws Exception {
+        UUID id = UUID.randomUUID();
+        var cancelled = new CountDownLatch(1);
+        start((command, context) -> {
+            if (command instanceof McpRuntimePort.StartMove) return CompletableFuture.completedFuture(
+                    McpRuntimePort.RuntimeReply.success(Map.of("schema_version", 2, "action_id", id.toString(), "state", "queued")));
+            if (command instanceof McpRuntimePort.GetAction) return CompletableFuture.supplyAsync(
+                    () -> McpRuntimePort.RuntimeReply.success(completion(id, "running")),
+                    CompletableFuture.delayedExecutor(50, TimeUnit.MILLISECONDS));
+            if (command instanceof McpRuntimePort.CancelAction cancel) {
+                assertThat(cancel.arguments().get("action_id")).isEqualTo(id.toString()); cancelled.countDown();
+            }
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
+        }, config("disconnect").rateLimit(100, 100).build());
+        var params = metaParams(); params.addProperty("name", "agent_move");
+        params.add("arguments", JsonParser.parseString("{\"x\":1,\"y\":64,\"z\":2}"));
+        byte[] body = requestBody("tools/call", params).getBytes(StandardCharsets.UTF_8);
+        try (var socket = new Socket("127.0.0.1", server.localPort())) {
+            socket.setSoTimeout(2000); socket.setSoLinger(true, 0);
+            String headers = "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:" + server.localPort()
+                    + "\r\nAuthorization: Bearer " + McpTestFixtures.TOKEN
+                    + "\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\n"
+                    + McpHttpServer.PROTOCOL_HEADER + ": " + McpHttpServer.PROTOCOL_VERSION + "\r\n"
+                    + McpHttpServer.METHOD_HEADER + ": tools/call\r\n" + McpHttpServer.NAME_HEADER + ": agent_move\r\n"
+                    + "Content-Length: " + body.length + "\r\n\r\n";
+            socket.getOutputStream().write(headers.getBytes(StandardCharsets.UTF_8));
+            socket.getOutputStream().write(body); socket.getOutputStream().flush();
+            var reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+            assertThat(reader.readLine()).contains("200");
+            String line;
+            do { line = reader.readLine(); } while (line != null && !line.isEmpty());
+            assertThat(reader.readLine()).isEqualTo("1"); // Initial accepted chunk, before the final result.
+            assertThat(reader.read()).isEqualTo(' ');
+        }
+        assertThat(cancelled.await(3, TimeUnit.SECONDS)).isTrue();
+    }
+
+    private static Map<String, Object> completion(UUID id, String state) {
+        var result = new java.util.LinkedHashMap<String, Object>();
+        result.putAll(Map.of("schema_version", 2, "action_id", id.toString(), "kind", "move", "state", state,
+                "progress", Map.of("completed_operations", 2, "max_operations", 100), "cancel_requested", false,
+                "result", Map.of("gap_jumps", 1)));
+        result.put("failure", state.equals("failed") ? "test_failure" : null);
+        return result;
+    }
+
     @AfterEach
     void closeServer() throws Exception {
         if (server != null) {

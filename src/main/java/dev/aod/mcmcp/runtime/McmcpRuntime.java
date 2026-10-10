@@ -174,6 +174,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private boolean v2InputTimed;
     private double v2InputMaxDistance = 48.0;
     private CoordinateMoveJobExecution v2MoveExecution;
+    private MinecraftV2MoveDriver v2GroundMoveDriver;
     private V2BlockJobExecution<V2BreakArguments> v2BreakExecution;
     private V2BlockJobExecution<V2PlaceArguments> v2PlaceExecution;
     private final ChatHistory chatHistory = new ChatHistory();
@@ -2214,6 +2215,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     request.maxTicks(), System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS, context);
             CoordinateMoveJobExecution.MovementDriver driver = minecraft.player.isPassenger()
                     ? new MinecraftV2VehicleDriver(minecraft, request) : new MinecraftV2MoveDriver(minecraft, request);
+            v2GroundMoveDriver = driver instanceof MinecraftV2MoveDriver ground ? ground : null;
             v2MoveExecution = new CoordinateMoveJobExecution(
                     v2Jobs, actionId, session.worldSessionId(), request.goal(),
                     request.arrivalRadius(), request.tolerance(), request.maxDistance(), driver,
@@ -3020,8 +3022,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private static boolean includeV2Result(Map<String, Object> arguments) {
-        return arguments.containsKey("include_result")
-                && RuntimeArguments.booleanArgument(arguments, "include_result");
+        return !arguments.containsKey("include_result")
+                || RuntimeArguments.booleanArgument(arguments, "include_result");
     }
 
     private Map<String, Object> cancelAgentAction(
@@ -3486,7 +3488,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         try {
             boolean screenStop = minecraft.player != null && v2MoveStopWhen != null
                     && v2MoveStopWhen.matchesScreen(v2LocalConditions(minecraft));
-            String unsafe = v2InputWorldUnsafeReason(minecraft, session, screenStop, true, true);
+            boolean checkedTraversal = minecraft.player == v2MovePlayerIdentity && minecraft.level == v2MoveLevelIdentity
+                    && v2GroundMoveDriver != null && v2GroundMoveDriver.currentTraversalSafe();
+            String unsafe = v2InputWorldUnsafeReason(minecraft, session, screenStop, true, true, checkedTraversal);
             var control = arming.snapshot(session.worldSessionId());
             if (unsafe == null && (minecraft.player != v2MovePlayerIdentity
                     || minecraft.level != v2MoveLevelIdentity)) unsafe = "world_identity_changed";
@@ -3499,6 +3503,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 v2MoveTravelled += position.distanceTo(v2MoveLastPosition);
                 v2MoveLastPosition = position;
                 if (v2MoveTravelled > v2MoveMaxDistance) unsafe = "distance_limit";
+                else if (v2GroundMoveDriver != null) unsafe = v2GroundMoveDriver.observeDamage();
                 else if (minecraft.player.getHealth() + minecraft.player.getAbsorptionAmount()
                         < v2MoveHealthBaseline) unsafe = "health_decreased";
             }
@@ -3516,8 +3521,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 v2MoveExecution.divertTo(surface, "air_supply_retreat");
             }
             v2MoveExecution.requireLocalObservation(
-                    !minecraft.player.isPassenger() && agentObservations.localSafety() == LocalObservationProjector.CurrentSafety.REPLAN);
+                    !checkedTraversal && !minecraft.player.isPassenger() && agentObservations.localSafety() == LocalObservationProjector.CurrentSafety.REPLAN);
             var map = agentObservations.requireAgentMap(session);
+            if (v2GroundMoveDriver != null) map = v2GroundMoveDriver.augment(map);
             var currentCell = ActionPlanning.playerCell(minecraft.player, session.dimension());
             var result = v2MoveExecution.tick(map, currentCell,
                     session.worldSessionId(), map.worldRevision(), session.clientTick(),
@@ -3838,6 +3844,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private void clearV2MoveWitness() {
+        v2GroundMoveDriver = null;
         v2MovePlayerIdentity = null;
         v2MoveLevelIdentity = null;
         v2MoveLastPosition = null;
@@ -3968,8 +3975,17 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         var session = sessions.snapshot();
         var player = minecraft.player;
         if (player != null && player.isDeadOrDying()) { stopPendingPortal("player_dead"); return; }
+        if (player != null && (player.isOnFire() || player.isInLava())) { stopPendingPortal("portal_arrival_unsafe"); return; }
+        boolean safeLanding = player != null && player.onGround() && LocalObservationVolume.global().latestFor(player)
+                .map(snapshot -> snapshot.current()).filter(current ->
+                        current.loaded() == dev.aod.mcmcp.agent.safety.ObservationRecord.LoadedState.LOADED
+                        && current.support() == dev.aod.mcmcp.agent.safety.ObservationRecord.Support.PRESENT
+                        && current.clearance() == dev.aod.mcmcp.agent.safety.ObservationRecord.Clearance.CLEAR
+                        && current.fluid() == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.NONE
+                        && current.hazard() == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.NONE
+                        && !current.suffocation()).isPresent();
         var result = pendingPortalArrival.pollArrival(session.worldSessionId(), session.dimension(),
-                minecraft.getConnection(), session.worldReady() && localControlAvailable(minecraft, session),
+                minecraft.getConnection(), safeLanding && session.worldReady() && localControlAvailable(minecraft, session),
                 AgentInputState.global().inputOwnerNone(), System.nanoTime());
         if (result.state().terminal()) pendingPortalArrival = null;
     }

@@ -6,6 +6,27 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class AgentInputStateTest {
+    @Test void passivePlayerTicksDoNotReacquireReleasedAgentOwnership() {
+        var state = new AgentInputState();
+        var player = new Object(); var level = new Object();
+        for (int tick = 0; tick < 20; tick++) {
+            state.beginPlayerMovementTick(player, level);
+            state.endPlayerMovementTick(player, level);
+            assertThat(state.inputOwnerNone()).isTrue();
+        }
+        state.publishMovement(true, false, false, false, false);
+        state.requireGoalMovementSafety(player, level, 1, 1);
+        state.beginPlayerMovementTick(player, level);
+        state.addAgentMoveContribution(new Vec3(0.2, 0, 0));
+        state.endPlayerMovementTick(player, level);
+        state.releaseMovement();
+        state.beginPlayerMovementTick(player, level);
+        assertThat(state.inputOwnershipSnapshot().velocityTracked()).isTrue();
+        state.discardTrackedAgentVelocity();
+        state.beginPlayerMovementTick(player, level);
+        state.endPlayerMovementTick(player, level);
+        assertThat(state.inputOwnerNone()).isTrue();
+    }
     @Test
     void portalIntentIsOwnedAndCannotLeakIntoOrdinaryMovementOrAnotherWorld() {
         var state = new AgentInputState();

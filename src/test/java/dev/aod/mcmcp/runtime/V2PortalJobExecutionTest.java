@@ -34,7 +34,10 @@ class V2PortalJobExecutionTest {
         var f=new Fixture(); f.transition(); int calls=f.port.ticks; int closes=f.port.closes;
         assertThat(f.execution.pollArrival(null,null,f.connection,false,true,300).state()).isEqualTo(AgentJobStore.State.RUNNING);
         UUID arrival=UUID.randomUUID();
-        var done=f.execution.pollArrival(arrival,"minecraft:the_end",f.connection,true,true,400);
+        assertThat(f.execution.pollArrival(arrival,"minecraft:the_end",f.connection,true,true,400).state()).isEqualTo(AgentJobStore.State.RUNNING);
+        assertThat(f.execution.pollArrival(arrival,"minecraft:the_end",f.connection,false,true,500).state()).isEqualTo(AgentJobStore.State.RUNNING);
+        f.execution.pollArrival(arrival,"minecraft:the_end",f.connection,true,true,600);
+        var done=f.execution.pollArrival(arrival,"minecraft:the_end",f.connection,true,true,500_000_600);
         assertThat(done.state()).isEqualTo(AgentJobStore.State.SUCCEEDED);
         assertThat(done.result()).containsEntry("arrival_session_id",arrival.toString())
                 .containsEntry("arrival_confirmed",true).containsEntry("inputs_released",true);

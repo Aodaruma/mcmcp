@@ -27,4 +27,12 @@ class PortalEntryGeometryTest {
         assertThat(geometry.nearby(body(3,65,.5))).isFalse();
         assertThat(geometry.nearby(new AABB(0,65,0,1,67,1))).isFalse();
     }
+    @Test void netherEntryUsesSupportedLevelBottomCellAndCenteredContact() {
+        var nether = new PortalEntryGeometry(new BlockPos(0,64,0), true);
+        assertThat(nether.nearby(body(.5,64,-.5))).isTrue();
+        assertThat(nether.contact(body(.5,64,-.5))).isFalse();
+        assertThat(nether.contact(body(.5,64,.5))).isTrue();
+        assertThat(nether.nearby(body(.5,65,.5))).isFalse();
+        assertThat(nether.approaches(body(.5,64,-.5),body(.5,63.9,-.25))).isFalse();
+    }
 }

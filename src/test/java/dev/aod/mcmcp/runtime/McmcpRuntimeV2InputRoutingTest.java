@@ -344,7 +344,7 @@ class McmcpRuntimeV2InputRoutingTest {
         assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.SUCCEEDED);
         var summary = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
                 Map.of("action_id", id.toString()));
-        assertThat(summary.containsKey("result")).isFalse();
+        assertThat(summary.containsKey("result")).isTrue();
         var result = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
                 Map.of("action_id", id.toString(), "include_result", true));
         assertThat(result.get("kind")).isEqualTo("script");
@@ -363,7 +363,10 @@ class McmcpRuntimeV2InputRoutingTest {
         var payload = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
                 Map.of("action_id", id.toString()));
         assertThat(payload.get("kind")).isEqualTo("place_block");
-        assertThat(payload.containsKey("result")).isFalse();
+        assertThat(payload.get("result")).isEqualTo(Map.of("confirmed_count", 1));
+        var brief = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
+                Map.of("action_id", id.toString(), "include_result", false));
+        assertThat(brief.containsKey("result")).isFalse();
         var detailed = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class},
                 Map.of("action_id", id.toString(), "include_result", true));
         assertThat(detailed.get("result")).isEqualTo(Map.of("confirmed_count", 1));
@@ -373,7 +376,7 @@ class McmcpRuntimeV2InputRoutingTest {
                         java.time.Duration.ofSeconds(2)))
                 .toCompletableFuture().get();
         assertThat(publicSummary.successful()).isTrue();
-        assertThat(publicSummary.data().containsKey("result")).isFalse();
+        assertThat(publicSummary.data().get("result")).isEqualTo(Map.of("confirmed_count", 1));
         var publicDetail = runtime.submit(new dev.aod.mcmcp.mcp.McpRuntimePort.GetAction(
                 Map.of("action_id", id.toString(), "include_result", true)),
                 dev.aod.mcmcp.mcp.RuntimeCallContext.withTimeout(

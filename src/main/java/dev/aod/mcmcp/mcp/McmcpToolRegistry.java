@@ -35,6 +35,9 @@ public final class McmcpToolRegistry {
     private final Duration runtimeDispatchTimeout;
     private final McpToolCatalog catalog = new McpToolCatalog();
     private final Semaphore terminalWaitAdmission = new Semaphore(1);
+    private static final Set<String> ACTION_TOOLS = Set.of("agent_move", "agent_look", "agent_break_block",
+            "agent_place_block", "agent_interact", "agent_chat", "agent_inventory", "agent_craft",
+            "agent_click", "agent_input_sequence", "agent_run_script");
 
     public McmcpToolRegistry(McpRuntimePort runtimePort, Duration runtimeDispatchTimeout) {
         this.runtimePort = Objects.requireNonNull(runtimePort, "runtimePort");
@@ -90,7 +93,33 @@ public final class McmcpToolRegistry {
                     true), null, evaluationLeaseExpectation);
         }
 
-        return dispatch(name, command(name, arguments), evaluationLeaseExpectation, elicitationInput);
+        JsonObject runtimeArguments = arguments;
+        if (ACTION_TOOLS.contains(name) && arguments.has("wait_timeout_ms")) {
+            runtimeArguments = arguments.deepCopy();
+            runtimeArguments.remove("wait_timeout_ms");
+        }
+        return dispatch(name, command(name, runtimeArguments), evaluationLeaseExpectation, elicitationInput);
+    }
+
+    static int completionWaitMillis(String name, JsonObject arguments, PreparedCall prepared) {
+        if (!ACTION_TOOLS.contains(name) || !(prepared.deliveryReceipt() instanceof McpRuntimePort.ActionDeliveryReceipt)) return 0;
+        if (arguments.has("wait_timeout_ms")) return arguments.get("wait_timeout_ms").getAsInt();
+        boolean region = java.util.stream.Stream.of("dx", "dy", "dz")
+                .anyMatch(key -> arguments.has(key) && arguments.get(key).getAsInt() != 0);
+        return name.equals("agent_run_script") || region ? 0 : 20_000;
+    }
+
+    JsonObject pollCompletion(PreparedCall started, int waitMillis) {
+        var receipt = (McpRuntimePort.ActionDeliveryReceipt) started.deliveryReceipt();
+        return dispatch("agent_get_action", new McpRuntimePort.GetAction(Map.of(
+                "action_id", receipt.actionId().toString(), "include_result", true, "wait_timeout_ms", waitMillis)),
+                started.evaluationLeaseExpectation(), RuntimeCallContext.ElicitationInput.unsupported()).response();
+    }
+
+    void cancelDelivery(PreparedCall started) {
+        if (started.deliveryReceipt() instanceof McpRuntimePort.ActionDeliveryReceipt action)
+            submitDelivery(new McpRuntimePort.CancelAction(Map.of("action_id", action.actionId().toString())),
+                    started.evaluationLeaseExpectation());
     }
 
     private PreparedCall dispatch(

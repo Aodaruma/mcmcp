@@ -260,6 +260,9 @@ public final class AgentInputState {
                         || agentVelocityLevelIdentity != levelIdentity)) {
             clearAgentVelocityContribution();
         }
+        // Idle vanilla ticks must not recreate an Agent owner after verified release.
+        if (!goalMovementOutputActive() && agentVelocityPlayerIdentity == null
+                && agentVelocityLevelIdentity == null) return;
         agentVelocityPlayerIdentity = Objects.requireNonNull(playerIdentity, "playerIdentity");
         agentVelocityLevelIdentity = Objects.requireNonNull(levelIdentity, "levelIdentity");
         agentMoveContribution = agentVelocityContribution;
@@ -756,7 +759,11 @@ public final class AgentInputState {
             Vec3 target,
             int verticalDelta,
             Locomotion locomotion,
-            double horizontalTolerance) {
+            double horizontalTolerance,
+            dev.aod.mcmcp.agent.safety.GroundTraversal groundTraversal) {
+        public NavigationIntent(Vec3 target, int verticalDelta, Locomotion locomotion, double tolerance) {
+            this(target, verticalDelta, locomotion, tolerance, null);
+        }
         public NavigationIntent(Vec3 target, int verticalDelta) {
             this(target, verticalDelta, Locomotion.GROUND);
         }
@@ -768,6 +775,9 @@ public final class AgentInputState {
         public NavigationIntent {
             target = finiteVector(Objects.requireNonNull(target, "target"));
             Objects.requireNonNull(locomotion, "locomotion");
+            if (locomotion.ballistic() != (groundTraversal != null)
+                    || groundTraversal != null && groundTraversal.mode() != locomotion)
+                throw new IllegalArgumentException("ballistic intent requires its exact corridor");
             if (verticalDelta < -1 || verticalDelta > 1) {
                 throw new IllegalArgumentException("vertical delta must be within -1..1");
             }

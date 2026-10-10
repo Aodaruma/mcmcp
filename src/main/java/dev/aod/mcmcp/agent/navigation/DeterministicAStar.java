@@ -110,6 +110,8 @@ public final class DeterministicAStar {
                     RoutePlan.from(snapshot, List.of(start), List.of()), List.of(start));
         }
 
+        if (snapshot.hasFallDamage()) return DamageBudgetPathfinder.find(snapshot, start, target,
+                expansionLimit, canContinue, onExpansion, canEnter);
         var open = new PriorityQueue<>(OPEN_ORDER);
         var best = new HashMap<NavCell, Score>();
         var predecessor = new HashMap<NavCell, TraversabilityEdge>();

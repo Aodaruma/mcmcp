@@ -5,6 +5,8 @@ import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.navigation.CoordinateMoveJobExecution;
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
 import dev.aod.mcmcp.agent.navigation.RoutePlan;
+import dev.aod.mcmcp.agent.navigation.FallDamageBudget;
+import dev.aod.mcmcp.agent.safety.GroundTraversal;
 import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
 import dev.aod.mcmcp.agent.safety.Locomotion;
 import dev.aod.mcmcp.client.AgentInputState;
@@ -33,12 +35,55 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
     private final Locomotion mode;
     private long takeoffStarted = -1;
     private net.minecraft.world.phys.Vec3 takeoffTarget;
+    private final FallDamageBudget fallBudget;
+    private PlayerDamageSignals.Snapshot damageEvidence;
+    private long arcFallBaseline;
+    private RoutePlan wholeRoute;
+    private int nextEdge, chunkEnd;
+    private boolean aligning;
+    private MinecraftGroundTraversalExecutor arc;
+    private int jumps, drops;
+    private dev.aod.mcmcp.agent.action.ExactPositionPrimitive exactApproach;
+    private boolean routeEndsAtRequestedCell;
 
     MinecraftV2MoveDriver(Minecraft minecraft, V2MoveArguments request) {
         this.minecraft = minecraft;
         this.request = request;
         mode = Locomotion.aerialMode(minecraft.player);
         executor.sneakWhileMoving(request.sneak());
+        fallBudget = new FallDamageBudget(request.maxFallDamage());
+        var player = minecraft.player;
+        PlayerDamageSignals.global().health(player, player.getHealth(), player.getAbsorptionAmount());
+        damageEvidence = PlayerDamageSignals.global().bind(player, player.getHealth(), player.getAbsorptionAmount());
+    }
+
+    KnownTraversabilitySnapshot augment(KnownTraversabilitySnapshot map) {
+        return active() && !aligning || request.sneak() ? map : MinecraftGroundTransferMap.augment(map, minecraft.player, fallBudget.remaining());
+    }
+
+    boolean currentTraversalSafe() { return arc != null && arc.currentSafe(); }
+
+    String observeDamage() {
+        var player = minecraft.player;
+        PlayerDamageSignals.global().health(player, player.getHealth(), player.getAbsorptionAmount());
+        var fresh = PlayerDamageSignals.global().bind(player, player.getHealth(), player.getAbsorptionAmount());
+        double loss = fresh.loss() - damageEvidence.loss();
+        boolean other = fresh.other() != damageEvidence.other();
+        boolean confirmed = arc != null && fresh.falls() > arcFallBaseline && !other;
+        damageEvidence = fresh;
+        if (!fallBudget.record(loss, confirmed)) return "fall_damage_budget_or_cause_mismatch";
+        return other ? "unexpected_damage" : null;
+    }
+
+    @Override public java.util.Map<String, Object> result() {
+        var result = new java.util.LinkedHashMap<String, Object>();
+        result.putAll(java.util.Map.of("max_fall_damage", request.maxFallDamage(), "fall_damage_observed", fallBudget.observed(),
+                "fall_damage_budget_used", fallBudget.spent(), "gap_jumps", jumps, "drops", drops));
+        var player = minecraft.player;
+        if (player != null) result.put("position", java.util.Map.of("x", player.getX(), "y", player.getY(), "z", player.getZ()));
+        if (request.exactPosition() != null) result.put("requested_position", java.util.Map.of(
+                "x", request.exactPosition().x, "y", request.exactPosition().y, "z", request.exactPosition().z));
+        return java.util.Map.copyOf(result);
     }
 
     @Override
@@ -88,6 +133,30 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
 
     @Override
     public void begin(RoutePlan route, double tolerance) {
+        routeEndsAtRequestedCell = route.cells().getLast().equals(request.goal());
+        if (route.edges().stream().noneMatch(edge -> edge.locomotion().ballistic())) {
+            beginOrdinary(route, tolerance);
+            return;
+        }
+        wholeRoute = route; nextEdge = 0; pendingTolerance = tolerance;
+        beginChunk();
+    }
+
+    private void beginChunk() {
+        var edge = wholeRoute.edges().get(nextEdge);
+        if (edge.locomotion().ballistic()) {
+            aligning = true;
+            // Center on supported ground before committing to the arc.
+            beginOrdinary(new RoutePlan(wholeRoute.worldSessionId(), wholeRoute.dimension(), wholeRoute.worldRevision(),
+                    java.util.List.of(edge.key().from()), java.util.List.of(), 0, 0, 36, 1800), 0.12);
+        } else {
+            chunkEnd = nextEdge + 1;
+            while (chunkEnd < wholeRoute.edges().size() && !wholeRoute.edges().get(chunkEnd).locomotion().ballistic()) chunkEnd++;
+            beginOrdinary(wholeRoute.segment(nextEdge, chunkEnd), 0.12);
+        }
+    }
+
+    private void beginOrdinary(RoutePlan route, double tolerance) {
         if (mode.aerial()) {
             executor.beginNavigate(route, tolerance);
             return;
@@ -121,6 +190,28 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
                     MinecraftActionPrimitiveExecutor.Status.FAILED,
                     MinecraftActionPrimitiveExecutor.Reason.UNSUPPORTED_LOCOMOTION);
         }
+        if (exactApproach != null) return exactApproach.tick(minecraft, map, remainingDistance, clientTick, outputAllowed);
+        var step = tickRoute(map, remainingDistance, clientTick, outputAllowed);
+        if (step.status() == MinecraftActionPrimitiveExecutor.Status.SUCCEEDED
+                && routeEndsAtRequestedCell && request.exactPosition() != null) {
+            executor.close();
+            exactApproach = new dev.aod.mcmcp.agent.action.ExactPositionPrimitive(
+                    request.exactPosition(), request.tolerance(), request.sneak());
+            return exactApproach.tick(minecraft, map, remainingDistance, clientTick, outputAllowed);
+        }
+        return step;
+    }
+
+    private MinecraftActionPrimitiveExecutor.TickResult tickRoute(KnownTraversabilitySnapshot map,
+            double remainingDistance, long clientTick, BooleanSupplier outputAllowed) {
+        if (arc != null) {
+            var step = arc.tick(map, remainingDistance, clientTick, outputAllowed);
+            if (step.status() != MinecraftActionPrimitiveExecutor.Status.SUCCEEDED) return step;
+            arc.close(); arc = null; fallBudget.finish();
+            if (wholeRoute.edges().get(nextEdge).locomotion() == Locomotion.GAP_JUMP) jumps++; else drops++;
+            nextEdge++;
+            return nextChunk();
+        }
         if (pendingRoute != null && posture != null) prepare(clientTick, remainingDistance, outputAllowed);
         else releasePosture();
         var step = executor.tick(minecraft, map, LocalObservationVolume.global(),
@@ -131,15 +222,48 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
             return new MinecraftActionPrimitiveExecutor.TickResult(
                     MinecraftActionPrimitiveExecutor.Status.RUNNING, MinecraftActionPrimitiveExecutor.Reason.NONE);
         }
+        if (wholeRoute != null && step.status() == MinecraftActionPrimitiveExecutor.Status.SUCCEEDED) {
+            executor.close();
+            if (aligning) {
+                aligning = false;
+                var edge = wholeRoute.edges().get(nextEdge);
+                var plan = GroundTraversal.discover(minecraft.player, minecraft.player.getBoundingBox(),
+                        edge.key().to().x(), edge.key().to().z(), edge.locomotion(), fallBudget.remaining()).orElse(null);
+                if (plan == null || Math.abs(plan.landing().minY - edge.key().to().y()) > 0.21
+                        || !fallBudget.begin(plan.predictedDamage(minecraft.player)))
+                    return new MinecraftActionPrimitiveExecutor.TickResult(MinecraftActionPrimitiveExecutor.Status.REPLAN_REQUIRED,
+                            MinecraftActionPrimitiveExecutor.Reason.ROUTE_EDGE_CHANGED);
+                arcFallBaseline = damageEvidence.falls();
+                arc = new MinecraftGroundTraversalExecutor(minecraft, plan);
+                return arc.tick(map, remainingDistance, clientTick, outputAllowed);
+            }
+            nextEdge = chunkEnd;
+            return nextChunk();
+        }
         return step;
     }
 
+    private MinecraftActionPrimitiveExecutor.TickResult nextChunk() {
+        if (nextEdge >= wholeRoute.edges().size()) {
+            wholeRoute = null;
+            return new MinecraftActionPrimitiveExecutor.TickResult(MinecraftActionPrimitiveExecutor.Status.SUCCEEDED, MinecraftActionPrimitiveExecutor.Reason.NONE);
+        }
+        beginChunk();
+        return new MinecraftActionPrimitiveExecutor.TickResult(MinecraftActionPrimitiveExecutor.Status.RUNNING, MinecraftActionPrimitiveExecutor.Reason.NONE);
+    }
+
     @Override
-    public boolean active() { return executor.active(); }
+    public boolean active() { return executor.active() || wholeRoute != null || arc != null || exactApproach != null; }
 
     public boolean arrived(dev.aod.mcmcp.agent.navigation.NavCell current,
             dev.aod.mcmcp.agent.navigation.NavCell goal, double radius, double tolerance) {
         var player = minecraft.player;
+        if (request.exactPosition() != null && goal.equals(request.goal())) {
+            return dev.aod.mcmcp.agent.action.ExactPositionPrimitive.reached(player.position(), request.exactPosition(), tolerance, radius)
+                    && (mode.aerial() || player.isInWater() || player.onGround())
+                    && (!player.isInWater() || MinecraftActionPrimitiveExecutor.waterBreathingRecovered(
+                            player.isEyeInFluid(net.minecraft.tags.FluidTags.WATER), player.getAirSupply(), player.getMaxAirSupply()));
+        }
         double horizontal = Math.hypot(player.getX() - goal.x() - 0.5D, player.getZ() - goal.z() - 0.5D);
         double y = goal.y() + (mode.aerial() ? Locomotion.FLIGHT_FEET_OFFSET : 0);
         return horizontal <= radius + tolerance && Math.abs(player.getY() - y) <= radius + 0.21D
@@ -155,6 +279,10 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
     @Override
     public void close() {
         try { executor.close(); }
-        finally { releasePosture(); pendingRoute = null; }
+        finally {
+            releasePosture(); pendingRoute = null; wholeRoute = null; aligning = false;
+            if (exactApproach != null) { exactApproach.close(); exactApproach = null; }
+            if (arc != null) { arc.close(); arc = null; fallBudget.finish(); }
+        }
     }
 }

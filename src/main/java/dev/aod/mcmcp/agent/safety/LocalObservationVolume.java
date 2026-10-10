@@ -481,11 +481,18 @@ public final class LocalObservationVolume {
         var level = (ClientLevel) player.level();
         var portal = intent.portal();
         if (!level.isLoaded(portal) || !level.getWorldBorder().isWithinBounds(portal)
-                || !level.getBlockState(portal).is(net.minecraft.world.level.block.Blocks.END_PORTAL)) return false;
+                || !level.getBlockState(portal).is(intent.nether() ? net.minecraft.world.level.block.Blocks.NETHER_PORTAL
+                        : net.minecraft.world.level.block.Blocks.END_PORTAL)) return false;
         var before = player.getBoundingBox();
         var after = before.move(resolved);
         if (!intent.approaches(before, after)) return false;
         var origin = point(before.getCenter());
+        if (intent.nether()) {
+            // Nether entry keeps the ordinary supported floor contract throughout the wait.
+            return Math.abs(intended.x - resolved.x) < MOVEMENT_EPSILON
+                    && Math.abs(intended.z - resolved.z) < MOVEMENT_EPSILON
+                    && dryGroundCorridor(player, level, origin, List.of(before.minmax(after)), after);
+        }
         var evaluated = evaluateResolvedHypothetical(player, level, origin, before,
                 intended, resolved, 1, worldRevision);
         var record = evaluated.record();
@@ -559,6 +566,8 @@ public final class LocalObservationVolume {
         var level = (ClientLevel) player.level();
         var start = player.getBoundingBox();
         var startPoint = point(start.getCenter());
+        if (intent.groundTraversal() != null)
+            return intent.groundTraversal().resolvedSafe(player, intended, resolved);
         if (intent.locomotion().aerial()) {
             if (Locomotion.aerialMode(player) != intent.locomotion()) return false;
             var target = start.move(intent.target().subtract(start.getCenter()));
@@ -1639,11 +1648,25 @@ public final class LocalObservationVolume {
         return switch (locomotion) {
             case LADDER -> safeLadderCell(player, level, origin, box);
             case SCAFFOLDING -> safeScaffoldingCell(player, level, origin, box);
-            case GROUND, WATER, FLIGHT, SPECTATOR -> false;
+            case GROUND, GAP_JUMP, DROP, WATER, FLIGHT, SPECTATOR -> false;
         };
     }
 
-    private static boolean stableLanding(
+    /** Collision-only local evidence for a selected jump/drop; no block identities are exposed. */
+    static boolean dryGroundCorridor(LocalPlayer player, ClientLevel level, Point origin,
+            List<AABB> regions, AABB landing) {
+        return loadedState(level, origin, append(regions, supportSlab(landing))) == LoadedState.LOADED
+                && regions.stream().allMatch(box -> level.noCollision(player, box.deflate(1.0E-7)))
+                && fluid(level, origin, regions) == Fluid.NONE
+                && damageBlockHazard(level, origin, append(regions, damageSupportRegion(landing))) == Hazard.NONE
+                && stableLanding(player, level, origin, landing) && !bouncySupport(level, player, landing);
+    }
+
+    static boolean loadedGroundRegion(ClientLevel level, Point origin, AABB region) {
+        return loadedState(level, origin, List.of(region)) == LoadedState.LOADED;
+    }
+
+    static boolean stableLanding(
             LocalPlayer player, ClientLevel level, Point origin, AABB box) {
         return stableEndpoint(endpointSafety(player, level, origin, box));
     }
@@ -1698,7 +1721,7 @@ public final class LocalObservationVolume {
         return switch (locomotion) {
             case LADDER -> ladderPathSafe(player, level, origin, from, to);
             case SCAFFOLDING -> scaffoldingPathSafe(player, level, origin, from, to);
-            case GROUND, WATER, FLIGHT, SPECTATOR -> false;
+            case GROUND, GAP_JUMP, DROP, WATER, FLIGHT, SPECTATOR -> false;
         };
     }
 
@@ -1758,7 +1781,7 @@ public final class LocalObservationVolume {
         return switch (locomotion) {
             case LADDER -> exactLadderAtFeet(level, box);
             case SCAFFOLDING -> exactScaffoldingAtFeet(level, box);
-            case GROUND, WATER, FLIGHT, SPECTATOR -> false;
+            case GROUND, GAP_JUMP, DROP, WATER, FLIGHT, SPECTATOR -> false;
         };
     }
 
@@ -2486,7 +2509,7 @@ public final class LocalObservationVolume {
                 box.maxZ);
     }
 
-    private static boolean bouncySupport(
+    static boolean bouncySupport(
             ClientLevel level, LocalPlayer player, AABB endBox) {
         if (player.isSuppressingBounce()) {
             return false;
