@@ -60,6 +60,8 @@ Java 1,723件、harness 14件、admin bridge 28件、計1,765件が失敗・skip
 
 `tools/check-source.ps1 -SkipJava` も成功した。transport 15件、blueprint Python 4件、台帳・checkpoint・capability gateとv2 smoke（7件）・storage/stop smoke（13件）のPowerShell mockを含む。いずれもMinecraftに接続しない試験であり、実機成功として扱わない。
 
+製品ソース `86a4f945e88de223275e87518755b5edd30ffb4f` の [CI build](https://github.com/Aodaruma/mcmcp/actions/runs/38020023052) も成功し、Releaseはskipされた。4つの接近fixture向け入力例は既存のcatalog validatorでも検証した（Minecraftへは接続していない）。
+
 ## 次の隔離実機試験
 
 この追加実装は12:00 JST以降に行った。[AGENTS.md](../../AGENTS.md)の「検証は12:00～23:00 JSTにはこのPCのみで行い、23:00～12:00 JSTには許可済みSSH `aod-mimoid`の隔離Dockerも使える」に従い、aod-mimoidのDockerを再起動していない。R18試験の元66ファイル復元・container／Docker Desktop停止を維持する。
@@ -68,7 +70,7 @@ Java 1,723件、harness 14件、admin bridge 28件、計1,765件が失敗・skip
 
 | 固定fixture | 入力と期待 |
 | --- | --- |
-| `approach_chest` | `agent_inventory(operation:"inspect",target:"container",x:309,y:101,z:305,advance:true,max_distance:20,max_duration_ticks:500)`。上段から1段ずつ降り、届く足場で開き、health低下・cursor残留なし。 |
+| `approach_chest` | `agent_inventory(operation:"inspect",target:"container",x:309,y:101,z:305,advance:true,max_distance:20,max_ticks:500)`。上段から1段ずつ降り、届く足場で開き、health低下・cursor残留なし。 |
 | `approach_roof` | 同じtarget。屋根にいる状態で操作可能経路なし。下降を強行せず、移動・開操作をせず有界停止。 |
 | `approach_wall` | 同じtarget。手前の壁で遮蔽し、開操作なしで有界停止。 |
 | `approach_far` | 同じinspectでtarget x:319、max_distance:32。既知区間の段階移動後に近傍の操作条件へ切り替わり、成功する。 |
