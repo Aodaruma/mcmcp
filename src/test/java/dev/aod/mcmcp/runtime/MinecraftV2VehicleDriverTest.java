@@ -6,6 +6,38 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class MinecraftV2VehicleDriverTest {
     @Test
+    void boatFineApproachSettlesWithVanillaLinearAndAngularWaterDrag() {
+        for (double startX : new double[]{-0.8, -0.2, 0.2, 0.8}) {
+            for (double startZ : new double[]{-0.8, 0.3}) {
+                for (float startYaw : new float[]{-180, -90, 0, 90}) {
+                    double x = startX, z = startZ, vx = 0, vz = 0;
+                    float yaw = startYaw, rotation = 0;
+                    int stable = 0;
+                    for (int tick = 0; tick < 250 && stable < 4; tick++) {
+                        boolean near = Math.hypot(x, z) <= 0.1;
+                        stable = near && Math.hypot(vx, vz) < 0.005 ? stable + 1 : 0;
+                        float turn = net.minecraft.util.Mth.wrapDegrees(
+                                (float) Math.toDegrees(Math.atan2(x, -z)) + 180 - yaw);
+                        var inputs = MinecraftV2VehicleDriver.boatFineInputs(
+                                turn, rotation, Math.hypot(vx, vz), near, tick);
+                        boolean right = inputs.contains(dev.aod.mcmcp.routine.MovementInputLease.MovementKey.RIGHT);
+                        boolean left = inputs.contains(dev.aod.mcmcp.routine.MovementInputLease.MovementKey.LEFT);
+                        boolean back = inputs.contains(dev.aod.mcmcp.routine.MovementInputLease.MovementKey.BACK);
+                        assertThat(inputs).doesNotContain(dev.aod.mcmcp.routine.MovementInputLease.MovementKey.FORWARD);
+                        rotation = rotation * 0.9F + (right ? 1 : 0) - (left ? 1 : 0);
+                        yaw = net.minecraft.util.Mth.wrapDegrees(yaw + rotation);
+                        double acceleration = back ? -0.005 : right != left ? 0.005 : 0;
+                        vx = vx * 0.9 - Math.sin(Math.toRadians(yaw)) * acceleration;
+                        vz = vz * 0.9 + Math.cos(Math.toRadians(yaw)) * acceleration;
+                        x += vx; z += vz;
+                    }
+                    assertThat(stable).as("start (%s,%s), yaw %s", startX, startZ, startYaw).isEqualTo(4);
+                    assertThat(Math.hypot(x, z)).isLessThanOrEqualTo(0.1);
+                }
+            }
+        }
+    }
+    @Test
     void quarterSpeedPulsesSettleAcrossVanillaHorseSpeedsWithoutTeleportingOrErasingMomentum() {
         for (double movementSpeed : new double[]{0.1125, 0.225, 0.3375}) {
             double position = 0.8, velocity = -0.3;

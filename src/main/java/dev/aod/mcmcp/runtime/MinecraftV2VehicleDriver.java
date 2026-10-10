@@ -37,6 +37,8 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
     private Vec3 lastPosition;
     private String failure;
     private boolean fineHorseApproach;
+    private boolean fineBoatApproach;
+    private float previousBoatYaw;
 
     MinecraftV2VehicleDriver(Minecraft minecraft, V2MoveArguments request) {
         this.minecraft = minecraft; this.request = request;
@@ -44,6 +46,7 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
         if (!supported(player) || request.sneak() || request.clearPath())
             throw new IllegalArgumentException("riding requires a controllable vehicle without sneak or path construction");
         lastPosition = vehicle.position();
+        previousBoatYaw = vehicle.getYRot();
     }
     static boolean supported(net.minecraft.client.player.LocalPlayer player) {
         var vehicle = player.getVehicle();
@@ -70,7 +73,7 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
         double speed = vehicle.getDeltaMovement().horizontalDistance();
         boolean near = distance <= request.arrivalRadius() + (request.exactPosition() == null ? Math.max(0.35, request.tolerance()) : request.tolerance())
                 && Math.abs(vehicle.getY() - goalPosition.y) <= (request.exactPosition() == null ? 1 : 0.20);
-        settled = near && speed < 0.025 ? settled + 1 : 0;
+        settled = near && speed < (fineBoatApproach ? 0.005 : 0.025) ? settled + 1 : 0;
         if (settled >= 4) { close(); return new TickResult(Status.SUCCEEDED, Reason.NONE); }
         if (remaining < Math.max(0.25, speed * 12)) return fail("vehicle_stopping_distance_budget");
         // Collision clearance includes the rider. Predict coasting before sending another input pulse.
@@ -114,12 +117,20 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
         float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
         var desired = EnumSet.noneOf(MovementInputLease.MovementKey.class);
         if (vehicle instanceof AbstractBoat) {
+            float turnSpeed = Mth.wrapDegrees(vehicle.getYRot() - previousBoatYaw);
+            previousBoatYaw = vehicle.getYRot();
+            if (request.exactPosition() != null && target.equals(goal) && targetDistance < 1.5D)
+                fineBoatApproach = true;
             float turn = Mth.wrapDegrees(yaw - vehicle.getYRot());
-            if (!near && Math.abs(turn) > 8) desired.add(turn > 0 ? RIGHT : LEFT);
-            double forwardSpeed = vehicle.getDeltaMovement().x * -Math.sin(Math.toRadians(vehicle.getYRot()))
-                    + vehicle.getDeltaMovement().z * Math.cos(Math.toRadians(vehicle.getYRot()));
-            if ((near || targetDistance < speed * 9 + 0.25) && forwardSpeed > 0.025) desired.add(BACK);
-            else if (!near && Math.abs(turn) < 25 && speed < 0.14 && tick % 3 == 0) desired.add(FORWARD);
+            if (fineBoatApproach) {
+                desired.addAll(boatFineInputs(Mth.wrapDegrees(turn + 180), turnSpeed, speed, near, tick));
+            } else {
+                if (!near && Math.abs(turn) > 8) desired.add(turn > 0 ? RIGHT : LEFT);
+                double forwardSpeed = vehicle.getDeltaMovement().x * -Math.sin(Math.toRadians(vehicle.getYRot()))
+                        + vehicle.getDeltaMovement().z * Math.cos(Math.toRadians(vehicle.getYRot()));
+                if ((near || targetDistance < speed * 9 + 0.25) && forwardSpeed > 0.025) desired.add(BACK);
+                else if (!near && Math.abs(turn) < 25 && speed < 0.14 && tick % 3 == 0) desired.add(FORWARD);
+            }
         } else {
             if (view == null) view = NavigationViewLease.acquire(player, owner);
             if (!view.matches(owner)) return fail("vehicle_view_changed");
@@ -143,6 +154,17 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
 
     static boolean horseFinePulse(double speed, long tick) {
         return speed < 0.04D && tick % 4 == 0;
+    }
+
+    static EnumSet<MovementInputLease.MovementKey> boatFineInputs(
+            float reverseTurn, float turnSpeed, double speed, boolean near, long tick) {
+        var desired = EnumSet.noneOf(MovementInputLease.MovementKey.class);
+        // Vanilla water drag retains rotation; backward acceleration is 1/8 of forward.
+        float correction = reverseTurn - turnSpeed * 9;
+        if (!near && Math.abs(correction) > 6) desired.add(correction > 0 ? RIGHT : LEFT);
+        if (!near && Math.abs(reverseTurn) < 12 && Math.abs(turnSpeed) < 1.5
+                && speed < 0.02 && tick % 4 == 0) desired.add(BACK);
+        return desired;
     }
 
     private List<NavCell> neighbors(NavCell from) {
