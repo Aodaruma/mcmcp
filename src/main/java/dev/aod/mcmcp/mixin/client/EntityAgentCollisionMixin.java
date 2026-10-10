@@ -170,6 +170,10 @@ abstract class EntityAgentCollisionMixin {
                                     player.tickCount,
                                     current.worldRevision(),
                                     current.recoveryIntent());
+                } else if (current.portalIntent() != null) {
+                    movementSafe = LocalObservationVolume.global().verifiesPortalResolvedMovement(
+                            player, fullBacked, previewResolved, player.tickCount,
+                            current.worldRevision(), current.portalIntent());
                 } else if (current.navigationIntent() != null) {
                     movementSafe = LocalObservationVolume.global()
                             .verifiesNavigationResolvedMovement(

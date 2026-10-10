@@ -6,6 +6,8 @@
 
 ## 追加調査：収納終了待ちと粉の混入
 
+自然Endポータルへの明示的な近傍進入を、`agent_interact target=portal` の別候補として追加。通常move/inputの落下防止を維持し、入力解放後の新session・期待dimension確認を分離する。自動1,789件・build・harness隔離が成功。通常R18への導入・実機確認は未実施。[候補仕様と隔離検証計画](experiments/20261010_v2_portal_entry_candidate.md)。
+
 通常R18の収納終了待ちは373秒でも継続した後、利用者のOFF・切断・再接続・ONで手動復旧。fresh数量を確認し、旧UNKNOWNは維持した。候補ソースに終了待ちの固定理由、cursorの証拠revision、返却送信有無を追加し、自動1,776件・buildが成功。自動復帰条件は変更しておらず、追加診断の実機確認も未実施。[復旧記録と改善案](experiments/20261010_v2_r18_storage_release_pending.md)。装置の粉混入については、[水入り葉・End台再生成のコード根拠と担当の静止対照試験](experiments/20261010_concrete_powder_code_review.md)も記録した。
 
 担当の追加試験では、北の扉を水入り葉へ変えると同じNW角の粉が硬化した。全混入原因は未確定。水バケツのblock interactには通常クリックの後段に相当するuse処理がなく、対象条件付きclickとfresh観測で現場は復旧した。[操作経路の調査と未実装の修正条件](experiments/20261010_v2_bucket_interact_diagnosis.md)。扉・固体のbreak失敗後にもfresh AIRを確認し、[既知の診断課題](experiments/20261010_v2_break_post_effect_diagnosis.md)へ追記。通常R18と候補配布物は変更していない。

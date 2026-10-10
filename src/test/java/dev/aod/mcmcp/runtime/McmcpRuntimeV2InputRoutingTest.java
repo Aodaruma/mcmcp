@@ -27,6 +27,47 @@ import static org.assertj.core.api.Assertions.assertThat;
 class McmcpRuntimeV2InputRoutingTest {
     private final McmcpRuntime runtime = new McmcpRuntime("test", "26.2.0.59");
 
+    @Test
+    void passivePortalArrivalDoesNotHideAnyOtherPendingCleanup() throws Exception {
+        installPendingPortal();
+        assertThat(invoke("automationActivityPending", new Class<?>[]{})).isEqualTo(true);
+        assertThat(invoke("automationActivityPending", new Class<?>[]{boolean.class}, true)).isEqualTo(false);
+        field("pendingAgentInputRelease").set(runtime, true);
+        assertThat(invoke("automationActivityPending", new Class<?>[]{boolean.class}, true)).isEqualTo(true);
+        field("pendingAgentInputRelease").set(runtime, false);
+        invoke("stopPendingPortal", new Class<?>[]{String.class}, "local_ui_disabled");
+        assertThat(field("pendingPortalArrival").get(runtime)).isNull();
+    }
+
+    @Test
+    void publicCancellationStillOwnsTheDetachedPortalJob() throws Exception {
+        UUID id = installPendingPortal();
+        var cancelled = (Map<?, ?>) invoke("cancelAgentAction",
+                new Class<?>[]{net.minecraft.client.Minecraft.class, Map.class},
+                null, Map.of("action_id", id.toString()));
+        assertThat(cancelled.get("cancel_requested")).isEqualTo(true);
+        assertThat(((AgentJobStore) field("v2Jobs").get(runtime)).get(id).state())
+                .isEqualTo(AgentJobStore.State.CANCELLED);
+        assertThat(field("pendingPortalArrival").get(runtime)).isNull();
+    }
+
+    private UUID installPendingPortal() throws Exception {
+        var store = (AgentJobStore) field("v2Jobs").get(runtime);
+        var session = UUID.randomUUID(); var connection = new Object();
+        var id = store.reserve(AgentJobStore.Kind.INTERACT, session, 200, Long.MAX_VALUE);
+        var port = new V2PortalJobExecutionTest.FakePort();
+        var execution = new V2PortalJobExecution(store, id, session, connection,
+                V2PortalArguments.parse(Map.of("target", "portal", "block", "minecraft:end_portal",
+                        "x", 0, "y", 64, "z", 0, "expected_dimension", "minecraft:the_end"), "minecraft:overworld"),
+                port, () -> true);
+        store.confirm(id, 0);
+        execution.tick(session, 1, 100, true, () -> true);
+        port.contact = true;
+        assertThat(execution.prepareWorldBoundary(connection, 200)).isTrue();
+        field("pendingPortalArrival").set(runtime, execution);
+        return id;
+    }
+
     @AfterEach
     void closeVoiceListener() throws Exception {
         ((AutoCloseable) field("voiceChat").get(runtime)).close();

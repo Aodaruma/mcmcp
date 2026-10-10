@@ -29,6 +29,7 @@ public final class AgentInputState {
     private NavigationIntent goalNavigationIntent;
     private boolean goalMovementCycleActive;
     private boolean goalMovementRejected;
+    private dev.aod.mcmcp.agent.safety.PortalEntryGeometry goalPortalIntent;
     private Vec3 agentVelocityContribution = Vec3.ZERO;
     private Object agentVelocityPlayerIdentity;
     private Object agentVelocityLevelIdentity;
@@ -155,7 +156,14 @@ public final class AgentInputState {
         goalMovementAllowance = distanceAllowance;
         goalRecoveryIntent = null;
         goalNavigationIntent = null;
+        goalPortalIntent = null;
         goalMovementCycleActive = true;
+    }
+
+    public synchronized void requirePortalMovementSafety(Object player, Object level,
+            long revision, double allowance, dev.aod.mcmcp.agent.safety.PortalEntryGeometry intent) {
+        requireGoalMovementSafety(player, level, revision, allowance);
+        goalPortalIntent = Objects.requireNonNull(intent);
     }
 
     public synchronized void requireNavigationMovementSafety(
@@ -187,7 +195,8 @@ public final class AgentInputState {
                 goalMovementWorldRevision,
                 goalMovementAllowance,
                 goalRecoveryIntent,
-                goalNavigationIntent);
+                goalNavigationIntent,
+                goalPortalIntent);
     }
 
     public synchronized Optional<GoalMovementProof> goalMovementProofFor(
@@ -633,6 +642,7 @@ public final class AgentInputState {
         goalMovementAllowance = 0.0D;
         goalRecoveryIntent = null;
         goalNavigationIntent = null;
+        goalPortalIntent = null;
     }
 
     private void invalidateGoalMovementCycle() {
@@ -704,13 +714,14 @@ public final class AgentInputState {
             long worldRevision,
             double distanceAllowance,
             RecoveryIntent recoveryIntent,
-            NavigationIntent navigationIntent) {
+            NavigationIntent navigationIntent,
+            dev.aod.mcmcp.agent.safety.PortalEntryGeometry portalIntent) {
         public GoalMovementProof(
                 Object playerIdentity,
                 Object levelIdentity,
                 long worldRevision,
                 double distanceAllowance) {
-            this(playerIdentity, levelIdentity, worldRevision, distanceAllowance, null, null);
+            this(playerIdentity, levelIdentity, worldRevision, distanceAllowance, null, null, null);
         }
 
         public GoalMovementProof(
@@ -725,11 +736,13 @@ public final class AgentInputState {
                     worldRevision,
                     distanceAllowance,
                     recoveryIntent,
+                    null,
                     null);
         }
 
         public GoalMovementProof {
-            if (recoveryIntent != null && navigationIntent != null) {
+            if ((recoveryIntent == null ? 0 : 1) + (navigationIntent == null ? 0 : 1)
+                    + (portalIntent == null ? 0 : 1) > 1) {
                 throw new IllegalArgumentException("movement proof cannot have two intents");
             }
         }

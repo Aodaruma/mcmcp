@@ -472,6 +472,35 @@ public final class LocalObservationVolume {
                 && goalIntendedMovementSafe(atTick(evaluated.record(), observedTick));
     }
 
+    /** Only an explicit portal job may substitute exact portal contact for a ground landing. */
+    public synchronized boolean verifiesPortalResolvedMovement(LocalPlayer player, Vec3 intended,
+            Vec3 resolved, long observedTick, long worldRevision, PortalEntryGeometry intent) {
+        if (!finite(intended) || !finite(resolved) || intended.length() > 0.7
+                || resolved.length() > 0.7 || observedTick < 0
+                || latestFor(player).filter(frame -> frame.worldRevision() == worldRevision).isEmpty()) return false;
+        var level = (ClientLevel) player.level();
+        var portal = intent.portal();
+        if (!level.isLoaded(portal) || !level.getWorldBorder().isWithinBounds(portal)
+                || !level.getBlockState(portal).is(net.minecraft.world.level.block.Blocks.END_PORTAL)) return false;
+        var before = player.getBoundingBox();
+        var after = before.move(resolved);
+        if (!intent.approaches(before, after)) return false;
+        var origin = point(before.getCenter());
+        var evaluated = evaluateResolvedHypothetical(player, level, origin, before,
+                intended, resolved, 1, worldRevision);
+        var record = evaluated.record();
+        var regions = append(sweptRegions(SweptAabbPath.segments(before, intended, resolved)),
+                damageSupportRegion(after));
+        // FALL can mask a second block hazard in the aggregate record, so check it independently.
+        if (record.loaded() != LoadedState.LOADED || record.clearance() != Clearance.CLEAR
+                || record.transition() != Transition.PROBE_ALLOWED || record.fluid() != Fluid.NONE
+                || record.suffocation() || damageBlockHazard(level, origin, regions) != Hazard.NONE
+                || bouncySupport(level, player, after)) return false;
+        return goalIntendedMovementSafe(record) || intent.overPortal(after)
+                && (record.hazard() == Hazard.NONE || record.hazard() == Hazard.FALL)
+                && record.drop() != Drop.UNKNOWN;
+    }
+
     /** Centers the body in a verified ladder's free space before entering from a side landing. */
     public synchronized Optional<LadderSteering> ladderSteering(
             LocalPlayer player, Vec3 target, long worldRevision) {

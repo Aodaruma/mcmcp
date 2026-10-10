@@ -7,6 +7,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AgentInputStateTest {
     @Test
+    void portalIntentIsOwnedAndCannotLeakIntoOrdinaryMovementOrAnotherWorld() {
+        var state = new AgentInputState();
+        var player = new Object(); var level = new Object();
+        var portal = new dev.aod.mcmcp.agent.safety.PortalEntryGeometry(new net.minecraft.core.BlockPos(0, 64, 0));
+        state.publishMovement(true, false, false, false, false);
+        state.requirePortalMovementSafety(player, level, 7, .7, portal);
+        assertThat(state.goalMovementProofFor(player, level)).isPresent();
+        assertThat(state.goalMovementProof().portalIntent()).isEqualTo(portal);
+        assertThat(state.goalMovementProofFor(player, new Object())).isEmpty();
+        state.requireGoalMovementSafety(player, level, 8, .7);
+        assertThat(state.goalMovementProof().portalIntent()).isNull();
+        state.requirePortalMovementSafety(player, level, 9, .7, portal);
+        state.releaseMovement();
+        assertThat(state.goalMovementProof().portalIntent()).isNull();
+        assertThat(state.goalMovementProofFor(player, level)).isEmpty();
+    }
+
+    @Test
     void staleLeaseIsNeutralAtTheActualInputBoundary() {
         var state = new AgentInputState();
         state.publishMovement(true, false, false, false, false, 150L);
