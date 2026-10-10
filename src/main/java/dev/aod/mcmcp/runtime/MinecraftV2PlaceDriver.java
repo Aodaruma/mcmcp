@@ -421,8 +421,8 @@ final class MinecraftV2PlaceDriver
     }
 
     private boolean heartbeatSneak(WorldSessionTracker.Snapshot session) {
-        if (stage == Stage.CONFIRMING) return true;
-        if (sneak != null && !sneak.heartbeat(System.nanoTime(), SNEAK_LEASE)) return false;
+        if (sneak == null) return stage == Stage.CONFIRMING || stage == Stage.WAIT_CROSSHAIR;
+        if (!sneak.heartbeat(System.nanoTime(), SNEAK_LEASE)) return false;
         var recon = reconciliationSignals.bindAndSnapshot(
                 minecraft.level, session.worldSessionId());
         AgentInputState.global().requireGoalMovementSafety(

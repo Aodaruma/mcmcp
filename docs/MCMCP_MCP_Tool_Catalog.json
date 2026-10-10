@@ -1549,7 +1549,7 @@
               "sneak": {
                 "type": "boolean",
                 "default": false,
-                "description": "Hold normal sneak input and plan using the actual reduced player collision box."
+                "description": "Hold normal sneak input and plan using the actual reduced player collision box. On scaffolding, automatic crouch is suppressed to avoid descending through its support; explicit downward scaffold routes still use crouch."
               }
             },
             "required": [
@@ -1618,7 +1618,7 @@
               "sneak": {
                 "type": "boolean",
                 "default": false,
-                "description": "Hold normal sneak input and plan using the actual reduced player collision box."
+                "description": "Hold normal sneak input and plan using the actual reduced player collision box. On scaffolding, automatic crouch is suppressed to avoid descending through its support; explicit downward scaffold routes still use crouch."
               }
             },
             "required": [
@@ -1695,7 +1695,7 @@
               "sneak": {
                 "type": "boolean",
                 "default": false,
-                "description": "Hold normal sneak input and plan using the actual reduced player collision box."
+                "description": "Hold normal sneak input and plan using the actual reduced player collision box. On scaffolding, automatic crouch is suppressed to avoid descending through its support; explicit downward scaffold routes still use crouch."
               }
             },
             "required": [
@@ -1772,7 +1772,7 @@
               "sneak": {
                 "type": "boolean",
                 "default": false,
-                "description": "Hold normal sneak input and plan using the actual reduced player collision box."
+                "description": "Hold normal sneak input and plan using the actual reduced player collision box. On scaffolding, automatic crouch is suppressed to avoid descending through its support; explicit downward scaffold routes still use crouch."
               }
             },
             "required": [
