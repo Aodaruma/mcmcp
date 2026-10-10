@@ -13,6 +13,7 @@ import dev.aod.mcmcp.routine.BlockTarget;
 import dev.aod.mcmcp.routine.BlockStateFingerprint;
 import dev.aod.mcmcp.routine.MinecraftStationaryBreakPort;
 import dev.aod.mcmcp.routine.StationaryBreakGoal;
+import dev.aod.mcmcp.routine.StationaryBreakFrame;
 import dev.aod.mcmcp.routine.StationaryBreakRequest;
 import dev.aod.mcmcp.routine.V2BreakSourcePolicy;
 import net.minecraft.client.Minecraft;
@@ -225,10 +226,7 @@ final class MinecraftV2BreakDriver
             return V2BlockJobExecution.StepResult.RUNNING;
         }
         var frame = port.observe(attackRequest);
-        boolean controlled = frame.worldReady() && frame.controlContextClear()
-                && frame.playerAlive() && frame.healthSafe()
-                && frame.visibleThreatClear() && frame.targetInReach()
-                && frame.crosshairOnTarget() && outputAllowed.getAsBoolean();
+        boolean controlled = sourceControlled(frame, attackRequest.expectedSourceState()) && outputAllowed.getAsBoolean();
         return switch (attack.tick(clientTick, controlled)) {
             case RUNNING -> V2BlockJobExecution.StepResult.RUNNING;
             case SUCCEEDED -> {
@@ -241,6 +239,15 @@ final class MinecraftV2BreakDriver
             }
             case SERVER_DENIED_OR_DESYNC -> V2BlockJobExecution.StepResult.FAILED;
         };
+    }
+
+    static boolean sourceControlled(StationaryBreakFrame frame,
+            BlockStateFingerprint expected) {
+        // Client prediction can remove the block before the crosshair or server ACK updates.
+        // Stop attack input in that interval and let the existing attempt await confirmation.
+        return frame.worldReady() && frame.controlContextClear() && frame.playerAlive() && frame.healthSafe()
+                && frame.visibleThreatClear() && frame.targetInReach() && frame.crosshairOnTarget()
+                && frame.liveTargetState().filter(expected::equals).isPresent();
     }
 
     @Override

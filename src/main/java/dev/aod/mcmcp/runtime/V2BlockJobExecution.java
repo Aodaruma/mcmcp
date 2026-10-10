@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.runtime;
 
+import dev.aod.mcmcp.McmcpMod;
 import dev.aod.mcmcp.agent.action.AgentJobLimits;
 
 import dev.aod.mcmcp.agent.action.AgentJobStore;
@@ -164,6 +165,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
                 }
             };
         } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error("MCMCP block job execution failed", failure);
             retainTerminal(AgentJobStore.State.FAILED, "block_runtime_failed");
             return publishAfterRelease();
         }
