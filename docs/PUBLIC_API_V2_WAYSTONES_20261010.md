@@ -1,6 +1,6 @@
 # Waystones操作：試用候補の契約
 
-2026-10-10。候補R15で隔離Dockerの一覧・費用拒否・取消・Esc停止・End往復を確認し、検証環境を復元済み。10:43 JSTに差し替え担当が通常profileへ導入済み。現場でもバッグ収納とEnd→Overworld転送が成功し、帰路は地図アート担当が確認中。[実機結果と未確認範囲](experiments/20261010_v2_waystones_docker.md)。
+2026-10-10。候補R15で隔離Dockerの一覧・費用拒否・取消・Esc停止・End往復を確認し、検証環境を復元済み。10:43 JSTに差し替え担当が通常profileへ導入済み。現場でもバッグ収納・Waystones往復と、有限scriptの15秒稼働後の設備OFFを確認済み。[実機結果と未確認範囲](experiments/20261010_v2_waystones_docker.md)。
 
 ## 公開入力
 
@@ -34,6 +34,6 @@
 
 Java 1,704件、harness 14件、admin bridge 28件、計1,746件とbuild・harness隔離チェックが成功。PowerShellの共通smoke runner 7ケースおよび追加runnerの構文・LibraryOnly読込みも成功。MODのローカルJARの型定義と照合し、Shogiの経験値points残高はlong、levels残高はintとして扱う。
 
-実機では一覧の開閉、保持use中取消、tick上限、経験値上限拒否、未発行／session変更前の参照拒否、End往復の到着・経験値収支、Esc停止、OFF後の再有効化と再開封を確認した。通常サーバーでもEnd→Overworld転送を確認した。帰路は確認中で、使用中のUI OFF／world変更の同時競合、独自cooldown設定、通信遅延を伴う条件は未確認。未知の費用、他のWaystones版、scroll／warp plate／設置Waystoneへの一般対応は対象外。
+実機では一覧の開閉、保持use中取消、tick上限、経験値上限拒否、未発行／session変更前の参照拒否、End往復の到着・経験値収支、Esc停止、OFF後の再有効化と再開封を確認した。通常サーバーでも往復転送を確認した。使用中のUI OFF／world変更の同時競合、独自cooldown設定、通信遅延を伴う条件は未確認。未知の費用、他のWaystones版、scroll／warp plate／設置Waystoneへの一般対応は対象外。
 
 固定fixture `waystones` と `tools/eval/Invoke-McmcpV2WaystonesSmoke.ps1` のInspect／Cancel／TickLimit／Budget／UnknownRefはR15で合格。往復試験は別途、client状態とserver fixture receiptを照合した。公開15ツールの全定義は実行中JARとcatalogで一致。製品SHA-256は`c913077ad3b72a187493a0872b232dd7158541e4fb4b5e01c00114df50642e68`。

@@ -51,3 +51,9 @@ R12は一覧を開いて閉じる、使用中取消、tick上限が成功した�
 差し替え担当が10:43 JSTにR15の導入、Prism GUIからの起動、サーバー接続、MCP ONを完了した。製品hashは上記R15と一致。新JVM・新session・READY/jobなし、harness／admin bridge不在、公開15ツールの全定義一致を記録した。証拠はローカル`artifacts/v2-r15-install-20261010/normal-verification.json`。通常ゲームの所有は地図アート担当へ戻っている。
 
 地図アート担当の公開MCP記録を読み取り、バッグslot6／8のinspect成功、slot6への9色104個の固体コンクリート収納、再inspectで115→219個、各要求数量のconfirmed_count一致・release_pending=falseを確認した。Waystonesも観測した候補を上限27XP pointsで選択し、selection_dispatchedの後にfresh stateでEnd→Overworldの到着、新session・READY/jobなし・体力20を確認した。通常環境の帰路と停止機構は同担当が継続確認中で、この追記では合格と扱わない。証拠はローカル`_PLAYING/map-art-MFwtpM21wWc-3x3/duper-operation/r15-public-field-check-20261010.json`。開発担当は通常ゲームを操作していない。
+
+### 往復と15秒稼働後の停止（10:55 JST追記）
+
+地図アート担当から通常環境の往復転送・梯子の下階移動・回収チェストinspect成功の追加報告を受けた。`overnight-20261010.json`の往復記録でもOverworld／Endそれぞれの到着、新session、READY/jobなし・体力20を確認した。通常ゲームの所有は同担当が継続する。
+
+`r15-production-trial-20261010.json`では、1つの有限scriptでレバーOFFを観測し、ONへの変更を確認後、`input(inputs=["sneak"],duration_seconds=15,max_distance=0)`を実行し、最後にOFFへの変更と新しい観測を確認してsucceededとなった。これは通常完走時の停止確認であり、取消・切断時に外部回路を必ずOFFに戻す保証ではない。試験前のまとめinspectには`script_limit / Report structure limit`と`script_command_failed`による停止も記録されているため、すべての観測scriptが成功したとは扱わない。これらの証拠は前節と同じローカル`duper-operation`ディレクトリにある。

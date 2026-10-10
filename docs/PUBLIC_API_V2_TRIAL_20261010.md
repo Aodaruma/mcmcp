@@ -33,7 +33,7 @@
 
 統合候補R15では、拡張ネザライトバッグの回収タブ開放時のlayout拒否と2048個収納のPICKUP予測を修正し、端数移送・取消・クリック上限拒否まで確認した。Waystonesは`agent_interact`の`inspect_destinations`／`select_destination`を追加し、経験値上限拒否・取消・Esc停止・End往復を隔離Dockerで確認した。選択送信後は`agent_get_state`で到着を別途確認する。10:32 JSTまでに元66ファイルを復元し、container・Docker Desktopを停止済み。[統合検証記録](experiments/20261010_v2_waystones_docker.md)、[Waystonesの使い方と制限](PUBLIC_API_V2_WAYSTONES_20261010.md)。
 
-R15の製品JARはローカル`artifacts/v2-ladder-far-20261010/package-r15`、SHA-256は`c913077ad3b72a187493a0872b232dd7158541e4fb4b5e01c00114df50642e68`。自動試験1,746件と公開15ツール全定義の一致を確認した。10:43 JSTに差し替え担当がPrism起動・交換・接続・MCP ONを完了した。現場でも9色104個のバッグ収納とEnd→Overworld転送が成功し、帰路は地図アート担当が確認中。
+R15の製品JARはローカル`artifacts/v2-ladder-far-20261010/package-r15`、SHA-256は`c913077ad3b72a187493a0872b232dd7158541e4fb4b5e01c00114df50642e68`。自動試験1,746件と公開15ツール全定義の一致を確認した。10:43 JSTに差し替え担当がPrism起動・交換・接続・MCP ONを完了した。現場でも9色104個のバッグ収納、Waystones往復、有限scriptによる15秒稼働後の設備OFFを確認した。
 
 ## 導入状況
 

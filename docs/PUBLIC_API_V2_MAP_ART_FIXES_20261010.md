@@ -83,6 +83,6 @@ Java 1,693＋harness 14＋admin bridge 28＝1,735件、build・harness隔離・P
 ## 最新候補と残件
 
 - Sophisticated Backpacksのネザライトバッグ：回収upgradeタブ開放のlayout拒否と、拡張収納のPICKUP予測を修正。候補R15で端数take24・store16・再open、移送中取消・クリック上限拒否を含む5ケースが合格。upgrade設定・cursor・数量保存も確認。[検証記録](experiments/20261010_v2_backpack_docker.md)。
-- Waystonesの行き先一覧／選択：`agent_interact`へ追加し、R15で経験値上限拒否・取消・Esc停止・End往復を実機確認。自動試験1,746件、公開15ツール全定義照合も成功。検証環境の66ファイル復元とcontainer／Docker Desktop停止を完了。10:43 JSTに差し替え担当が通常導入を完了し、現場でのバッグ収納・Waystones片道転送も成功。帰路は地図アート担当が確認中。[仕様](PUBLIC_API_V2_WAYSTONES_20261010.md)、[統合検証と未確認範囲](experiments/20261010_v2_waystones_docker.md)。
+- Waystonesの行き先一覧／選択：`agent_interact`へ追加し、R15で経験値上限拒否・取消・Esc停止・End往復を実機確認。自動試験1,746件、公開15ツール全定義照合も成功。検証環境の66ファイル復元とcontainer／Docker Desktop停止を完了。10:43 JSTに差し替え担当が通常導入を完了し、現場でのバッグ収納・Waystones往復、有限scriptの15秒稼働後の設備OFFも成功。[仕様](PUBLIC_API_V2_WAYSTONES_20261010.md)、[統合検証と未確認範囲](experiments/20261010_v2_waystones_docker.md)。
 - raw入力がポータルや梯子の縁で止まる報告：raw入力としての再検証は未実施。`agent_move` は現場の上段配置を再現した固定fixtureで修正確認済み。現場の下階全体、MOD製の梯子、通信遅延は未検証。
 - 金床・エンチャント、MOD収納の対応拡大、施工全体の保存・再開は引き続き残件。取引の追加は[取引仕様](PUBLIC_API_V2_MERCHANTS_20261010.md)を参照。
