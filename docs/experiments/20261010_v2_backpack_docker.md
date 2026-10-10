@@ -34,4 +34,4 @@ R11製品SHA-256：`03ef18085d6fb7998297631093ba7b505862b032759b0d58ca34685017b6
 
 最終候補R15の製品SHA-256は`c913077ad3b72a187493a0872b232dd7158541e4fb4b5e01c00114df50642e68`。候補と準備scriptはローカル `artifacts/v2-ladder-far-20261010`、R11追加試験とR15の証拠は`r15-evidence.zip`に回収済み。10:30 JSTに元66ファイルをhash一致で復元し、fixture除去・container停止、10:32 JSTにDocker Desktop停止・維持用SSH終了を確認した。
 
-通常profileへの導入は未実施。R15は遠方下階の梯子修正・Waystonesの行き先一覧／選択とまとめ、地図アート担当による通常ゲームの所有引継ぎ後に、差し替え担当が製品JARだけを導入する。[統合検証記録](20261010_v2_waystones_docker.md)。任意のupgrade／MOD収納への一般対応は対象外。
+R15は遠方下階の梯子修正・Waystonesとまとめ、10:43 JSTに差し替え担当が通常profileへ製品JARを導入した。地図アート担当による公開MCPでも2つのバッグのinspectと、9色104個の収納・再open後の合計219個を確認した。[統合検証記録](20261010_v2_waystones_docker.md)。任意のupgrade／MOD収納への一般対応は対象外。

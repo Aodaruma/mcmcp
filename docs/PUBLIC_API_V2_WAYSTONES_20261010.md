@@ -1,6 +1,6 @@
 # Waystones操作：試用候補の契約
 
-2026-10-10。候補R15で隔離Dockerの一覧・費用拒否・取消・Esc停止・End往復を確認し、検証環境を復元済み。通常profileはR7で、この操作の導入は差し替え担当への引継ぎ待ち。[実機結果と未確認範囲](experiments/20261010_v2_waystones_docker.md)。
+2026-10-10。候補R15で隔離Dockerの一覧・費用拒否・取消・Esc停止・End往復を確認し、検証環境を復元済み。10:43 JSTに差し替え担当が通常profileへ導入済み。現場でもバッグ収納とEnd→Overworld転送が成功し、帰路は地図アート担当が確認中。[実機結果と未確認範囲](experiments/20261010_v2_waystones_docker.md)。
 
 ## 公開入力
 

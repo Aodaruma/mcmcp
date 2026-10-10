@@ -29,15 +29,17 @@
 
 操作は`action_id`で追跡し、`agent_cancel_action`で取消できる。確認できない変更は自動再送せず、停止理由と確認済み数量を返す。酸素退避は元の目標の成功とはせず`air_supply_retreat`となる。終了後は通常の沈下が再開するため、続けて岸へ移動するか手動操作へ移る。
 
-通常導入済みR7では、梯子で別の階へ移るときは先に梯子近くの既知の足場を目標にし、その後で遠い目標へ移動する。遠い下階を直接指定した際に上階を探索し続ける問題はR8で修正し、統合候補R15でも到達を確認した。
+旧R7では、梯子で別の階へ移るときは先に梯子近くの既知の足場を目標にし、その後で遠い目標へ移動する必要があった。遠い下階を直接指定した際に上階を探索し続ける問題はR8で修正し、統合候補R15でも到達を確認した。
 
 統合候補R15では、拡張ネザライトバッグの回収タブ開放時のlayout拒否と2048個収納のPICKUP予測を修正し、端数移送・取消・クリック上限拒否まで確認した。Waystonesは`agent_interact`の`inspect_destinations`／`select_destination`を追加し、経験値上限拒否・取消・Esc停止・End往復を隔離Dockerで確認した。選択送信後は`agent_get_state`で到着を別途確認する。10:32 JSTまでに元66ファイルを復元し、container・Docker Desktopを停止済み。[統合検証記録](experiments/20261010_v2_waystones_docker.md)、[Waystonesの使い方と制限](PUBLIC_API_V2_WAYSTONES_20261010.md)。
 
-R15の製品JARはローカル`artifacts/v2-ladder-far-20261010/package-r15`、SHA-256は`c913077ad3b72a187493a0872b232dd7158541e4fb4b5e01c00114df50642e68`。自動試験1,746件と公開15ツール全定義の一致を確認した。通常版への導入は未実施で、地図アート担当が操作権を渡した後、差し替え担当がPrism起動・交換・接続・MCP ONを行う。
+R15の製品JARはローカル`artifacts/v2-ladder-far-20261010/package-r15`、SHA-256は`c913077ad3b72a187493a0872b232dd7158541e4fb4b5e01c00114df50642e68`。自動試験1,746件と公開15ツール全定義の一致を確認した。10:43 JSTに差し替え担当がPrism起動・交換・接続・MCP ONを完了した。現場でも9色104個のバッグ収納とEnd→Overworld転送が成功し、帰路は地図アート担当が確認中。
 
 ## 導入状況
 
-**最新は `ladder-field-r7`（2026-10-10 06:03 JST確認）。** SHA-256は `ee1a94e94cecdf3962b1cdc05fef0433b2836c8a2ae124399a6ce0d626aaa57c`。差し替え担当の旧版バックアップ・物理path/hash・交換後起動・新session・READY/jobなし・15ツール全schema照合の記録は `artifacts/v2-ladder-field-install-20261010`。Prism GUI起動・サーバー接続・MCP ONまで完了し、追加移動せず地図アート担当へ所有を戻した。以下は先行版の導入履歴。
+**最新はR15（2026-10-10 10:43 JST確認）。** 製品hash・新JVM／session・READY/jobなし・公開15ツール全定義一致を確認し、地図アート担当へ操作権を返した。記録は`artifacts/v2-r15-install-20261010/normal-verification.json`。以下は導入履歴。
+
+**先行版 `ladder-field-r7`（2026-10-10 06:03 JST確認）。** SHA-256は `ee1a94e94cecdf3962b1cdc05fef0433b2836c8a2ae124399a6ce0d626aaa57c`。差し替え担当の旧版バックアップ・物理path/hash・交換後起動・新session・READY/jobなし・15ツール全schema照合の記録は `artifacts/v2-ladder-field-install-20261010`。Prism GUI起動・サーバー接続・MCP ONまで完了し、追加移動せず地図アート担当へ所有を戻した。以下は先行版の導入履歴。
 
 `ladder-r3` は05:27 JSTまでに導入・再接続・MCP ONを確認。SHA-256は `55f1703ed44cd1cec6fd8b199d2702e5964a3278a26161352d9c4008aaea0a94`。記録は `artifacts/v2-ladder-install-20261010`。
 

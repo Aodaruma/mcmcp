@@ -45,3 +45,9 @@ R12は一覧を開いて閉じる、使用中取消、tick上限が成功した�
 証拠はローカル `artifacts/v2-ladder-far-20261010/r15-evidence.zip`（SHA-256 `a533ce2cb230893c24f68159195ed157b777422a855b5d32b47f6875573670f2`）、全schema照合は同ディレクトリの`r15-schema-verification.json`、配布候補は`package-r15`。元world・設定・JARの66ファイルは10:30 JSTにhash一致で復元し、fixture除去・検証container停止を確認した。10:32 JSTにDocker Desktopプロセス0件と維持用SSHの終了も確認した。証拠内の`restoration.json`／`desktop-restoration.json`を参照。
 
 試験設定ではワープストーンの往復を直ちに実行でき、クールダウン拒否は発生しなかった。独自cooldown設定、使用中のUI OFF／world変更の同時競合、通信遅延・マルチプレイ、未知の費用・別MOD版・scroll／warp plate／設置Waystoneは実機未確認。経験値上限はメニュー受信費用の送信前検査であり、server再計算費用の原子的な上限ではない。nativeの耐久消費も経験値上限の対象外。
+
+## 通常profileへの導入と公開MCPでの現場確認（10:49 JST追記）
+
+差し替え担当が10:43 JSTにR15の導入、Prism GUIからの起動、サーバー接続、MCP ONを完了した。製品hashは上記R15と一致。新JVM・新session・READY/jobなし、harness／admin bridge不在、公開15ツールの全定義一致を記録した。証拠はローカル`artifacts/v2-r15-install-20261010/normal-verification.json`。通常ゲームの所有は地図アート担当へ戻っている。
+
+地図アート担当の公開MCP記録を読み取り、バッグslot6／8のinspect成功、slot6への9色104個の固体コンクリート収納、再inspectで115→219個、各要求数量のconfirmed_count一致・release_pending=falseを確認した。Waystonesも観測した候補を上限27XP pointsで選択し、selection_dispatchedの後にfresh stateでEnd→Overworldの到着、新session・READY/jobなし・体力20を確認した。通常環境の帰路と停止機構は同担当が継続確認中で、この追記では合格と扱わない。証拠はローカル`_PLAYING/map-art-MFwtpM21wWc-3x3/duper-operation/r15-public-field-check-20261010.json`。開発担当は通常ゲームを操作していない。
