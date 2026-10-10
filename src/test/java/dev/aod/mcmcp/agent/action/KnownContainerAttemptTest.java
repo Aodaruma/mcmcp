@@ -20,6 +20,57 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class KnownContainerAttemptTest {
     @Test
+    void releaseDiagnosisRetainsStaleCursorEvidenceAndAnUncertainCleanupWithoutReplayingIt() {
+        var port = new FakePort();
+        port.holdPending = true;
+        port.releaseFailuresRemaining = 1;
+        port.extraBasis = Map.ofEntries(
+                Map.entry("release_reason", "cursor_return_ack_pending"),
+                Map.entry("release_server_cursor", "nonempty"),
+                Map.entry("cursor_return_sent", true),
+                Map.entry("release_tick", 400L), Map.entry("release_server_revision", 10L),
+                Map.entry("release_cursor_revision", 9L), Map.entry("release_dispatch_revision", 10L),
+                Map.entry("private_slots", List.of("not public")));
+        var attempt = new KnownContainerAttempt(port, request(), 1, 101);
+        port.tick = 1;
+        attempt.tick(1);
+        int originalInteractions = port.interactions;
+        assertThatThrownBy(attempt::close).isInstanceOf(IllegalStateException.class);
+        var pending = attempt.progressEvidence();
+        assertThat(pending).containsEntry("release_pending", true)
+                .containsEntry("release_reason", "cursor_return_ack_pending")
+                .containsEntry("cursor_return_sent", true)
+                .containsEntry("release_cursor_revision", 9L)
+                .containsEntry("release_dispatch_revision", 10L)
+                .doesNotContainKey("private_slots");
+        assertThatThrownBy(() -> pending.put("release_reason", "changed"))
+                .isInstanceOf(UnsupportedOperationException.class);
+
+        attempt.close();
+        port.extraBasis = Map.of();
+        assertThat(attempt.progressEvidence()).containsEntry("release_confirmed", true)
+                .containsEntry("release_pending", false)
+                .containsEntry("release_reason", "cursor_return_ack_pending")
+                .containsEntry("release_tick", 400L);
+        assertThat(port.retires).isEqualTo(1);
+        assertThat(port.interactions).isEqualTo(originalInteractions);
+    }
+
+    @Test
+    void releaseRevisionsNeverPublishNegativeOrUntypedValues() {
+        var port = new FakePort();
+        port.holdPending = true;
+        port.extraBasis = Map.of(
+                "release_tick", 0, "release_server_revision", -1L,
+                "release_cursor_revision", "42", "release_dispatch_revision", Double.NaN);
+        var attempt = new KnownContainerAttempt(port, request(), 1, 101);
+        port.tick = 1;
+        attempt.tick(1);
+        assertThat(attempt.progressEvidence()).containsEntry("release_tick", 0L)
+                .doesNotContainKeys("release_server_revision", "release_cursor_revision", "release_dispatch_revision");
+    }
+
+    @Test
     void cleanupDiagnosticsRetainCauseAndExcludeUnrelatedEvidenceAfterRelease() {
         var port = new FakePort();
         port.holdPending = true;

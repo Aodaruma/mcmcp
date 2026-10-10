@@ -11,7 +11,7 @@
 - cancelを1回受理し、62.34秒でもrunning、cancel_requested:true、completed_operations/max_operations=240/240。所持black640を観測。これだけでは移送ゼロ・空cursorを確定できない。
 - state/statusは読取り可能。control.mode=agent。known_menu省略はREADY以外で省略する既存仕様でも起き、画面の有無やcursorの空きの証拠ではない。
 
-この時点では復旧未確認。今回の直接原因（cursor不一致、古い同期証拠、menu不一致など）は公開結果から確定できない。
+この記録時点では復旧未確認だった。後続の手動復旧は末尾に追記する。今回の直接原因（cursor不一致、古い同期証拠、menu不一致など）は公開結果から確定できない。
 
 ## R18の終了条件
 
@@ -45,6 +45,29 @@ R18に強制解放・任意画面閉鎖・MCP OFF・サーバー切断を行う�
 - cleanup clickを送信済みか、そのACK待ちか、元slotの不一致／容量不足か。
 - 最後の移送送信revision、cursor証明revision、解放判定のtick、固定のrelease待機理由。
 
-実機は新baseline・leaseを作り、許可時間帯23:00～12:00 JSTにaod-mimoidの隔離Dockerで、満杯のplayer在庫＋bag黒286＋store64、並行収納更新、ACK遅延、予想外cursor、menu閉鎖を個別に試す。証拠を取得し、数量UNKNOWNと解放完了を分けて評価する。今回の根本修正・追加診断・この再発ケースの隔離再現は未実装／未実施。
+実機は新baseline・leaseを作り、許可時間帯23:00～12:00 JSTにaod-mimoidの隔離Dockerで、満杯のplayer在庫＋bag黒286＋store64、並行収納更新、ACK遅延、予想外cursor、menu閉鎖を個別に試す。証拠を取得し、数量UNKNOWNと解放完了を分けて評価する。今回の根本修正・この再発ケースの隔離再現は未実装／未実施。追加診断の候補実装は後段に記録する。
 
 別件として、End扉は感圧板を避け、`(95,49,-2)` からwest面の扉 `(97,49,-2)` をopen=trueとして `(99,49,-2)` へ通過できたとの報告を受領。これは手順を変えた成功例で、先の扉端REPLANからの自律退避を実装・検証したことは意味しない。
+
+## 手動復旧と実数の再確認
+
+後続証拠 `_PLAYING/map-art-MFwtpM21wWc-3x3/duper-operation/r18-batch2-output-and-storage-recovery-20261010.json` を確認。373.19秒・remaining_seconds:0でもUNKNOWNとrelease_pendingが残った。ユーザーがMCP OFFとした時点も旧jobがあり、ON再許可はできなかったとの報告。その後、通常の切断・再接続・MCP ONを手動で実施し、新session `b0a8102c-9dbe-400f-bbea-670fa6b61b09`、READY、jobなし、体力20へ復帰した。
+
+新しいbag6 inspect `f3764375-aa10-429a-98f8-ecee863c4708` は成功・release_confirmed。freshな黒パウダーはplayer640／bag286、固体3,630個を確認した。旧UNKNOWNを成功や無変更確定へ再分類せず、元store64も再送していない。これは**手動のworld境界による復旧**であり、公開API単独の復帰成功ではない。全チェストや落下アイテムを網羅しておらず、生産量・入手元の総収支まで確定した記録ではない。
+
+## 公開診断の追加（候補・実機未確認）
+
+終了条件を変えず、`agent_get_action` の `result.storage_progress` に以下を追加した。公開15ツールのschemaは維持し、catalogの説明を更新した。
+
+- `release_reason`: 固定理由。open証拠待ち、menu閉鎖後のcursor未証明、storage context取得不能、古いcursor証拠、返却先不適合、返却ACK待ち、所有画面閉鎖、world境界などを区別する。
+- `release_tick`: 最後に終了条件を調べたtick。
+- `release_server_cursor`: 保持server証拠の `empty`／`nonempty`／`unavailable`。emptyだけでは所有menuへの新しい証拠とは限らない。
+- `release_server_revision`／`release_cursor_revision`／`release_dispatch_revision`: 取得できた非負整数のみ返す。未取得値は省略し、0を未知の代用にしない。最後の送信よりserverとcursor両方の証拠が新しいかを調べられる。
+- `cursor_return_sent`: cleanup clickを送信済み扱いにしたか。送信直前に保持するため、例外時の送信不明もtrueに含む。再送許可を意味しない。
+
+終端でも最後の診断tick・理由を保持する。例えば `cursor_return_ack_pending` が残っていても、terminalかつrelease_confirmedなら「最後に保存された診断」であり、現在も待機している意味ではない。未確認の数量は変更しない。server/clientのslot全体や任意例外本文は追加公開しない。
+
+自動復帰の次段階は、(1) 同一の所有menu・connection・session、(2) 最後の送信後のserver空cursor証拠、(3) client空cursorを独立して確認できる場合に、無関係なslot同期の不一致が画面閉鎖まで妨げないようにする案。返却clickには元slotの安全な容量・item/components一致が引き続き必要。今回のどの条件が欠けたかを新診断と隔離fixtureで確かめてから適用する。証拠不足時の強制closeや自動切断、UNKNOWNの成功化、取消の再送は採用しない。**この自動復帰変更はまだ実装していない**。
+
+
+候補の自動試験はJava 1,734＋harness 14＋admin bridge 28＝1,776件が失敗・skipなしで成功し、build／harness隔離も成功。診断の不変コピー、送信不明・古いcursor証拠の保持、終端後の保持、不正なrevision値の非公開を追加確認した。実機での各理由の表示は未確認で、通常R18と固定済みR19/R20の配布物は変更していない。revisionの比較は同一session・menuの証拠としてのみ行う。
