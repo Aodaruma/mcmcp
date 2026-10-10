@@ -202,14 +202,17 @@ final class MinecraftV2ProductionDriver implements V2OperationJobExecution.Drive
         if (!request.advance() || distance.getAsDouble() <= 0 || waitingEvidence != null && waitingEvidence.equals(map.edges())) {
             return ++waitTicks <= 80 ? V2OperationJobExecution.Step.RUNNING : fail("production_station_not_observed");
         }
-        var plan = planner.plan(map, ActionPlanning.playerCell(minecraft.player, session.dimension()), session.worldSessionId(),
-                map.worldRevision(), CoordinateGoalPlanner.Budget.DEFAULT, () -> !allowed.getAsBoolean());
+        var plan = MinecraftV2BlockApproach.plan(planner, minecraft, observations, reconciliation,
+                session, map, target, tick, allowed);
         return switch (plan.status()) {
             case KNOWN_GOAL_ROUTE, PARTIAL_WAYPOINT -> {
-                navigation.beginNavigate(plan.route().orElseThrow(), 0.35); waitingEvidence = null;
+                navigation.beginNavigate(plan.route().orElseThrow(), 0.35); waitingEvidence = null; waitTicks = 0;
                 yield V2OperationJobExecution.Step.RUNNING;
             }
-            case BLOCKED, REACHED_KNOWN_GOAL -> { waitingEvidence = map.edges(); waitTicks = 0; yield V2OperationJobExecution.Step.RUNNING; }
+            case BLOCKED, REACHED_KNOWN_GOAL -> {
+                waitingEvidence = map.edges();
+                yield ++waitTicks <= 80 ? V2OperationJobExecution.Step.RUNNING : fail("production_approach_unavailable");
+            }
             default -> fail("production_approach_unavailable");
         };
     }

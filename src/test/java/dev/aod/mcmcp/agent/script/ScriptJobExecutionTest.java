@@ -143,6 +143,107 @@ class ScriptJobExecutionTest {
         return id;
     }
 
+    @Test
+    void worldSafetyBoundaryRetainsTheCompletedChildWithoutDispatchingAnother() {
+        var jobs = new AgentJobStore(); var world = UUID.randomUUID(); var id = confirmed(jobs, world, 2);
+        var safe = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var calls = new AtomicInteger();
+        var child = Map.<String, Object>of("action_id", UUID.randomUUID().toString(), "state", "succeeded",
+                "result", Map.of("confirmed_count", 2, "unconfirmed", false));
+        var execution = new ScriptJobExecution(jobs, id, world, "click(); click();", Set.of("click"),
+                10000, 100, 2, new ScriptJobExecution.CommandRunner() {
+                    public ScriptJobExecution.Outcome execute(String name, Map<String, Object> args, BooleanSupplier cancelled) {
+                        calls.incrementAndGet(); safe.set(false); return ScriptJobExecution.Outcome.SUCCESS;
+                    }
+                    public Map<String, Object> result() { return child; }
+                    public void cancelActive() { }
+                }, safe::get, Long.MAX_VALUE);
+        execution.run();
+        var finished = execution.finishIfReleased(true);
+        assertThat(finished.failure()).isEqualTo("safety_interrupted");
+        assertThat(finished.completedOperations()).isEqualTo(1);
+        assertThat(calls).hasValue(1);
+        assertThat(((Map<?, ?>) finished.result().get("last_command")).get("action")).isEqualTo(child);
+    }
+
+    @Test
+    void failedTransferKeepsUnknownChildAndPartialQuantityEvenWhenReportsAreFull() {
+        var jobs = new AgentJobStore();
+        var world = UUID.randomUUID();
+        var id = confirmed(jobs, world, 3);
+        var calls = new AtomicInteger();
+        var childId = UUID.randomUUID().toString();
+        var transfer = new java.util.LinkedHashMap<String, Object>(Map.of(
+                "requested_count", 10, "confirmed_count", 2, "unconfirmed", true,
+                "release_pending", false, "effects", java.util.List.of(Map.of("verification", "unknown"))));
+        var child = Map.<String, Object>of("action_id", childId, "kind", "inventory", "state", "failed",
+                "stop_reason", "container_quantity_not_confirmed", "result", transfer);
+        var execution = execution(jobs, id, world, "repeat(32){report(value=1);} click(); click();",
+                new ScriptJobExecution.CommandRunner() {
+                    public ScriptJobExecution.Outcome execute(String name, Map<String, Object> args, BooleanSupplier cancelled) {
+                        calls.incrementAndGet(); return ScriptJobExecution.Outcome.FAILURE;
+                    }
+                    public Map<String, Object> result() { return child; }
+                    public void cancelActive() { }
+                });
+        execution.run();
+        transfer.put("confirmed_count", 10);
+        assertThat(execution.finishIfReleased(false).state()).isEqualTo(AgentJobStore.State.RUNNING);
+        var finished = execution.finishIfReleased(true);
+        assertThat(finished.state()).isEqualTo(AgentJobStore.State.FAILED);
+        assertThat(calls).hasValue(1);
+        assertThat((java.util.List<?>) finished.result().get("reports")).hasSize(32);
+        var diagnostic = (Map<?, ?>) finished.result().get("last_command");
+        assertThat(diagnostic.get("truncated")).isEqualTo(false);
+        var retained = (Map<?, ?>) diagnostic.get("action");
+        assertThat(retained.get("action_id")).isEqualTo(childId);
+        var quantity = (Map<?, ?>) retained.get("result");
+        assertThat(quantity.get("confirmed_count")).isEqualTo(2);
+        assertThat(quantity.get("unconfirmed")).isEqualTo(true);
+        assertThat(quantity.get("effects")).isEqualTo(java.util.List.of(Map.of("verification", "unknown")));
+    }
+
+    @Test
+    void cancelledChildRetainsReleasePendingEvidenceWithoutFinishingTheParentEarly() {
+        var jobs = new AgentJobStore(); var world = UUID.randomUUID(); var id = confirmed(jobs, world, 2);
+        var child = Map.<String, Object>of("action_id", UUID.randomUUID().toString(), "state", "running",
+                "result", Map.of("release_pending", true, "unconfirmed", true));
+        var execution = execution(jobs, id, world, "click(); click();", new ScriptJobExecution.CommandRunner() {
+            public ScriptJobExecution.Outcome execute(String name, Map<String, Object> args, BooleanSupplier cancelled) {
+                jobs.requestCancel(id); return ScriptJobExecution.Outcome.CANCELLED;
+            }
+            public Map<String, Object> result() { return child; }
+            public void cancelActive() { }
+        });
+        execution.run();
+        assertThat(execution.finishIfReleased(false).state()).isEqualTo(AgentJobStore.State.RUNNING);
+        var finished = execution.finishIfReleased(true);
+        assertThat(finished.state()).isEqualTo(AgentJobStore.State.CANCELLED);
+        assertThat(((Map<?, ?>) finished.result().get("last_command")).get("action")).isEqualTo(child);
+    }
+
+    @Test
+    void admissionFailureDoesNotMisattributeThePreviousSuccessfulChild() {
+        var jobs = new AgentJobStore(); var world = UUID.randomUUID(); var id = confirmed(jobs, world, 3);
+        var calls = new AtomicInteger();
+        var execution = execution(jobs, id, world, "click(); move(); click();", new ScriptJobExecution.CommandRunner() {
+            public ScriptJobExecution.Outcome execute(String name, Map<String, Object> args, BooleanSupplier cancelled) {
+                return calls.incrementAndGet() == 1 ? ScriptJobExecution.Outcome.SUCCESS : ScriptJobExecution.Outcome.FAILURE;
+            }
+            public Map<String, Object> result() {
+                return calls.get() == 1 ? Map.of("action_id", "previous-child", "state", "succeeded") : Map.of();
+            }
+            public void cancelActive() { }
+        });
+        execution.run();
+        var finished = execution.finishIfReleased(true);
+        var last = (Map<?, ?>) finished.result().get("last_command");
+        assertThat(last.get("command")).isEqualTo("move");
+        assertThat(last.get("action")).isEqualTo(Map.of());
+        assertThat(calls).hasValue(2);
+        assertThat(finished.completedOperations()).isEqualTo(1);
+    }
+
     private static ScriptJobExecution execution(AgentJobStore jobs, UUID id, UUID world,
             String source, ScriptJobExecution.CommandRunner runner) {
         return new ScriptJobExecution(jobs, id, world, source,

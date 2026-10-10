@@ -140,19 +140,19 @@ final class MinecraftV2ContainerDriver implements V2OperationJobExecution.Driver
             return ++evidenceWaitTicks <= MAX_EVIDENCE_WAIT_TICKS
                     ? V2OperationJobExecution.Step.RUNNING : fail("container_target_not_observed");
         }
-        var plan = planner.plan(map, ActionPlanning.playerCell(player, session.dimension()),
-                session.worldSessionId(), map.worldRevision(), CoordinateGoalPlanner.Budget.DEFAULT,
-                () -> !outputAllowed.getAsBoolean());
+        var plan = MinecraftV2BlockApproach.plan(planner, minecraft, observations, reconciliation,
+                session, map, target, clientTick, outputAllowed);
         return switch (plan.status()) {
             case KNOWN_GOAL_ROUTE, PARTIAL_WAYPOINT -> {
                 navigation.beginNavigate(plan.route().orElseThrow(), 0.35D);
                 waitingEvidence = null;
+                evidenceWaitTicks = 0;
                 yield V2OperationJobExecution.Step.RUNNING;
             }
             case BLOCKED, REACHED_KNOWN_GOAL -> {
                 waitingEvidence = map.edges();
-                evidenceWaitTicks = 0;
-                yield V2OperationJobExecution.Step.RUNNING;
+                yield ++evidenceWaitTicks <= MAX_EVIDENCE_WAIT_TICKS
+                        ? V2OperationJobExecution.Step.RUNNING : fail("container_approach_unavailable");
             }
             case LIMIT, CANCELLED, STALE_MAP, WORLD_MISMATCH -> fail("container_approach_unavailable");
         };

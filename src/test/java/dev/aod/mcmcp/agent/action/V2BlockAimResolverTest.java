@@ -57,6 +57,19 @@ class V2BlockAimResolverTest {
     }
 
     @Test
+    void approachHintsDoNotGrantAnAimFromAnUnobservedEyeOrSurviveInvalidation() {
+        var frame = frame(10, 3);
+        assertThat(V2BlockAimResolver.approachPoints(frame, TARGET, 10, 3, 3))
+                .containsExactly(new Vec3(1, 65, 0.5));
+        assertThat(V2BlockAimResolver.resolve(frame, TARGET, new Vec3(-1, 65.6, 0.5),
+                SESSION, 10, 3, 3)).isEmpty();
+        assertThat(V2BlockAimResolver.approachPoints(frame, TARGET, 51, 3, 3)).isEmpty();
+        assertThat(V2BlockAimResolver.approachPoints(frame, TARGET, 10, 4, 4)).isEmpty();
+        assertThat(V2BlockAimResolver.approachPoints(frame, TARGET, 9, 3, 3)).isEmpty();
+        assertThat(V2BlockAimResolver.approachPoints(frame, new NavCell("minecraft:the_end", 1, 64, 0), 10, 3, 3)).isEmpty();
+    }
+
+    @Test
     void explicitModTargetStillRequiresFreshVisibleSurface() {
         var frame = frame(10, 3, "sophisticatedbackpacks:backpack");
         java.util.function.Predicate<String> allowed = "sophisticatedbackpacks:backpack"::equals;

@@ -397,6 +397,42 @@ class CoordinateGoalPlannerTest {
         return planner.plan(snapshot, start, SESSION, snapshot.worldRevision(), DEFAULT, () -> false);
     }
 
+    @Test
+    void nearbyApproachChoosesAnOperableEndpointInsteadOfAnUnusableCloserWaypoint() {
+        var start = cell(0, 0);
+        var usable = cell(1, 0);
+        var closer = cell(2, 0);
+        var target = cell(3, 0);
+        var snapshot = map(edge(start, usable), edge(usable, closer)).snapshot().orElseThrow();
+        var planner = new CoordinateGoalPlanner(SESSION, target, cell -> !cell.equals(target));
+        var result = planner.plan(snapshot, start, SESSION, 0, DEFAULT, () -> false, usable::equals, false);
+        assertThat(result.status()).isEqualTo(KNOWN_GOAL_ROUTE);
+        assertThat(result.route().orElseThrow().cells()).containsExactly(start, usable);
+    }
+
+    @Test
+    void noOperableEndpointDoesNotSpendMovementOnNearbyDetoursButFarGoalsStillExplore() {
+        var start = cell(0, 0);
+        var snapshot = map(edge(start, cell(1, 0)), edge(cell(1, 0), cell(2, 0))).snapshot().orElseThrow();
+        var planner = new CoordinateGoalPlanner(SESSION, cell(100, 0));
+        var near = planner.plan(snapshot, start, SESSION, 0, DEFAULT, () -> false, cell -> false, false);
+        assertThat(near.status()).isEqualTo(BLOCKED);
+        assertThat(near.route()).isEmpty();
+        assertThat(near.candidates()).isZero();
+        var far = planner.plan(snapshot, start, SESSION, 0, DEFAULT, () -> false, cell -> false, true);
+        assertThat(far.status()).isEqualTo(PARTIAL_WAYPOINT);
+        assertThat(far.route().orElseThrow().cells()).containsExactly(start, cell(1, 0), cell(2, 0));
+    }
+
+    @Test
+    void customInteractionGoalCannotTurnUnsupportedLadderTransitIntoAnEndpoint() {
+        var snapshot = map(ladder(rung(80), rung(79)), ladder(rung(79), rung(78))).snapshot().orElseThrow();
+        var result = new CoordinateGoalPlanner(SESSION, rung(64)).plan(snapshot, rung(80), SESSION, 0,
+                DEFAULT, () -> false, cell -> true, false);
+        assertThat(result.status()).isEqualTo(BLOCKED);
+        assertThat(result.route()).isEmpty();
+    }
+
     private static KnownTraversabilityMap map(TraversabilityEdge... edges) {
         var map = new KnownTraversabilityMap();
         map.startSession(SESSION, "overworld", 0);

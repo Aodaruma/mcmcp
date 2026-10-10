@@ -279,20 +279,19 @@ final class MinecraftV2BreakDriver
                     ? V2BlockJobExecution.StepResult.RUNNING
                     : V2BlockJobExecution.StepResult.FAILED;
         }
-        var current = ActionPlanning.playerCell(minecraft.player, session.dimension());
-        var plan = planner.plan(map, current, session.worldSessionId(), map.worldRevision(),
-                CoordinateGoalPlanner.Budget.DEFAULT,
-                () -> !outputAllowed.getAsBoolean());
+        var plan = MinecraftV2BlockApproach.plan(planner, minecraft, observations, reconciliationSignals,
+                session, map, target, clientTick, outputAllowed);
         return switch (plan.status()) {
             case KNOWN_GOAL_ROUTE, PARTIAL_WAYPOINT -> {
                 navigation.beginNavigate(plan.route().orElseThrow(), APPROACH_TOLERANCE);
                 waitingEvidence = null;
+                approachEvidenceWaitTicks = 0;
                 yield V2BlockJobExecution.StepResult.RUNNING;
             }
             case BLOCKED, REACHED_KNOWN_GOAL -> {
                 waitingEvidence = map.edges();
-                approachEvidenceWaitTicks = 0;
-                yield V2BlockJobExecution.StepResult.RUNNING;
+                yield ++approachEvidenceWaitTicks <= MAX_APPROACH_EVIDENCE_WAIT_TICKS
+                        ? V2BlockJobExecution.StepResult.RUNNING : V2BlockJobExecution.StepResult.FAILED;
             }
             case LIMIT, CANCELLED, STALE_MAP, WORLD_MISMATCH ->
                     V2BlockJobExecution.StepResult.FAILED;

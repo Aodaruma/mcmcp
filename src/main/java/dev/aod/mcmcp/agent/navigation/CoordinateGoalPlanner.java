@@ -59,10 +59,18 @@ public final class CoordinateGoalPlanner {
 
     public Result plan(KnownTraversabilitySnapshot map, NavCell start, UUID currentSession,
             long currentRevision, Budget budget, BooleanSupplier cancelled) {
+        return plan(map, start, currentSession, currentRevision, budget, cancelled, this::reached, true);
+    }
+
+    /** Approach callers may require an operable endpoint and forbid exploratory detours nearby. */
+    public Result plan(KnownTraversabilitySnapshot map, NavCell start, UUID currentSession,
+            long currentRevision, Budget budget, BooleanSupplier cancelled,
+            Predicate<NavCell> arrival, boolean allowPartial) {
         Objects.requireNonNull(map, "map");
         Objects.requireNonNull(start, "start");
         Objects.requireNonNull(budget, "budget");
         Objects.requireNonNull(cancelled, "cancelled");
+        Objects.requireNonNull(arrival, "arrival");
         if (stopped(cancelled)) return empty(Status.CANCELLED, 0, 0);
         if (!session.equals(currentSession) || !session.equals(map.worldSessionId())
                 || !goal.dimension().equals(map.dimension())
@@ -75,10 +83,20 @@ public final class CoordinateGoalPlanner {
         newestRevision = currentRevision;
         if (map.edges().size() > budget.edges()) return empty(Status.LIMIT, 0, 0);
 
+        var destinations = new HashSet<NavCell>();
+        for (var edge : map.edges().values()) {
+            if (edge.destination()) {
+                destinations.add(edge.key().to());
+                if (edge.locomotion() == Locomotion.GROUND || edge.locomotion().aerial()) destinations.add(edge.key().from());
+            }
+        }
+        var arrivals = new java.util.HashMap<NavCell, Boolean>();
+        Predicate<NavCell> arrived = cell -> destinations.contains(cell)
+                && arrivals.computeIfAbsent(cell, arrival::test);
         var candidates = new TreeSet<NavCell>(Comparator
                 // A known route toward the target floor beats exploring horizontally on the wrong floor.
-                .comparingInt((NavCell cell) -> reached(cell) ? 0 : ladderWaypoint(map, start, cell) ? 1 : 2)
-                .thenComparingDouble(cell -> reached(cell)
+                .comparingInt((NavCell cell) -> arrived.test(cell) ? 0 : ladderWaypoint(map, start, cell) ? 1 : 2)
+                .thenComparingDouble(cell -> arrived.test(cell)
                         ? cell.distanceTo(start) : cell.distanceTo(goal))
                 .thenComparing(Comparator.naturalOrder()));
         for (TraversabilityEdge edge : map.edges().values()) {
@@ -98,7 +116,7 @@ public final class CoordinateGoalPlanner {
             }
         }
         if (stopped(cancelled)) return empty(Status.CANCELLED, 0, 0);
-        if (reached(start) && candidates.contains(start) && cellAllowed.test(start)) {
+        if (arrived.test(start) && candidates.contains(start) && cellAllowed.test(start)) {
             return new Result(Status.REACHED_KNOWN_GOAL,
                     Optional.of(RoutePlan.from(map, List.of(start), List.of())), 0, 0);
         }
@@ -137,6 +155,7 @@ public final class CoordinateGoalPlanner {
         for (NavCell candidate : candidates) {
             if (stopped(cancelled)) return empty(Status.CANCELLED, attempts, expanded);
             if (candidate.equals(start) || !cellAllowed.test(candidate)
+                    || !allowPartial && !arrived.test(candidate)
                     || issuedCells.contains(candidate)
                     || !connected.containsKey(candidate)) continue;
             if (attempts >= budget.candidates() || expanded >= budget.expansions()) {
@@ -156,7 +175,7 @@ public final class CoordinateGoalPlanner {
                 }
                 issuedCells.addAll(newlyIssued);
                 lastIssuedEvidence = map.edges();
-                return new Result(reached(candidate) ? Status.KNOWN_GOAL_ROUTE : Status.PARTIAL_WAYPOINT,
+                return new Result(arrived.test(candidate) ? Status.KNOWN_GOAL_ROUTE : Status.PARTIAL_WAYPOINT,
                         found.route(), attempts, expanded);
             }
             if (found.failure().orElseThrow() == DeterministicAStar.FailureReason.SEARCH_CANCELLED) {

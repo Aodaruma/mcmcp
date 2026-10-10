@@ -38,6 +38,7 @@ public final class ScriptJobExecution implements Runnable {
     private final java.util.function.LongSupplier clock;
     private volatile ActionScript.Result result;
     private volatile String unexpectedFailure;
+    private Map<String, Object> lastCommand = Map.of();
     private Map<String, ScriptResources.Resource> resources = Map.of();
 
     public ScriptJobExecution withResources(Map<String, ScriptResources.Resource> resources) {
@@ -91,7 +92,9 @@ public final class ScriptJobExecution implements Runnable {
                 if (aborted() || !jobs.canDispatch(actionId, worldSessionId)) {
                     return ActionScript.Outcome.CANCELLED;
                 }
+                lastCommand = Map.of();
                 var outcome = runner.execute(command.name(), command.arguments(), cancelled);
+                lastCommand = ScriptChildDiagnostic.capture(command.name(), outcome, runner.result());
                 if (outcome == Outcome.SUCCESS) {
                     // A completed child is irreversible even if cancellation raced its reply.
                     jobs.recordOperation(actionId);
@@ -163,6 +166,7 @@ public final class ScriptJobExecution implements Runnable {
             details.put("calls", result.calls());
             details.put("completed_commands", job.completedOperations());
             details.put("reports", result.reports());
+            if (!lastCommand.isEmpty()) details.put("last_command", lastCommand);
             details.put("resources", resources.entrySet().stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
                     Map.Entry::getKey, entry -> Map.of("format", entry.getValue().format(), "sha256", entry.getValue().sha256()))));
             if (!result.detail().isEmpty()) details.put("detail", result.detail());

@@ -1632,8 +1632,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 return ScriptJobExecution.Outcome.FAILURE;
             } finally {
                 if (childId != null) {
-                    scriptChildActionId.compareAndSet(childId, null);
-                    scriptChildCancelSent.compareAndSet(childId, null);
+                    try {
+                        // An interrupted wait still has a real child; retain its state without replaying it.
+                        if (lastResult.isEmpty()) lastResult = v2JobPayload(v2Jobs.get(childId), true);
+                    } finally {
+                        scriptChildActionId.compareAndSet(childId, null);
+                        scriptChildCancelSent.compareAndSet(childId, null);
+                    }
                 }
             }
         }

@@ -7,6 +7,8 @@ import dev.aod.mcmcp.agent.observation.ObservationRecord;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.Objects;
+import java.util.List;
+import java.util.EnumMap;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Predicate;
@@ -15,7 +17,8 @@ import java.util.function.Predicate;
 public final class V2BlockAimResolver {
     private static final long MAX_RAY_AGE_TICKS = 40L;
     private static final double MAX_EYE_DRIFT_SQUARED = 0.125D * 0.125D;
-    private static final double MAX_REACH_SQUARED = 4.5D * 4.5D;
+    public static final double MAX_REACH = 4.5D;
+    private static final double MAX_REACH_SQUARED = MAX_REACH * MAX_REACH;
 
     private V2BlockAimResolver() { }
 
@@ -55,16 +58,9 @@ public final class V2BlockAimResolver {
         double bestDistance = Double.POSITIVE_INFINITY;
         for (var record : frame.records()) {
             if (!(record instanceof ObservationRecord.VisibleSurface surface)
-                    || surface.rayHit() == null
+                    || !fresh(surface, target, currentTick, currentRevision, surfaceBarrierRevision)
                     || (requiredFace != null && surface.face() != requiredFace)
-                    || surface.position().x() != target.x()
-                    || surface.position().y() != target.y()
-                    || surface.position().z() != target.z()
-                    || !allowedBlock.test(surface.block().value())
-                    || surface.worldRevision() < surfaceBarrierRevision
-                    || surface.worldRevision() > currentRevision
-                    || surface.observedTick() > currentTick
-                    || currentTick - surface.observedTick() > MAX_RAY_AGE_TICKS) continue;
+                    || !allowedBlock.test(surface.block().value())) continue;
             var eye = surface.eyeOrigin();
             if (distanceSquared(currentEye, eye.x(), eye.y(), eye.z())
                     > MAX_EYE_DRIFT_SQUARED) continue;
@@ -85,6 +81,33 @@ public final class V2BlockAimResolver {
                         worldSessionId, currentRevision,
                         new ActionDsl.Position(target.dimension(), target.x(), target.y(), target.z()),
                         hit.x(), hit.y(), hit.z(), true)));
+    }
+
+    /** Planning hints only: executing from a new eye still requires resolve() with fresh evidence. */
+    public static List<Vec3> approachPoints(ObservationFrame frame, NavCell target,
+            long currentTick, long currentRevision, long surfaceBarrierRevision) {
+        if (currentTick < 0 || currentRevision < 0 || surfaceBarrierRevision < 0
+                || surfaceBarrierRevision > currentRevision
+                || !frame.dimension().value().equals(target.dimension())) return List.of();
+        var faces = new EnumMap<ObservationRecord.Face, ObservationRecord.VisibleSurface>(ObservationRecord.Face.class);
+        for (var record : frame.records()) {
+            if (record instanceof ObservationRecord.VisibleSurface surface
+                    && fresh(surface, target, currentTick, currentRevision, surfaceBarrierRevision)) {
+                var previous = faces.get(surface.face());
+                if (previous == null || surface.observedTick() > previous.observedTick()) faces.put(surface.face(), surface);
+            }
+        }
+        return faces.values().stream().map(surface -> new Vec3(
+                surface.rayHit().x(), surface.rayHit().y(), surface.rayHit().z())).toList();
+    }
+
+    private static boolean fresh(ObservationRecord.VisibleSurface surface, NavCell target,
+            long currentTick, long currentRevision, long surfaceBarrierRevision) {
+        return surface.rayHit() != null
+                && surface.position().x() == target.x() && surface.position().y() == target.y()
+                && surface.position().z() == target.z()
+                && surface.worldRevision() >= surfaceBarrierRevision && surface.worldRevision() <= currentRevision
+                && surface.observedTick() <= currentTick && currentTick - surface.observedTick() <= MAX_RAY_AGE_TICKS;
     }
 
     private static double distanceSquared(Vec3 current, double x, double y, double z) {

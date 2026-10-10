@@ -32,6 +32,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /** Current public transport checks plus frozen v1 fixtures for reused internal executors. */
 class McpToolCatalogTest {
+    @Test
+    void scriptChildDiagnosticIsDiscoverableAndFitsTheDetailedActionContract() {
+        var catalog = new McpToolCatalog();
+        var script = java.util.stream.StreamSupport.stream(catalog.listResult().getAsJsonArray("tools").spliterator(), false)
+                .map(JsonElement::getAsJsonObject).filter(tool -> tool.get("name").getAsString().equals("agent_run_script"))
+                .findFirst().orElseThrow();
+        assertThat(script.get("description").getAsString()).contains("result.last_command", "256", "8 KiB", "truncated=true");
+        var reply = JsonParser.parseString("""
+                {"schema_version":2,"action_id":"550e8400-e29b-41d4-a716-446655440000","kind":"script",
+                 "state":"failed","progress":{"completed_operations":0,"max_operations":2},
+                 "cancel_requested":false,"failure":"script_command_failed","stop_reason":"script_command_failed",
+                 "result":{"last_command":{"command":"inventory","outcome":"failure","truncated":false,
+                   "action":{"action_id":"550e8400-e29b-41d4-a716-446655440001","state":"failed",
+                     "result":{"confirmed_count":0,"unconfirmed":true,"effects":[{"verification":"unknown"}]}}}}}
+                """);
+        assertThat(CatalogSchemaValidator.matches(catalog.outputSchema("agent_get_action"), reply)).isTrue();
+    }
+
     private static com.google.gson.JsonObject legacyActionOutputSchema() {
         var output = new McpToolCatalog().outputSchema("agent_get_action");
         var legacy = output.getAsJsonArray("oneOf").get(0).getAsJsonObject().deepCopy();

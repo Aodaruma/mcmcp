@@ -345,6 +345,22 @@ final class FixtureV2Priorities {
                         "setblock 305 113 305 minecraft:wall_torch[facing=north]",
                         "tp @s 305.456794159 112 304.508786297 0 85"));
             }
+            case "approach_chest", "approach_roof", "approach_wall", "approach_far" -> {
+                result.addAll(List.of("fill 300 101 300 320 115 320 minecraft:air",
+                        "setblock 309 101 305 minecraft:chest[facing=west]",
+                        "tp @s 305.5 101 305.5 -90 0"));
+                if (kind.equals("approach_chest")) result.addAll(List.of(
+                        "fill 300 101 300 305 102 310 minecraft:stone",
+                        "fill 306 101 300 306 101 310 minecraft:stone",
+                        "tp @s 305.5 103 305.5 -90 30"));
+                if (kind.equals("approach_roof")) result.addAll(List.of(
+                        "fill 300 105 300 315 105 310 minecraft:stone",
+                        "tp @s 306.5 106 305.5 -90 60"));
+                if (kind.equals("approach_wall")) result.add("fill 307 101 300 307 105 310 minecraft:stone");
+                if (kind.equals("approach_far")) result.addAll(List.of(
+                        "setblock 309 101 305 minecraft:air", "setblock 319 101 305 minecraft:chest[facing=west]",
+                        "tp @s 303.5 101 305.5 -90 0"));
+            }
             case "elytra_step" -> result.addAll(List.of("item replace entity @s armor.chest with minecraft:elytra",
                     "fill 306 101 304 310 101 306 minecraft:stone", "tp @s 305.5 101 305.5 -90 0"));
             case "mechanisms" -> result.addAll(List.of("setblock 305 101 303 minecraft:lever[face=floor,facing=south,powered=true]",
