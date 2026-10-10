@@ -527,6 +527,8 @@ scoreboard、chat、看板、本を禁止した理由は、worldまたはserver�
 
 初版のMCP resultとaudit logにはこれらの本文を含めない。resource locationであるsound event IDもdataとしてのみ扱う。
 
+2026-10-11のv2拡張では、明示的な [チャット読取り](PUBLIC_API_V2_CHAT_20261011.md) と [可視看板文字・任意client NBT](PUBLIC_API_V2_SIGN_NBT_20261011.md) を上記初版制限の例外として公開する。originと未信頼属性を付けた有界データに限定し、文章からの権限変更・自動実行を引き続き禁止する。NBTは現在の可視性を再検証したブロックのclient update-tagだけで、server内部照会・NBT書込み・未観測ブロック検索は追加しない。看板とNBTは取得時点の補足であり、保存済みframeの地形情報の時刻を変更しない。
+
 ### 7.7 禁止する情報とAPI
 
 - 全周visual半径とLocal Observation Volume外のloaded chunk走査
@@ -1088,7 +1090,7 @@ agent_get_stateの返却対象:
 - 最新immutable observation frameのID、範囲、鮮度、coverage、kind別件数
 - 現在または直近action_idと終了理由
 
-生chunk、遮蔽されたentity、chat、看板、本、world seed、tokenはTool resultへ含めない。例外としてautomation-ownedな明示allowlist対象Vanilla chest / barrelを通常useで開いた直後のserver full-content packetから作るbounded item集計だけは、そのActionのtraceへ一時的に返せる。許可された観測recordだけを`agent_get_observation`で最大256件ずつ返す。Action traceはagent_get_actionで最大256件まで返す。既に行った移動、破壊、設置、攻撃、item消費はtransactionではなく、cancel時に自動rollbackしない。不可逆primitiveは実行直前にも観測、capability、budgetを再検証する。
+生chunk、遮蔽されたentity、本、world seed、tokenはTool resultへ含めない。chat・看板と任意client NBTは§7.6のv2拡張で定める有界な未信頼データとしてのみ公開する。例外としてautomation-ownedな明示allowlist対象Vanilla chest / barrelを通常useで開いた直後のserver full-content packetから作るbounded item集計だけは、そのActionのtraceへ一時的に返せる。許可された観測recordだけを`agent_get_observation`で最大256件ずつ返す。Action traceはagent_get_actionで最大256件まで返す。既に行った移動、破壊、設置、攻撃、item消費はtransactionではなく、cancel時に自動rollbackしない。不可逆primitiveは実行直前にも観測、capability、budgetを再検証する。
 
 ### 8.6 内部Task state
 

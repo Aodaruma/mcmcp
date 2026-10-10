@@ -68,6 +68,7 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 | ActionAdmission | clientからのsnapshot取得、workerのplanning、配送leaseの再検証。予約済みActionのcommitはruntimeに戻す |
 | EvaluationLeaseController | 評価lease、同期fence、最初のterminal要求、control laneの非同期停止待機 |
 | AgentObservations | 観測frame、配送証拠、音、局所地図とrevision。world境界でclearする |
+| BlockEntityObservation・BoundedNbt | 現在可視な看板文字・任意client update-tagの追加データ。再観測、未信頼表示、SNBTの型・サイズ制限。[仕様](PUBLIC_API_V2_SIGN_NBT_20261011.md) |
 | RoutineAdmission / RoutineLifecycle | 内部routineの受付、実行期限、音声owner、終了retryとcontinuation |
 | MenuPrimitiveExecution | 1 Actionのcontainer・brewing・construction・pillar・水平床延長・redstone attempt。cleanupで未回収effectと使用量を回収 |
 | FishingPrimitiveExecution | 1 Actionの釣りdispatch・bobber ACK・cleanup。未確認操作を再送しない |

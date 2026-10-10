@@ -1265,7 +1265,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             }
             return RuntimeReply.success(executeOnClientThread(command, context));
         });
-        var submitted = command instanceof CancelRoutine
+        // Fresh block data needs the renderer's exact player-tick fog sample, before vanilla advances it.
+        var submitted = command instanceof GetObservation
+                || command instanceof CancelRoutine
                 || command instanceof CancelAction
                 || command instanceof ConfirmActionDelivery
                 || command instanceof AbandonActionDelivery
@@ -1273,7 +1275,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || command instanceof AbandonObservationDelivery
                 ? inbox.submitControlMapped(
                         command.toolName(), fence.generation(), context.deadlineNanos(),
-                        work, RuntimeFailures::mapFailure)
+                        work, RuntimeFailures::mapFailure, () -> false,
+                        agentObservations::abandonUnconfirmedDelivery)
                 : inbox.submitMapped(
                         command.toolName(), fence.generation(), context.deadlineNanos(),
                         work, RuntimeFailures::mapFailure, () -> false,

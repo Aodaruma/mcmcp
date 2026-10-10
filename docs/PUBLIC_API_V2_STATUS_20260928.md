@@ -1,5 +1,7 @@
 # 公開API v2：進捗と再開メモ（2026-09-28）
 
+2026-10-11：`agent_get_observation` に可視看板の文字・色・発光と、任意の `include_nbt`（既定false）を追加。client update-tagのSNBTを有界に返し、現在の遮蔽を再検証する。自動1,811件とaod-mimoid隔離Dockerの27項目が成功。通常profileには未導入。[仕様](PUBLIC_API_V2_SIGN_NBT_20261011.md)、[実機・復旧記録](experiments/20261011_v2_sign_nbt.md)。
+
 2026-10-11：公開16番目の `agent_chat` を追加。新着カーソルによる受信と、共通Actionによる通常発言の送信。[仕様](PUBLIC_API_V2_CHAT_20261011.md)、[検証記録](experiments/20261011_v2_chat.md)。通常R18の差し替えは行わない。
 
 ## 追加候補：収納枠の境界（R20、R18ベース・実機未確認）
