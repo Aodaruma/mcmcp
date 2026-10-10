@@ -256,6 +256,10 @@ final class FixtureV2Priorities {
             entity.setChanged();
             level.sendBlockUpdated(pos, entity.getBlockState(), entity.getBlockState(), 3);
             player.getInventory().setItem(6, net.minecraft.world.item.ItemStack.EMPTY);
+            if (kind.equals("storage_placed_no_hand")) {
+                for (int slot = 0; slot < 9; slot++) player.getInventory().setItem(slot,
+                        new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.WATER_BUCKET));
+            }
         }
         player.inventoryMenu.broadcastChanges();
     }
@@ -381,7 +385,7 @@ final class FixtureV2Priorities {
                         + (slot < 9 ? "hotbar." + slot : "inventory." + (slot - 9)) + " with minecraft:stone 64");
             }
             case "blueprint" -> result.add("give @s minecraft:cobblestone 32");
-            case "storage_placed", "storage_plain", "storage_upgraded", "storage_tab", "storage_food", "storage_drift", "storage_cursor_drift", "storage_boundary" -> result.addAll(List.of(
+            case "storage_placed_no_hand", "storage_placed", "storage_plain", "storage_upgraded", "storage_tab", "storage_food", "storage_drift", "storage_cursor_drift", "storage_boundary" -> result.addAll(List.of(
                     "kill @e[type=minecraft:item,x=300,y=100,z=300,dx=20,dy=15,dz=20]",
                     "item replace entity @s hotbar.6 with sophisticatedbackpacks:netherite_backpack",
                     "give @s minecraft:black_concrete 32"));

@@ -10,15 +10,17 @@ Issue #84 / Draft PR #85。看板・NBT対応 `a3e3593` の後続。[利用ガ�
 
 stateに現在のXPポイント・レベル・進捗を追加した。累計取得値を残高として扱わず、同期HUDからVanillaの曲線で現在値を再構成する。Waystonesのコスト情報から従来は捨てていた `available` も、単位別に公開する。値がない場合は0としない。
 
+安全なopening handを事前に確認し、不足時は開始前に `storage_open_unavailable` で終了する。開始関数がnative openの例外でattemptを呼び出し元へ返せなくなる経路も修正し、初回・再開封とも送信前にopeningの証拠と期限を保持する。送信結果が不明な例外は再送せず解放確認へ進む。
+
 ## ローカル検証
 
-`gradlew test harnessTest adminBridgeTest verifyHarnessIsolation build` 成功。製品Java 1,776、harness 14、admin bridge 28、計1,818件。追加7件で、XP曲線の境界・不正/過大値・公開schema、サーバーの費用/残高と複数費用、収納interactionの入力と旧inventory経路との同一性を確認した。
+`gradlew test harnessTest adminBridgeTest verifyHarnessIsolation build` 成功。製品Java 1,777、harness 14、admin bridge 28、計1,819件。追加8件で、XP曲線の境界・不正/過大値・公開schema、サーバーの費用/残高と複数費用、収納interactionの入力と旧inventory経路との同一性、安全なopening handの選択と拒否を確認した。
 
 `pwsh tools/check-source.ps1 -SkipJava -PythonExecutable python` のtransport・mock・source検査も成功。変更範囲をレビューし、対象の同一性、数量照合、取消・解放、不明残高と0の区別を確認した。
 
 ## aod-mimoid隔離Docker
 
-最終候補 `placed-storage-xp-r2`、専用validation profile、Minecraft 26.2 / NeoForge 26.2.0.59。通常profileの操作・差し替えは行っていない。最終候補で27項目の実機検査が成功した。
+最終候補 `placed-storage-xp-r3`、専用validation profile、Minecraft 26.2 / NeoForge 26.2.0.59。通常profileの操作・差し替えは行っていない。最終候補で30項目の実機検査が成功した。
 
 | 確認 | 結果 |
 | --- | --- |
@@ -28,6 +30,7 @@ stateに現在のXPポイント・レベル・進捗を追加した。累計取�
 | 再読取り・fixture側照合 | 白1,983 / 黒96、バッグ本体が残り、cursor空 |
 | 旧inventoryの座標指定inspect | 同じ設置バッグの確認成功 |
 | block条件不一致・在庫にないアイテムのtake | 未移送、unconfirmed=false、解放完了で失敗終了 |
+| hotbar9枠すべて水入りバケツ | opening hand不足で入力前に失敗、在庫・バケツ9個・cursor不変、解放待ちなし、READY |
 | 携帯バッグのinspect | 従来経路で成功、120/2/118枠も取得 |
 | チェストのinteract inspect→diamond3個take | 7→4個。旧inventory inspectでも一致 |
 | stateの30レベル・進捗0 | 現在1,395pt、次レベル112pt。player/world一致 |
@@ -43,11 +46,11 @@ stateに現在のXPポイント・レベル・進捗を追加した。累計取�
 
 製品JAR: `mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar`
 
-SHA-256: `65476399492848ea093daf38f216af8a56e3efbafd9c8d82f834cc500e0d14e4`
+SHA-256: `b3d0ee3847a777bba7fd9409f744b6dae7bb5a27bbe951221404182b0a678c77`
 
 ローカルの `artifacts/v2-placed-storage-xp-20261011/release/` に試験済みJAR・catalog・利用ガイド・hash/ソース対応情報をまとめる。認証情報、world、private log、画面画像はcommitしない。通常profileの導入・起動は利用者側で行う。main統合・タグ・Release公開は行わない。
 
-MCP OFF・セーブ終了後にcontainerを停止し、元world 61、設定3、元JAR2の計66ファイルをSHA-256一致で復元した。追加fixture除去、worldファイル数とMOD集合も照合した。2026-10-11 04:59 JSTにDocker Desktop関連プロセス0、検証lease解放を確認した。
+MCP OFF・セーブ終了後にcontainerを停止し、元world 61、設定3、元JAR2の計66ファイルをSHA-256一致で復元した。追加fixture除去、worldファイル数とMOD集合も照合した。2026-10-11 05:14 JSTにDocker Desktop関連プロセス0、検証lease解放を確認した。
 
 ## 未確認・残件
 

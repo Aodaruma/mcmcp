@@ -88,14 +88,22 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
         }
         if (request.parameters().containsKey("operation")) {
             state.storageTarget = storages.resolve(state.operationReference, minecraft, session, true).orElseThrow();
-            if (!state.storageTarget.readyToOpen(minecraft)) throw new IllegalArgumentException("storage opening target unavailable");
+            if (!state.storageTarget.readyToOpen(minecraft)) {
+                state.latchFailure(failure("STORAGE_OPEN_UNAVAILABLE", RoutineFailure.Category.PRECONDITION,
+                        RoutineFailure.Recovery.REPLAN));
+                return attempt;
+            }
             capturePlayer(state, minecraft);
             state.initialPacketRevision = packetRevision();
             state.awaitingOpenEvidence = true;
-            state.storageTarget.open(minecraft);
             state.openCount++;
             state.stage = Stage.OPENING;
             state.stageDeadline = boundedDeadline(tick, UPDATE_TIMEOUT_TICKS);
+            try { state.storageTarget.open(minecraft); }
+            catch (RuntimeException | LinkageError uncertain) {
+                // Return the attempt even if native dispatch throws: cleanup must keep its causal opening witness.
+                state.latchInconclusive("storage_open_dispatch_uncertain");
+            }
             return attempt;
         }
         KnownMenuProfileSupport.Context context = currentContext(session).orElseThrow();
@@ -285,12 +293,13 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
             }
             if (!state.storageTarget.readyToOpen(minecraft)) return;
             state.initialPacketRevision = packetRevision();
-            state.storageTarget.open(minecraft);
             state.openCount++;
             state.screenIdentity = null;
             state.awaitingOpenEvidence = true;
             state.stage = Stage.READBACK;
             state.stageDeadline = boundedDeadline(tick, UPDATE_TIMEOUT_TICKS);
+            try { state.storageTarget.open(minecraft); }
+            catch (RuntimeException | LinkageError uncertain) { state.latchInconclusive("storage_open_dispatch_uncertain"); }
             return;
         }
         if (state.stage == Stage.AWAIT_CLOSE && AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
@@ -454,10 +463,13 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
                 return failure("STORAGE_PLAYER_MOVING", RoutineFailure.Category.PRECONDITION,
                         RoutineFailure.Recovery.REPLAN);
             }
-            if (storages.resolve(reference, minecraft, session, consume).isEmpty()) {
+            var target = storages.resolve(reference, minecraft, session, consume).orElse(null);
+            if (target == null) {
                 return failure("STORAGE_TARGET_UNAVAILABLE", RoutineFailure.Category.PRECONDITION,
                         RoutineFailure.Recovery.REPLAN);
             }
+            if (!target.readyToOpen(minecraft)) return failure("STORAGE_OPEN_UNAVAILABLE",
+                    RoutineFailure.Category.PRECONDITION, RoutineFailure.Recovery.REPLAN);
             return null;
         }
         Optional<KnownMenuProfileSupport.Context> optional = currentContext(session);

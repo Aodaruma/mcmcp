@@ -68,7 +68,13 @@ final class SophisticatedStorageAccess implements StorageAccess {
         }
         @Override public boolean readyToOpen(Minecraft minecraft) {
             return stillPresent(minecraft) && !player.isShiftKeyDown() && player.isWithinBlockInteractionRange(position, 0)
-                    && observable.getAsBoolean() && hit() != null;
+                    && observable.getAsBoolean() && hit() != null && openingSlot().isPresent();
+        }
+        private java.util.OptionalInt openingSlot() {
+            // BackpackBlock.useItemOn handles fluid containers before opening its menu.
+            return dev.aod.mcmcp.routine.InventoryOpenHandPolicy.chooseProviderOpenSlot(player,
+                    item -> item.getCapability(net.neoforged.neoforge.capabilities.Capabilities.Fluid.ITEM,
+                            net.neoforged.neoforge.transfer.access.ItemAccess.forStack(item)) == null);
         }
         private net.minecraft.world.phys.BlockHitResult hit() {
             var eye = player.getEyePosition();
@@ -81,11 +87,7 @@ final class SophisticatedStorageAccess implements StorageAccess {
         }
         @Override public void open(Minecraft minecraft) {
             if (!readyToOpen(minecraft)) throw new IllegalStateException("placed storage target no longer observable");
-            // BackpackBlock.useItemOn handles fluid containers before opening its menu.
-            selectedSlot = dev.aod.mcmcp.routine.InventoryOpenHandPolicy.chooseProviderOpenSlot(player,
-                    item -> item.getCapability(net.neoforged.neoforge.capabilities.Capabilities.Fluid.ITEM,
-                            net.neoforged.neoforge.transfer.access.ItemAccess.forStack(item)) == null)
-                    .orElseThrow(() -> new IllegalStateException("no safe storage opening hand"));
+            selectedSlot = openingSlot().orElseThrow(() -> new IllegalStateException("no safe storage opening hand"));
             player.getInventory().setSelectedSlot(selectedSlot);
             minecraft.gameMode.useItemOn(player, net.minecraft.world.InteractionHand.MAIN_HAND, hit());
         }
