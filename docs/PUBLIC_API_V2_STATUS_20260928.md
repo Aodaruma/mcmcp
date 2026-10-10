@@ -1,6 +1,6 @@
 # 公開API v2：進捗と再開メモ（2026-09-28）
 
-## 最新更新：梯子・拡張バッグ・Waystones（2026-10-10 10:32 JST）
+## 最新更新：梯子・拡張バッグ・Waystones（2026-10-10 10:49 JST）
 
 統合候補R15を準備した。遠い下階目標への梯子移動、拡張ネザライトバッグの端数移送・取消・予算拒否、Waystonesの一覧・経験値上限・参照拒否・使用中取消・Esc停止・End往復をaod-mimoid隔離Dockerで確認。自動試験1,746件、実行中JARと公開15ツール全定義の一致、元66ファイルのhash一致復元、container・Docker Desktop停止が完了した。[統合検証記録](experiments/20261010_v2_waystones_docker.md)、[試用メモ](PUBLIC_API_V2_TRIAL_20261010.md)を参照。10:43 JSTに差し替え担当が通常profileをR15へ更新し、Prism GUI起動・接続・MCP ON・15ツール全定義一致を確認。10:49 JSTの地図アート担当の記録でもバッグ9色104個の収納とWaystonesのEnd→Overworld到着を確認した。帰路と停止機構は同担当が確認中。
 
