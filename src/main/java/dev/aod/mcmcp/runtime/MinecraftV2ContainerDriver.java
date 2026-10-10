@@ -34,6 +34,8 @@ final class MinecraftV2ContainerDriver implements V2OperationJobExecution.Driver
     private final AgentObservations observations;
     private final ClientReconciliationSignals reconciliation;
     private final PhaseFivePort port;
+    private final KnownStorageRefs storages;
+    private final PhaseFivePort storagePort;
     private final V2InventoryContainerArguments request;
     private final NavCell target;
     private final MinecraftActionPrimitiveExecutor navigation;
@@ -54,16 +56,21 @@ final class MinecraftV2ContainerDriver implements V2OperationJobExecution.Driver
     private String failure;
     private String prepareReason = "awaiting_target";
     private MinecraftActionPrimitiveExecutor facing;
+    private StorageAccess.Target placedStorage;
+    private String storageReference;
+    private Map<String, Object> storageInspection;
 
     MinecraftV2ContainerDriver(Minecraft minecraft,
             Supplier<WorldSessionTracker.Snapshot> sessions, AgentObservations observations,
-            ClientReconciliationSignals reconciliation, PhaseFivePort port,
+            ClientReconciliationSignals reconciliation, PhaseFivePort port, KnownStorageRefs storages, PhaseFivePort storagePort,
             V2InventoryContainerArguments request, String dimension) {
         this.minecraft = Objects.requireNonNull(minecraft);
         this.sessions = Objects.requireNonNull(sessions);
         this.observations = Objects.requireNonNull(observations);
         this.reconciliation = Objects.requireNonNull(reconciliation);
         this.port = Objects.requireNonNull(port);
+        this.storages = Objects.requireNonNull(storages);
+        this.storagePort = Objects.requireNonNull(storagePort);
         this.request = Objects.requireNonNull(request);
         target = request.target(dimension);
         navigation = new MinecraftActionPrimitiveExecutor(
@@ -107,7 +114,16 @@ final class MinecraftV2ContainerDriver implements V2OperationJobExecution.Driver
             if (result.status() == KnownContainerAttempt.Status.FAILED) return fail(result.evidence());
             if (result.status() == KnownContainerAttempt.Status.SUCCEEDED) {
                 if (request.inspect()) {
-                    items = attempt.inspectionContents().items().stream()
+                    if (placedStorage != null) {
+                        storageInspection = storages.inspection(session.worldSessionId());
+                        if (storageInspection == null || !storageReference.equals(storageInspection.get("operation_ref")))
+                            return fail("storage_inspection_not_confirmed");
+                        var totals = new LinkedHashMap<String, Long>();
+                        MinecraftV2StorageDriver.filteredContents(storageInspection, request.itemId()).forEach(item ->
+                                totals.merge((String) item.get("item"), ((Number) item.get("count")).longValue(), Math::addExact));
+                        items = totals.entrySet().stream().map(entry -> Map.<String, Object>of(
+                                "item", entry.getKey(), "count", entry.getValue())).toList();
+                    } else items = attempt.inspectionContents().items().stream()
                             .filter(item -> request.itemId() == null || request.itemId().equals(item.item()))
                             .map(item -> Map.<String, Object>of("item", item.item(), "count", item.count()))
                             .toList();
@@ -184,10 +200,6 @@ final class MinecraftV2ContainerDriver implements V2OperationJobExecution.Driver
             fail("container_block_condition_changed");
             return false;
         }
-        if (!KnownContainerPolicy.allows(state.blockId())) {
-            fail("unsupported_container");
-            return false;
-        }
         // Let motion settle before the stationary owned-menu kernel captures its baseline.
         var velocity = player.getDeltaMovement();
         if (!player.onGround() || player.isShiftKeyDown()
@@ -205,12 +217,34 @@ final class MinecraftV2ContainerDriver implements V2OperationJobExecution.Driver
             facing.beginFace(ray, 60);
             return true;
         }
+        if (!KnownContainerPolicy.allows(state.blockId())) {
+            placedStorage = storages.atBlock(minecraft, position, new Vec3(ray.aimX(), ray.aimY(), ray.aimZ()),
+                    this::targetStillObserved).orElse(null);
+            if (placedStorage == null) { fail("unsupported_container"); return false; }
+            storageReference = storages.issue(session.worldSessionId(), player, placedStorage,
+                    Math.addExact(startedTick, request.maxTicks()));
+            var operation = V2InventoryStorageArguments.operation(request.inspect(), request.store(), request.itemId(),
+                    request.count(), request.maxTicks(), storageReference, ActionPlanning.playerCell(player, session.dimension()));
+            attempt = new KnownContainerAttempt(storagePort, operation, clientTick, Math.addExact(startedTick, request.maxTicks()));
+            return true;
+        }
         var operation = request.operation(session.dimension(), state,
                 new Vec3(ray.aimX(), ray.aimY(), ray.aimZ()),
                 McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0D);
         attempt = new KnownContainerAttempt(port, operation, clientTick,
                 Math.addExact(startedTick, request.maxTicks()));
         return true;
+    }
+
+    private boolean targetStillObserved() {
+        var session = sessions.get();
+        var frame = observations.latestInternalFrame();
+        if (minecraft.level != level || minecraft.player != player || frame.isEmpty()) return false;
+        var ledger = reconciliation.bindAndSnapshot(level, session.worldSessionId());
+        return V2BlockAimResolver.resolve(frame.orElseThrow(), target, null, player.getEyePosition(),
+                session.worldSessionId(), session.clientTick(), ledger.worldRevision(),
+                ledger.surfaceBarrierWorldRevision(target.x(), target.y(), target.z()),
+                id -> request.blockId() == null || request.blockId().equals(id)).isPresent();
     }
 
     @Override
@@ -227,9 +261,14 @@ final class MinecraftV2ContainerDriver implements V2OperationJobExecution.Driver
         result.put("target", Map.of("dimension", target.dimension(),
                 "x", target.x(), "y", target.y(), "z", target.z()));
         if (request.itemId() != null) result.put("item", request.itemId());
+        if (placedStorage != null && attempt != null) result.put("storage_progress", attempt.progressEvidence());
         if (request.inspect()) {
             result.put("complete", items != null);
             if (items != null) result.put("items", items);
+            if (storageInspection != null) {
+                result.put("slots", MinecraftV2StorageDriver.filteredContents(storageInspection, request.itemId()));
+                MinecraftV2StorageDriver.addSlotCounts(result, storageInspection);
+            }
         } else {
             result.put("direction", request.store() ? "store" : "take");
             result.put("requested_count", request.count());
@@ -251,7 +290,10 @@ final class MinecraftV2ContainerDriver implements V2OperationJobExecution.Driver
             } finally {
                 if (attempt != null) {
                     try { attempt.close(); }
-                    finally { captureEffects(attempt.drainEffectDeltas()); }
+                    finally {
+                        captureEffects(attempt.drainEffectDeltas());
+                        if (placedStorage != null) placedStorage.release(minecraft);
+                    }
                 }
             }
         }

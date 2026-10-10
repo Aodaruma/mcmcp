@@ -67,6 +67,7 @@ final class WaystoneMenuSupport {
                 var parsed = readCosts(list);
                 result.add(new V2WaystoneReferences.Destination(id, boundedText(name.getString()),
                         dimension.identifier().toString(), pos.getX(), pos.getY(), pos.getZ(), parsed.levels(), parsed.points(),
+                        parsed.availableLevels(), parsed.availablePoints(),
                         nativeAllowed && parsed.supported() && !id.equals(sourceId), parsed.messages()));
             }
             return List.copyOf(result);
@@ -77,6 +78,7 @@ final class WaystoneMenuSupport {
 
     static Costs readCosts(List<?> requirements) throws ReflectiveOperationException {
         int levels = 0, points = 0;
+        Long availableLevels = null, availablePoints = null;
         boolean supported = true;
         var messages = new ArrayList<String>();
         for (Object value : requirements) {
@@ -86,10 +88,16 @@ final class WaystoneMenuSupport {
                 int required = (int) value.getClass().getMethod("required").invoke(value);
                 // Shogi uses long for experience points and int for levels.
                 long available = ((Number) value.getClass().getMethod("available").invoke(value)).longValue();
-                if (required < 0 || required > 1_000_000) throw new IllegalArgumentException("unbounded experience cost");
+                if (required < 0 || required > 1_000_000 || available < 0 || available > 9_007_199_254_740_991L)
+                    throw new IllegalArgumentException("unbounded experience cost or balance");
                 supported &= available >= required;
-                if (type.endsWith("ExperienceLevelCostInformation")) levels = Math.addExact(levels, required);
-                else points = Math.addExact(points, required);
+                if (type.endsWith("ExperienceLevelCostInformation")) {
+                    levels = Math.addExact(levels, required);
+                    availableLevels = availableLevels == null ? available : Math.min(availableLevels, available);
+                } else {
+                    points = Math.addExact(points, required);
+                    availablePoints = availablePoints == null ? available : Math.min(availablePoints, available);
+                }
             } else if (type.equals("net.blay09.mods.shogi.common.effect.server.cooldown.CooldownInformation")) {
                 long remaining = ((Number) value.getClass().getMethod("remainingTicks").invoke(value)).longValue();
                 supported &= remaining <= 0;
@@ -105,7 +113,9 @@ final class WaystoneMenuSupport {
                 messages.add("unsupported_requirement:" + boundedText(value.getClass().getSimpleName()));
             }
         }
-        return new Costs(levels, points, supported, List.copyOf(messages));
+        supported &= (availableLevels == null || availableLevels >= levels)
+                && (availablePoints == null || availablePoints >= points);
+        return new Costs(levels, points, availableLevels, availablePoints, supported, List.copyOf(messages));
     }
 
     static void select(Minecraft minecraft, UUID destination) {
@@ -123,5 +133,6 @@ final class WaystoneMenuSupport {
         String safe = value.replaceAll("[\\p{Cntrl}]", " ");
         return safe.substring(0, Math.min(256, safe.length()));
     }
-    record Costs(int levels, int points, boolean supported, List<String> messages) { }
+    record Costs(int levels, int points, Long availableLevels, Long availablePoints,
+                 boolean supported, List<String> messages) { }
 }

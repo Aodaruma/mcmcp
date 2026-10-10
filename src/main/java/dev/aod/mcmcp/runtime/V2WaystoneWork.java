@@ -42,6 +42,8 @@ final class V2WaystoneWork implements MinecraftV2MenuDriver.Work {
                     row.put("destination_ref", references.register(scope, tick, destination));
                     row.put("name", destination.name()); row.put("dimension", destination.dimension());
                     row.put("xp_levels", destination.levels()); row.put("xp_points", destination.points());
+                    if (destination.availableLevels() != null) row.put("available_xp_levels", destination.availableLevels());
+                    if (destination.availablePoints() != null) row.put("available_xp_points", destination.availablePoints());
                     row.put("selectable", destination.selectable()); row.put("requirements", destination.requirements());
                     return Map.copyOf(row);
                 }).toList());

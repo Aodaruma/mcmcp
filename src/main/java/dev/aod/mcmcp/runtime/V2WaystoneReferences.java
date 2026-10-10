@@ -21,7 +21,8 @@ final class V2WaystoneReferences {
     }
 
     record Destination(UUID id, String name, String dimension, int x, int y, int z,
-                       int levels, int points, boolean selectable, List<String> requirements) {
+                       int levels, int points, Long availableLevels, Long availablePoints,
+                       boolean selectable, List<String> requirements) {
         Destination {
             Objects.requireNonNull(id); Objects.requireNonNull(name); Objects.requireNonNull(dimension);
             requirements = List.copyOf(requirements);

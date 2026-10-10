@@ -1854,7 +1854,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         inventoryInspectDriver(minecraft, inspect);
                 case V2InventoryContainerArguments container -> new MinecraftV2ContainerDriver(
                         minecraft, sessions::snapshot, agentObservations, reconciliationSignals,
-                        phaseFiveInventoryPort, container, session.dimension());
+                        phaseFiveInventoryPort, knownStorageRefs, knownMenuPort, container, session.dimension());
                 case V2InventoryStorageArguments storage -> new MinecraftV2StorageDriver(
                         minecraft, sessions::snapshot, knownStorageRefs, knownMenuPort, storage);
             };
@@ -2043,6 +2043,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             throw new IllegalArgumentException("portal entry requires a standalone action; scripts do not cross world sessions");
         var production = !lookOnly && V2ProductionArguments.matches(arguments)
                 ? V2ProductionArguments.parse(arguments, session.dimension()) : null;
+        var storage = !lookOnly && V2InventoryContainerArguments.matchesInteraction(arguments)
+                ? V2InventoryContainerArguments.parseInteraction(arguments) : null;
         var waystone = !lookOnly && V2WaystoneArguments.matches(arguments) ? V2WaystoneArguments.parse(arguments) : null;
         if (waystone != null && !WaystoneMenuSupport.available())
             throw new IllegalArgumentException("supported Waystones artifact required");
@@ -2060,12 +2062,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             throw new IllegalArgumentException("merchant operations require an observed villager or wandering trader");
         var offer = trade != null && trade.offerRef() != null ? merchantReferences.resolve(trade.offerRef(),
                 session.worldSessionId(), session.dimension(), entity.getUUID(), session.clientTick()) : null;
-        var request = chatText == null && !lookOnly && portal == null && waystone == null && production == null && itemUse == null && entityUse == null && menuUse == null && dismount == null
+        var request = chatText == null && !lookOnly && storage == null && portal == null && waystone == null && production == null && itemUse == null && entityUse == null && menuUse == null && dismount == null
                 ? V2BlockInteractArguments.parse(arguments, session.dimension()) : null;
-        int maxTicks = chatText != null ? 20 : portal != null ? portal.maxTicks() : waystone != null ? waystone.maxTicks() : dismount != null ? dismount.maxTicks() : production != null ? production.maxTicks() : look != null ? look.maxTicks() : itemUse != null ? itemUse.maxTicks()
+        int maxTicks = chatText != null ? 20 : storage != null ? storage.maxTicks() : portal != null ? portal.maxTicks() : waystone != null ? waystone.maxTicks() : dismount != null ? dismount.maxTicks() : production != null ? production.maxTicks() : look != null ? look.maxTicks() : itemUse != null ? itemUse.maxTicks()
                 : entityUse != null ? entityUse.maxTicks()
                 : menuUse != null ? menuUse.block().maxTicks() : request.maxTicks();
-        double maxDistance = chatText != null ? 0.25D : portal != null ? 2.5D : dismount != null ? 8.0D : production != null ? production.maxDistance() : look != null ? 0.25D : request != null ? request.maxDistance()
+        double maxDistance = chatText != null ? 0.25D : storage != null ? storage.maxDistance() : portal != null ? 2.5D : dismount != null ? 8.0D : production != null ? production.maxDistance() : look != null ? 0.25D : request != null ? request.maxDistance()
                 : entityUse != null ? entityUse.maxDistance()
                 : menuUse != null ? menuUse.block().maxDistance() : 64.0D;
         requireV2WorldSafe(minecraft, session, "Interact", dismount != null);
@@ -2120,6 +2122,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             } else if (dismount != null) {
                 v2InteractExecution = new V2OperationJobExecution(v2Jobs, actionId, session.worldSessionId(),
                         new MinecraftV2DismountDriver(minecraft), release);
+            } else if (storage != null) {
+                v2InteractExecution = new V2OperationJobExecution(v2Jobs, actionId, session.worldSessionId(),
+                        new MinecraftV2ContainerDriver(minecraft, sessions::snapshot, agentObservations, reconciliationSignals,
+                                phaseFiveInventoryPort, knownStorageRefs, knownMenuPort, storage, session.dimension()), release);
             } else if (production != null) {
                 v2InteractExecution = new V2OperationJobExecution(v2Jobs, actionId,
                         session.worldSessionId(), new MinecraftV2ProductionDriver(minecraft, sessions::snapshot,
@@ -3139,6 +3145,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             world.put("health", player.getHealth());
             world.put("absorption", player.getAbsorptionAmount());
             world.put("hunger", player.getFoodData().getFoodLevel());
+            world.put("experience", playerPayload.get("experience"));
             world.put("air", player.getAirSupply());
             world.put("max_air", player.getMaxAirSupply());
             world.put("on_fire", player.isOnFire());
@@ -3290,13 +3297,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         result.put("health", player.getHealth());
         result.put("absorption", player.getAbsorptionAmount());
         result.put("hunger", player.getFoodData().getFoodLevel());
+        result.put("experience", PlayerExperience.payload(player.experienceLevel,
+                player.experienceProgress, player.getXpNeededForNextLevel()));
         result.put("air", player.getAirSupply());
         result.put("max_air", player.getMaxAirSupply());
         result.put("on_fire", player.isOnFire());
         result.put("submerged", player.isUnderWater());
         result.put("status_effects", player.getActiveEffects().stream()
                 .map(effect -> effect.getEffect().getRegisteredName()).distinct().sorted().limit(64).toList());
-        return Map.copyOf(result);
+        return Collections.unmodifiableMap(result);
     }
 
     private static Map<String, Object> hotbarPayload(net.minecraft.world.entity.player.Inventory inventory) {

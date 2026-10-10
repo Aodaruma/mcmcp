@@ -43,6 +43,11 @@ record V2InventoryStorageArguments(boolean inspect, int storageSlot, String stor
     }
 
     PhaseFiveRequest operation(String reference, NavCell playerCell) {
+        return operation(inspect, store, item, count, maxTicks, reference, playerCell);
+    }
+
+    static PhaseFiveRequest operation(boolean inspect, boolean store, String item, int count, int maxTicks,
+            String reference, NavCell playerCell) {
         if (reference == null || !reference.matches("[A-Za-z0-9_-]{24}")) {
             throw new IllegalArgumentException("invalid internal storage reference");
         }

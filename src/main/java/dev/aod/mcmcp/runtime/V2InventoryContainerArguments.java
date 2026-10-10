@@ -59,6 +59,19 @@ record V2InventoryContainerArguments(boolean inspect, int x, int y, int z,
                 arguments.containsKey("max_ticks") ? RuntimeArguments.intArgument(arguments, "max_ticks") : 1_200);
     }
 
+    static boolean matchesInteraction(Map<String, Object> arguments) {
+        return "block".equals(arguments.get("target"))
+                && Set.of("inspect_storage", "transfer_storage").contains(arguments.getOrDefault("operation", ""));
+    }
+
+    static V2InventoryContainerArguments parseInteraction(Map<String, Object> arguments) {
+        if (!matchesInteraction(arguments)) throw new IllegalArgumentException("storage block interaction required");
+        var compatible = new LinkedHashMap<>(arguments);
+        compatible.put("operation", "inspect_storage".equals(arguments.get("operation")) ? "inspect" : "transfer");
+        compatible.put("target", "container");
+        return parse(compatible);
+    }
+
     NavCell target(String dimension) { return new NavCell(dimension, x, y, z); }
 
     PhaseFiveRequest operation(String dimension, BlockStateFingerprint state,

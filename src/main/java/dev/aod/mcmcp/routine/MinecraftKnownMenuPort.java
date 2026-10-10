@@ -88,6 +88,7 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
         }
         if (request.parameters().containsKey("operation")) {
             state.storageTarget = storages.resolve(state.operationReference, minecraft, session, true).orElseThrow();
+            if (!state.storageTarget.readyToOpen(minecraft)) throw new IllegalArgumentException("storage opening target unavailable");
             capturePlayer(state, minecraft);
             state.initialPacketRevision = packetRevision();
             state.awaitingOpenEvidence = true;
@@ -282,6 +283,7 @@ public final class MinecraftKnownMenuPort implements PhaseFivePort {
                 state.latchInconclusive("storage_target_changed_before_readback");
                 return;
             }
+            if (!state.storageTarget.readyToOpen(minecraft)) return;
             state.initialPacketRevision = packetRevision();
             state.storageTarget.open(minecraft);
             state.openCount++;

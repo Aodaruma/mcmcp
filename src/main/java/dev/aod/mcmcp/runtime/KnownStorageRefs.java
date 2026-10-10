@@ -25,6 +25,7 @@ public final class KnownStorageRefs {
     private long inspectionRevision;
     private String inspectionReference;
     private String inspectionStorageId;
+    private int inspectionSlotCount;
 
     public KnownStorageRefs() { this(List.of(new SophisticatedStorageAccess())); }
     KnownStorageRefs(List<StorageAccess> providers) { this.providers = List.copyOf(providers); }
@@ -36,6 +37,13 @@ public final class KnownStorageRefs {
 
     static Optional<StorageAccess.Target> selectSlot(List<StorageAccess.Target> targets, int slot) {
         var matches = targets.stream().filter(target -> target.inventorySlot() == slot).limit(2).toList();
+        return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
+    }
+
+    Optional<StorageAccess.Target> atBlock(Minecraft minecraft, net.minecraft.core.BlockPos position,
+            net.minecraft.world.phys.Vec3 aim, java.util.function.BooleanSupplier observable) {
+        var matches = providers.stream().flatMap(provider -> provider.atBlock(minecraft, position, aim, observable).stream())
+                .limit(2).toList();
         return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
     }
 
@@ -107,6 +115,7 @@ public final class KnownStorageRefs {
             if (!stack.empty()) contents.add(Map.of("slot", index, "item", stack.itemId(), "count", stack.count()));
         }
         lastInspection = List.copyOf(contents);
+        inspectionSlotCount = context.storageSlots().size();
         inspectionSession = session;
         inspectionTick = context.snapshot().receivedTick();
         inspectionRevision = context.snapshot().packetLedgerRevision();
@@ -117,7 +126,10 @@ public final class KnownStorageRefs {
     public synchronized Map<String, Object> inspection(UUID session) {
         return session.equals(inspectionSession)
                 ? Map.of("operation_ref", inspectionReference, "storage_id", inspectionStorageId, "observed_client_tick", inspectionTick,
-                        "packet_revision", inspectionRevision, "contents", lastInspection) : null;
+                        "packet_revision", inspectionRevision, "contents", lastInspection,
+                        "storage_slot_count", inspectionSlotCount,
+                        "occupied_storage_slots", lastInspection.size(),
+                        "empty_storage_slots", inspectionSlotCount - lastInspection.size()) : null;
     }
 
     public synchronized void clear() { leases.clear(); identities.clear(); lastInspection = List.of(); inspectionSession = null; }

@@ -30,6 +30,7 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 | 変更したいこと | 主な実装 | 一緒に確認するもの |
 | --- | --- | --- |
 | v2チャット | runtimeのChatHistory・V2ChatSendDriver、ChatComponentMixin | ChatHistoryTest・V2ChatTest・McpChatToolTest、[チャット仕様](PUBLIC_API_V2_CHAT_20261011.md) |
+| v2設置収納・経験値 | runtimeのMinecraftV2ContainerDriver・SophisticatedStorageAccess・PlayerExperience・WaystoneMenuSupport | V2StorageInteractionTest・PlayerExperienceTest・McpV2StorageInteractionSchemaTest、[設置収納・経験値](PUBLIC_API_V2_STORAGE_XP_20261011.md) |
 | Toolの必須field・公開説明・診断 | [`mcp/`](../src/main/java/dev/aod/mcmcp/mcp/)、Tool Catalog | schema・固定catalog hash・transport test |
 | DSLの構文・分岐・有限予算 | [`agent/dsl/`](../src/main/java/dev/aod/mcmcp/agent/dsl/) | parser / validator / compiler / cursor test、Action DSLガイド |
 | v2 scriptの構文・逐次sink・有限予算 | [`agent/script/`](../src/main/java/dev/aod/mcmcp/agent/script/) | ActionScriptTest、ScriptJobExecutionTest、[公開API v2](PUBLIC_API_V2.md)。`agent_run_script`から基本行動の共通jobへ接続 |

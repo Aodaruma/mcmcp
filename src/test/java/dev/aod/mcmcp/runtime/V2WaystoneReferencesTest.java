@@ -12,7 +12,7 @@ class V2WaystoneReferencesTest {
             "minecraft:overworld", 1, 64, 2,
             new ContainerSyncSignals.StackFingerprint(V2WaystoneArguments.ITEM, 1, 123));
     private final V2WaystoneReferences.Destination destination = new V2WaystoneReferences.Destination(UUID.randomUUID(),
-            "End base", "minecraft:the_end", 8, 70, 9, 3, 0, true, List.of());
+            "End base", "minecraft:the_end", 8, 70, 9, 3, 0, null, null, true, List.of());
 
     @Test void referencesAreBoundedExpiringAndSingleUse() {
         var ref = refs.register(scope, 100, destination);
@@ -36,10 +36,10 @@ class V2WaystoneReferencesTest {
             assertThatThrownBy(() -> refs.resolve(ref, changed, 1)).isInstanceOf(IllegalArgumentException.class);
         }
         for (var changed : List.of(
-                new V2WaystoneReferences.Destination(UUID.randomUUID(), destination.name(), destination.dimension(), 8, 70, 9, 3, 0, true, List.of()),
-                new V2WaystoneReferences.Destination(destination.id(), destination.name(), destination.dimension(), 9, 70, 9, 3, 0, true, List.of()),
-                new V2WaystoneReferences.Destination(destination.id(), destination.name(), destination.dimension(), 8, 70, 9, 4, 0, true, List.of()),
-                new V2WaystoneReferences.Destination(destination.id(), destination.name(), destination.dimension(), 8, 70, 9, 3, 0, false, List.of()))) {
+                new V2WaystoneReferences.Destination(UUID.randomUUID(), destination.name(), destination.dimension(), 8, 70, 9, 3, 0, null, null, true, List.of()),
+                new V2WaystoneReferences.Destination(destination.id(), destination.name(), destination.dimension(), 9, 70, 9, 3, 0, null, null, true, List.of()),
+                new V2WaystoneReferences.Destination(destination.id(), destination.name(), destination.dimension(), 8, 70, 9, 4, 0, null, null, true, List.of()),
+                new V2WaystoneReferences.Destination(destination.id(), destination.name(), destination.dimension(), 8, 70, 9, 3, 0, null, null, false, List.of()))) {
             assertThatThrownBy(() -> refs.consume(ref, scope, 1, changed, 10, 10)).isInstanceOf(IllegalArgumentException.class);
         }
         assertThatThrownBy(() -> refs.consume(ref, scope, 1, destination, 2, 0)).isInstanceOf(IllegalArgumentException.class);

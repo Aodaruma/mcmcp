@@ -158,6 +158,12 @@ final class FixtureV2Priorities {
                         report.put("storage", backpackReport(player.getInventory().getItem(6)));
                     }
                     report.put("cursor_empty", player.containerMenu.getCarried().isEmpty());
+                    var placedBag = player.level().getBlockEntity(new net.minecraft.core.BlockPos(305, 101, 303));
+                    if (placedBag != null && placedBag.getClass().getName().equals("net.p3pp3rf1y.sophisticatedbackpacks.backpack.BackpackBlockEntity")) {
+                        Object wrapper = placedBag.getClass().getMethod("getBackpackWrapper").invoke(placedBag);
+                        report.put("placed_storage", backpackReport((net.minecraft.world.item.ItemStack)
+                                wrapper.getClass().getMethod("getBackpack").invoke(wrapper)));
+                    }
                     var merchants = new ArrayList<Object>();
                     for (var entity : player.level().getEntitiesOfClass(net.minecraft.world.entity.npc.villager.Villager.class,
                             new net.minecraft.world.phys.AABB(300, 100, 300, 320, 109, 320))) {
@@ -170,6 +176,8 @@ final class FixtureV2Priorities {
                     report.put("health", player.getHealth());
                     report.put("xp_levels", player.experienceLevel);
                     report.put("xp_points", player.totalExperience);
+                    report.put("xp_progress", player.experienceProgress);
+                    report.put("xp_needed_for_next_level", player.getXpNeededForNextLevel());
                     report.put("on_ground", player.onGround());
                     report.put("on_climbable", player.onClimbable());
                     report.put("fall_flying", player.isFallFlying());
@@ -216,7 +224,7 @@ final class FixtureV2Priorities {
             Object upgrades = wrapper.getClass().getMethod("getUpgradeHandler").invoke(wrapper);
             var setter = upgrades.getClass().getMethod("setStackInSlot", int.class, net.minecraft.world.item.ItemStack.class);
             var ids = List.of("stack_upgrade_tier_2", "stack_upgrade_tier_2", "stack_upgrade_tier_1", "pickup_upgrade",
-                    food ? "feeding_upgrade" : "magnet_upgrade");
+                    food ? "feeding_upgrade" : kind.startsWith("storage_placed") ? "advanced_magnet_upgrade" : "magnet_upgrade");
             for (int slot = 0; slot < ids.size(); slot++) {
                 String id = "sophisticatedbackpacks:" + ids.get(slot);
                 var item = BuiltInRegistries.ITEM.keySet().stream().filter(key -> key.toString().equals(id)).findFirst().orElseThrow();
@@ -238,6 +246,17 @@ final class FixtureV2Priorities {
         }
         if (kind.equals("storage_tab")) wrapper.getClass().getMethod("setOpenTabId", int.class).invoke(wrapper, 3);
         if (food) player.getFoodData().setFoodLevel(20);
+        if (kind.startsWith("storage_placed")) {
+            var pos = new net.minecraft.core.BlockPos(305, 101, 303);
+            var level = player.level();
+            var block = BuiltInRegistries.BLOCK.getValue(net.minecraft.resources.Identifier.parse("sophisticatedbackpacks:netherite_backpack"));
+            level.setBlock(pos, block.defaultBlockState(), 3);
+            var entity = level.getBlockEntity(pos);
+            entity.getClass().getMethod("setBackpack", net.minecraft.world.item.ItemStack.class).invoke(entity, stack.copy());
+            entity.setChanged();
+            level.sendBlockUpdated(pos, entity.getBlockState(), entity.getBlockState(), 3);
+            player.getInventory().setItem(6, net.minecraft.world.item.ItemStack.EMPTY);
+        }
         player.inventoryMenu.broadcastChanges();
     }
 
@@ -362,7 +381,7 @@ final class FixtureV2Priorities {
                         + (slot < 9 ? "hotbar." + slot : "inventory." + (slot - 9)) + " with minecraft:stone 64");
             }
             case "blueprint" -> result.add("give @s minecraft:cobblestone 32");
-            case "storage_plain", "storage_upgraded", "storage_tab", "storage_food", "storage_drift", "storage_cursor_drift", "storage_boundary" -> result.addAll(List.of(
+            case "storage_placed", "storage_plain", "storage_upgraded", "storage_tab", "storage_food", "storage_drift", "storage_cursor_drift", "storage_boundary" -> result.addAll(List.of(
                     "kill @e[type=minecraft:item,x=300,y=100,z=300,dx=20,dy=15,dz=20]",
                     "item replace entity @s hotbar.6 with sophisticatedbackpacks:netherite_backpack",
                     "give @s minecraft:black_concrete 32"));

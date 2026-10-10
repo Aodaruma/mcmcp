@@ -28,6 +28,7 @@ final class MinecraftV2StorageDriver implements V2OperationJobExecution.Driver {
     private UUID sessionId;
     private String storageItem;
     private List<Map<String, Object>> contents;
+    private Map<String, Object> inspection;
     private int confirmedCount;
     private boolean uncertain;
     private String failure;
@@ -73,7 +74,7 @@ final class MinecraftV2StorageDriver implements V2OperationJobExecution.Driver {
         if (outcome.status() == KnownContainerAttempt.Status.FAILED) return fail(outcome.evidence());
         if (outcome.status() == KnownContainerAttempt.Status.SUCCEEDED) {
             if (request.inspect()) {
-                var inspection = storages.inspection(sessionId);
+                inspection = storages.inspection(sessionId);
                 if (inspection == null || !reference.equals(inspection.get("operation_ref"))) {
                     return fail("storage_inspection_not_confirmed");
                 }
@@ -102,6 +103,11 @@ final class MinecraftV2StorageDriver implements V2OperationJobExecution.Driver {
         return List.copyOf(result);
     }
 
+    static void addSlotCounts(Map<String, Object> result, Map<String, Object> inspection) {
+        for (String key : List.of("storage_slot_count", "occupied_storage_slots", "empty_storage_slots"))
+            result.put(key, inspection.get(key));
+    }
+
     @Override
     public boolean allowsScreenChange() { return attempt != null; }
 
@@ -117,6 +123,7 @@ final class MinecraftV2StorageDriver implements V2OperationJobExecution.Driver {
         if (request.inspect()) {
             result.put("complete", contents != null);
             if (contents != null) result.put("slots", contents);
+            if (inspection != null) addSlotCounts(result, inspection);
         } else {
             result.put("direction", request.store() ? "store" : "take");
             result.put("requested_count", request.count());
