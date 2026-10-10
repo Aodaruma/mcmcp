@@ -86,3 +86,14 @@ Java 1,693＋harness 14＋admin bridge 28＝1,735件、build・harness隔離・P
 - Waystonesの行き先一覧／選択：`agent_interact`へ追加し、R15で経験値上限拒否・取消・Esc停止・End往復を実機確認。自動試験1,746件、公開15ツール全定義照合も成功。検証環境の66ファイル復元とcontainer／Docker Desktop停止を完了。10:43 JSTに差し替え担当が通常導入を完了し、現場でのバッグ収納・Waystones往復、有限scriptの15秒稼働後の設備OFFも成功。[仕様](PUBLIC_API_V2_WAYSTONES_20261010.md)、[統合検証と未確認範囲](experiments/20261010_v2_waystones_docker.md)。
 - raw入力がポータルや梯子の縁で止まる報告：raw入力としての再検証は未実施。`agent_move` は現場の上段配置を再現した固定fixtureで修正確認済み。現場の下階全体、MOD製の梯子、通信遅延は未検証。
 - 金床・エンチャント、MOD収納の対応拡大、施工全体の保存・再開は引き続き残件。取引の追加は[取引仕様](PUBLIC_API_V2_MERCHANTS_20261010.md)を参照。
+- script内の移送失敗時に、停止した子操作のID・結果・effectsが親resultへ残らない。部分実行の数量監査を改善する候補として、下記に記録。未実装で、追加導入はしていない。
+
+## スクリプト内移送失敗の診断情報（改善候補）
+
+2026-10-10、地図アート担当から通常R15での報告。script `5b82b043-7917-4113-89a5-3719b88774c1` は黒take2・store2の後、ホッパーが流入中のチェストから灰take10で停止した。親は`script_command_failed`、`detail:"Command failed"`、`completed_commands:2`／`calls:3`となり、失敗childのaction_id・result・effectsが公開結果に残らなかった。報告によるとfresh inventoryには灰10があり、元チェストの再読では灰がなかったため、takeを再送せず、別のstore10と再観測で数量を確認・解決した。流入が失敗原因だったかは未確定。当担当はこのjobの原始traceを未取得で、通常ゲームで再現試験をしていない。
+
+コード上は`ActionScript`のcall処理が失敗時に`Stop(FAILED,"Command failed")`を投げ、その後の`sink.result()`取得へ進まない。`ScriptJobExecution.finishIfReleased`も親のsummary・明示的reportsのみを保存する。したがって後続の`report(value=...)`では停止childを記録できない。失敗の診断情報が失われる経路は静的確認できたが、今回の移送失敗そのものの原因確定とは区別する。
+
+改善案は、最後に停止したchild 1件のaction_id・操作種別・state／stop_reasonと、既存の公開方針で絞ったresult／effectsを、親resultに独立した上限付き領域として保持すること。confirmed_count、未確認の変更、release_pendingを混同せず、容量・深さ・要素数と打切り表示を定める。report領域が満杯でも最小の診断情報を残し、終了時の入力・cursor解放を確認する契約を維持する。`on_failure:continue`の対象拡大や失敗した移送の自動再送で回避しない。
+
+実装時は、部分移送後の失敗、確認不能なclick、report上限、取消・world変更での保持内容と不変性を検証する。現時点は記録のみ。通常ゲームと設備の所有は地図アート担当が維持し、報告時点では装置OFF・回収と台帳整理中。

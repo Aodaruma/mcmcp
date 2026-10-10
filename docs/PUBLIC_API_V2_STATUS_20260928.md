@@ -6,6 +6,8 @@
 
 Cloudflare認証後もSSHが止まる原因と、同じ症状の再発時に開発担当で進める[復旧手順](experiments/20261010_cloudflared_ssh_recovery.md)を記録した。認証期間72時間の案は記録のみで、Cloudflare設定は変更していない。
 
+後続の現場報告として、script内移送失敗時に停止childのID・result・effectsが親結果に残らない[診断情報の改善候補](PUBLIC_API_V2_MAP_ART_FIXES_20261010.md#スクリプト内移送失敗の診断情報改善候補)を記録した。今回の数量は担当側で再観測・別の収納操作により確認済みで、未確認takeは再送していない。改善は未実装。
+
 ## 先行更新：優先機能の実機確認（2026-10-10）
 
 クラフトの材料データ、4 MOD破壊、5 水中／乗り物、6 整理、8 条件・scriptを最終候補priorities-r7で確認。このPCの実機13ケースとJava等1,719件が成功した。外部source・JSON/CSV、小規模blueprintの中断・再開・再実行も確認済み。147,456セル全量の実施工は未検証。ローカル検証profileの292ファイルを復元し、Prism起動後に「くらふとぶ！-v01.2」へ導入済み。通常profileの再起動後、公開15ツールの全入出力schema一致も確認した。[試用メモと導入状況](PUBLIC_API_V2_TRIAL_20261010.md)、[実機記録](experiments/20261010_v2_priorities_local.md)を参照。先行Docker環境も10月10日02:34 JSTに66ファイルのハッシュ一致で復元し、containerとDocker Desktopを停止済み。
