@@ -82,6 +82,7 @@ public final class McmcpMod {
         eventBus.addListener(this::onScreenOpening);
         eventBus.addListener(this::onScreenClosing);
         eventBus.addListener(automationIndicator::onScreenInit);
+        eventBus.addListener(dev.aod.mcmcp.client.AgentChatOptions::onScreenInit);
         eventBus.addListener(this::onClientStopping);
         eventBus.addListener(this::onClientStopped);
 

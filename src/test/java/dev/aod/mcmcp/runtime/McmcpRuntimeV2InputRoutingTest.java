@@ -28,6 +28,42 @@ class McmcpRuntimeV2InputRoutingTest {
     private final McmcpRuntime runtime = new McmcpRuntime("test", "26.2.0.59");
 
     @Test
+    void queuedChatReadDoesNotOwnManualInputButQueuedSendDoes() throws Exception {
+        var context = RuntimeCallContext.withTimeout(java.time.Duration.ofSeconds(10));
+        var read = runtime.submit(new dev.aod.mcmcp.mcp.McpRuntimePort.Chat(Map.of("operation", "read")), context);
+        assertThat(read.toCompletableFuture().isDone()).isFalse();
+        assertThat(invoke("automationActivityPending", new Class<?>[]{})).isEqualTo(false);
+        var send = runtime.submit(new dev.aod.mcmcp.mcp.McpRuntimePort.Chat(
+                Map.of("operation", "send", "text", "test")), context);
+        assertThat(send.toCompletableFuture().isDone()).isFalse();
+        assertThat(invoke("automationActivityPending", new Class<?>[]{})).isEqualTo(true);
+    }
+
+    @Test
+    void chatDeliveryAbandonAndCancellationUseTheSharedOperationOwner() throws Exception {
+        var store = (AgentJobStore) field("v2Jobs").get(runtime);
+        var session = UUID.randomUUID();
+        var sends = new java.util.concurrent.atomic.AtomicInteger();
+        for (boolean abandon : List.of(true, false)) {
+            var id = store.reserve(AgentJobStore.Kind.CHAT, session, 20, Long.MAX_VALUE);
+            var execution = new V2OperationJobExecution(store, id, session,
+                    new V2ChatSendDriver("hello", text -> sends.incrementAndGet(),
+                            new V2ChatSendDriver.RateLimit(() -> 0)), () -> true);
+            field("v2InteractExecution").set(runtime, execution);
+            if (abandon) invoke("rollbackAbandonedV2Interact", new Class<?>[]{Map.class}, Map.of("action_id", id.toString()));
+            else {
+                invoke("confirmAgentActionDelivery", new Class<?>[]{UUID.class}, id);
+                var payload = (Map<?, ?>) invoke("getAgentAction", new Class<?>[]{Map.class}, Map.of("action_id", id.toString()));
+                assertThat(payload.get("kind")).isEqualTo("chat");
+                invoke("cancelAgentAction", new Class<?>[]{net.minecraft.client.Minecraft.class, Map.class}, null, Map.of("action_id", id.toString()));
+            }
+            assertThat(store.get(id).state().terminal()).isTrue();
+            assertThat(field("v2InteractExecution").get(runtime)).isNull();
+        }
+        assertThat(sends).hasValue(0);
+    }
+
+    @Test
     void passivePortalArrivalDoesNotHideAnyOtherPendingCleanup() throws Exception {
         installPendingPortal();
         assertThat(invoke("automationActivityPending", new Class<?>[]{})).isEqualTo(true);
@@ -71,6 +107,7 @@ class McmcpRuntimeV2InputRoutingTest {
     @AfterEach
     void closeVoiceListener() throws Exception {
         ((AutoCloseable) field("voiceChat").get(runtime)).close();
+        ClientChatSignals.listen(null);
     }
 
     @Test

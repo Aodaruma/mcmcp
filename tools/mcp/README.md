@@ -81,3 +81,5 @@ pwsh -NoProfile -File tools/eval/Test-McmcpEvalTrace.ps1 -SelfTest
 Tests use temporary loopback HTTP servers and fake tokens, never Minecraft. Set `MCMCP_TEST_PWSH` if `pwsh` is not on PATH.
 
 視点専用の`agent_look`も開始後の`-WaitSeconds`待機に対応する。引数例は`{"x":4.5,"y":65.5,"z":8.5}`。移動の`auto_replan`は既定true、`sneak`は既定false。詳細は[クイックガイド](../../docs/MCMCP_Public_API_v2_クイックガイド.md)を参照。
+
+`-Tool agent_chat` でゲーム内チャットを送受信できます。`operation:read` は新着カーソル、`operation:send` は通常発言1件を扱い、送信のみ `-WaitSeconds` に対応します。[使用例と到達確認の制限](../../docs/PUBLIC_API_V2_CHAT_20261011.md)。

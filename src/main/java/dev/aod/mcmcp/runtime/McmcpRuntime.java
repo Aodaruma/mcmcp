@@ -176,6 +176,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private CoordinateMoveJobExecution v2MoveExecution;
     private V2BlockJobExecution<V2BreakArguments> v2BreakExecution;
     private V2BlockJobExecution<V2PlaceArguments> v2PlaceExecution;
+    private final ChatHistory chatHistory = new ChatHistory();
+    private final V2ChatSendDriver.RateLimit chatRateLimit = new V2ChatSendDriver.RateLimit(System::nanoTime);
     private V2JobExecution v2InteractExecution;
     private V2PortalJobExecution pendingPortalArrival;
     private V2OperationJobExecution v2InventoryExecution;
@@ -246,6 +248,20 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         this.modVersion = Objects.requireNonNull(modVersion, "modVersion");
         this.neoForgeVersion = Objects.requireNonNull(neoForgeVersion, "neoForgeVersion");
         KnownMenuProfileSupport.initializeModProfiles();
+        ClientChatSignals.listen(new ClientChatSignals.Listener() {
+            @Override public void added(net.minecraft.client.multiplayer.chat.GuiMessage message) {
+                var minecraft = Minecraft.getInstance();
+                var session = sessions.snapshot();
+                if (!minecraft.isSameThread() || !chatAvailable(minecraft, session)) return;
+                chatHistory.append(session.worldSessionId(), session.clientTick(),
+                        message.source().name().toLowerCase(Locale.ROOT),
+                        message.content().getString(), message.signature());
+            }
+            @Override public void deleted(net.minecraft.network.chat.MessageSignature signature) {
+                chatHistory.delete(signature);
+            }
+            @Override public void cleared() { chatHistory.clear(); }
+        });
         stationaryBreakPort = new MinecraftStationaryBreakPort(
                 Minecraft::getInstance,
                 sessions::snapshot,
@@ -926,6 +942,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || inbox.hasPendingCommand("agent_move")
                 || inbox.hasPendingCommand("agent_look")
                 || inbox.hasPendingCommand("agent_interact")
+                || inbox.hasPendingCommand("agent_chat_send")
                 || inbox.hasPendingCommand("agent_break_block")
                 || inbox.hasPendingCommand("agent_place_block")
                 || inbox.hasPendingCommand("agent_inventory")
@@ -986,6 +1003,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private void clearAgentSessionState() {
+        chatHistory.clear();
         if (scriptExecution != null) scriptExecution.cancel();
         if (v2InputExecution != null) {
             var stopped = v2InputExecution.stop("world_boundary");
@@ -1069,6 +1087,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         routines.clearSession("client_shutdown");
         routineLifecycle.clearSession();
         voiceChat.close();
+        ClientChatSignals.listen(null);
         clearAutomationPortSessions(
                 stationaryBreakPort::clearSession,
                 semanticActionPort::clearSession,
@@ -1136,6 +1155,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 && !inbox.hasPendingCommand("agent_move")
                 && !inbox.hasPendingCommand("agent_look")
                 && !inbox.hasPendingCommand("agent_interact")
+                && !inbox.hasPendingCommand("agent_chat_send")
                 && !inbox.hasPendingCommand("agent_break_block")
                 && !inbox.hasPendingCommand("agent_place_block")
                 && !inbox.hasPendingCommand("agent_inventory");
@@ -1194,6 +1214,15 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         if (command instanceof StartPlaceBlock block) {
             return submitV2PlaceStart(block, context);
+        }
+        if (command instanceof Chat chat) {
+            final V2ChatArguments request;
+            try { request = V2ChatArguments.parse(chat.arguments()); }
+            catch (RuntimeException failure) {
+                return CompletableFuture.completedFuture(RuntimeFailures.mapFailure(failure));
+            }
+            if (request.operation().equals("send")) return submitV2InteractStart(chat,
+                    chat.arguments(), false, context);
         }
         if (command instanceof StartInteract interact) {
             return submitV2InteractStart(interact, interact.arguments(), false, context);
@@ -1740,10 +1769,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             RuntimeCommand command, Map<String, Object> arguments, boolean lookOnly, RuntimeCallContext context) {
         var fence = publishedSession;
         return inbox.submitControlMapped(
-                command.toolName(), fence.generation(), context.deadlineNanos(),
+                command instanceof Chat ? "agent_chat_send" : command.toolName(), fence.generation(), context.deadlineNanos(),
                 () -> withEvaluationLeaseFence(context, command.toolName(), () -> {
                     var result = commitV2Interact(
-                            Minecraft.getInstance(), sessions.snapshot(), arguments, lookOnly, context);
+                            Minecraft.getInstance(), sessions.snapshot(), arguments, lookOnly, context,
+                            command instanceof Chat ? McmcpClientConfig.agentChatSettings()
+                                    .format(V2ChatArguments.parse(arguments).text()) : null);
                     return RuntimeReply.success(result, new McpRuntimePort.ActionDeliveryReceipt(
                             UUID.fromString((String) result.get("action_id"))));
                 }), RuntimeFailures::mapFailure, context::isCancelled,
@@ -1998,10 +2029,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private Map<String, Object> commitV2Interact(
             Minecraft minecraft, WorldSessionTracker.Snapshot session,
-            Map<String, Object> arguments, boolean lookOnly, RuntimeCallContext context) {
+            Map<String, Object> arguments, boolean lookOnly, RuntimeCallContext context, String chatText) {
         assertClientThread(minecraft);
         RuntimeFailures.requireReady(session);
-        String toolName = lookOnly ? "agent_look" : "agent_interact";
+        String toolName = chatText != null ? "agent_chat" : lookOnly ? "agent_look" : "agent_interact";
         var look = lookOnly ? V2LookArguments.parse(arguments) : null;
         var portal = !lookOnly && "portal".equals(arguments.get("target"))
                 ? V2PortalArguments.parse(arguments, session.dimension()) : null;
@@ -2026,12 +2057,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             throw new IllegalArgumentException("merchant operations require an observed villager or wandering trader");
         var offer = trade != null && trade.offerRef() != null ? merchantReferences.resolve(trade.offerRef(),
                 session.worldSessionId(), session.dimension(), entity.getUUID(), session.clientTick()) : null;
-        var request = !lookOnly && portal == null && waystone == null && production == null && itemUse == null && entityUse == null && menuUse == null && dismount == null
+        var request = chatText == null && !lookOnly && portal == null && waystone == null && production == null && itemUse == null && entityUse == null && menuUse == null && dismount == null
                 ? V2BlockInteractArguments.parse(arguments, session.dimension()) : null;
-        int maxTicks = portal != null ? portal.maxTicks() : waystone != null ? waystone.maxTicks() : dismount != null ? dismount.maxTicks() : production != null ? production.maxTicks() : look != null ? look.maxTicks() : itemUse != null ? itemUse.maxTicks()
+        int maxTicks = chatText != null ? 20 : portal != null ? portal.maxTicks() : waystone != null ? waystone.maxTicks() : dismount != null ? dismount.maxTicks() : production != null ? production.maxTicks() : look != null ? look.maxTicks() : itemUse != null ? itemUse.maxTicks()
                 : entityUse != null ? entityUse.maxTicks()
                 : menuUse != null ? menuUse.block().maxTicks() : request.maxTicks();
-        double maxDistance = portal != null ? 2.5D : dismount != null ? 8.0D : production != null ? production.maxDistance() : look != null ? 0.25D : request != null ? request.maxDistance()
+        double maxDistance = chatText != null ? 0.25D : portal != null ? 2.5D : dismount != null ? 8.0D : production != null ? production.maxDistance() : look != null ? 0.25D : request != null ? request.maxDistance()
                 : entityUse != null ? entityUse.maxDistance()
                 : menuUse != null ? menuUse.block().maxDistance() : 64.0D;
         requireV2WorldSafe(minecraft, session, "Interact", dismount != null);
@@ -2054,7 +2085,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         UUID actionId = null;
         try {
             requireLiveCall(context, toolName);
-            actionId = reserveV2Job(lookOnly ? AgentJobStore.Kind.LOOK : AgentJobStore.Kind.INTERACT, session.worldSessionId(),
+            actionId = reserveV2Job(chatText != null ? AgentJobStore.Kind.CHAT : lookOnly ? AgentJobStore.Kind.LOOK : AgentJobStore.Kind.INTERACT, session.worldSessionId(),
                     maxTicks, System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS, context);
             BooleanSupplier release = () -> {
                 boolean released = boundedActionInputRelease(
@@ -2062,7 +2093,16 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 if (!released) arming.lock("v2_interact_release_failed");
                 return released;
             };
-            if (portal != null) {
+            if (chatText != null) {
+                var connection = Objects.requireNonNull(minecraft.getConnection());
+                if (!minecraft.computeChatAbilities().canSendMessages()) throw new IllegalArgumentException("chat is unavailable for this account");
+                v2InteractExecution = new V2OperationJobExecution(v2Jobs, actionId, session.worldSessionId(),
+                        new V2ChatSendDriver(chatText, text -> {
+                            if (minecraft.getConnection() != connection || !minecraft.computeChatAbilities().canSendMessages())
+                                throw new IllegalStateException("chat connection changed");
+                            connection.sendChat(text);
+                        }, chatRateLimit), release);
+            } else if (portal != null) {
                 v2InteractExecution = new V2PortalJobExecution(v2Jobs, actionId, session.worldSessionId(),
                         minecraft.getConnection(), portal,
                         new MinecraftV2PortalPort(minecraft, sessions::snapshot, agentObservations,
@@ -2402,6 +2442,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     throw new AssertionError("agent_inventory must use delivery-gated admission");
             case StartCraft ignored ->
                     throw new AssertionError("agent_craft must use delivery-gated admission");
+            case Chat chat -> {
+                var request = V2ChatArguments.parse(chat.arguments());
+                if (!request.operation().equals("read")) throw new AssertionError("chat send must be delivery-gated");
+                RuntimeFailures.requireReady(session);
+                if (!chatAvailable(minecraft, session)) throw new RuntimeInvocationException(
+                        "mcp_operation_disabled", "Chat reading requires MCP ON in the current world.", true, Map.of());
+                yield chatHistory.read(session.worldSessionId(), request.cursor(), request.limit());
+            }
             case GetAction action -> getAgentAction(action.arguments());
             case CancelAction action -> cancelAgentAction(minecraft, action.arguments());
             case ConfirmActionDelivery delivery -> confirmAgentActionDelivery(delivery.actionId());
@@ -2466,6 +2514,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         recipeCatalog.refreshFromClient(
                 minecraft, Objects.requireNonNull(session.worldSessionId(), "worldSessionId"), session.clientTick());
         return recipeCatalog.query(session.worldSessionId(), query, maxResults).toMap();
+    }
+
+    private boolean chatAvailable(Minecraft minecraft, WorldSessionTracker.Snapshot session) {
+        return !shutdown && endpointFaultCode == null && session.worldReady()
+                && minecraft.level != null && minecraft.player != null && minecraft.getConnection() != null
+                && Objects.equals(session.dimension(), minecraft.level.dimension().identifier().toString())
+                && arming.snapshot(session.worldSessionId()).mode() != LocalArmingState.Mode.OFF;
     }
 
     private boolean multiplayerPolicyAllows(Minecraft minecraft) {
@@ -2991,7 +3046,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             } else if (requested && before.kind() == AgentJobStore.Kind.PLACE_BLOCK
                     && v2PlaceExecution != null) {
                 finishV2PlaceIfTerminal(v2PlaceExecution.cancel());
-            } else if (requested && (before.kind() == AgentJobStore.Kind.INTERACT || before.kind() == AgentJobStore.Kind.LOOK)
+            } else if (requested && (before.kind() == AgentJobStore.Kind.INTERACT || before.kind() == AgentJobStore.Kind.LOOK
+                    || before.kind() == AgentJobStore.Kind.CHAT)
                     && v2InteractExecution != null) {
                 finishV2InteractIfTerminal(v2InteractExecution.cancel());
             } else if (requested && (before.kind() == AgentJobStore.Kind.INVENTORY || before.kind() == AgentJobStore.Kind.CRAFT)
@@ -3750,7 +3806,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             finishV2BreakIfTerminal(result);
         } else if (result.kind() == AgentJobStore.Kind.PLACE_BLOCK) {
             finishV2PlaceIfTerminal(result);
-        } else if (result.kind() == AgentJobStore.Kind.INTERACT || result.kind() == AgentJobStore.Kind.LOOK) {
+        } else if (result.kind() == AgentJobStore.Kind.INTERACT || result.kind() == AgentJobStore.Kind.LOOK
+                    || result.kind() == AgentJobStore.Kind.CHAT) {
             finishV2InteractIfTerminal(result);
         } else if (result.kind() == AgentJobStore.Kind.INVENTORY || result.kind() == AgentJobStore.Kind.CRAFT) {
             finishV2InventoryIfTerminal(result);
@@ -3911,7 +3968,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (!(rawId instanceof String id)) return;
         try {
             var job = v2Jobs.get(UUID.fromString(id));
-            if ((job.kind() == AgentJobStore.Kind.INTERACT || job.kind() == AgentJobStore.Kind.LOOK) && !job.state().terminal()) {
+            if ((job.kind() == AgentJobStore.Kind.INTERACT || job.kind() == AgentJobStore.Kind.LOOK
+                    || job.kind() == AgentJobStore.Kind.CHAT) && !job.state().terminal()) {
                 finishV2InteractIfTerminal(v2InteractExecution.stop("delivery_not_confirmed"));
             }
         } catch (AgentJobStore.NotFoundException | IllegalArgumentException ignored) {

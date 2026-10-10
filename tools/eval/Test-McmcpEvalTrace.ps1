@@ -84,6 +84,7 @@ $AllowedTools = @(
     'agent_run_script',
     'agent_get_action',
     'agent_cancel_action'
+    'agent_chat'
 )
 $AllowedNotifications = @(
     'thread/started',

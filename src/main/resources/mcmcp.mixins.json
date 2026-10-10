@@ -6,6 +6,7 @@
   "client": [
     "client.BlockItemPlacementInvoker",
     "client.ClientContainerSignalsMixin",
+    "client.ChatComponentMixin",
     "client.NeoForgeMenuSignalsMixin",
     "client.StorageFullContentSignalsMixin",
     "client.StorageSlotSignalsMixin",

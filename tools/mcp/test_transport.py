@@ -113,7 +113,13 @@ class TransportTests(unittest.TestCase):
                 ['agent_get_state', 'agent_get_mcp_status', 'agent_get_observation',
                  'agent_move', 'agent_look', 'agent_break_block', 'agent_place_block', 'agent_interact',
                  'agent_inventory', 'agent_craft', 'agent_click', 'agent_input_sequence', 'agent_run_script',
-                 'agent_get_action', 'agent_cancel_action']])
+                 'agent_get_action', 'agent_cancel_action', 'agent_chat']])
+        if request['params']['name'] == 'agent_chat':
+            if request['params']['arguments']['operation'] == 'send':
+                return tool_result(dict(schema_version=2, action_id=ACTION, state='queued'))
+            return tool_result(dict(schema_version=2, operation='read', session_id=ACTION,
+                messages=[], next_cursor=ACTION+':0', has_more=False, missed_messages=0,
+                untrusted=True, capacity=256))
         if request['params']['name'] in V2_START_TOOLS:
             return tool_result(dict(schema_version=2, action_id=ACTION, state='queued'))
         if (request['params']['name'] == 'agent_get_action' and
@@ -171,6 +177,22 @@ class TransportTests(unittest.TestCase):
                          ['agent_move', 'agent_get_action'])
         self.assertEqual(calls[0]['arguments'], arguments)
         self.assertEqual(calls[1]['arguments']['action_id'], ACTION)
+
+    def test_chat_read_and_send_share_one_tool_but_only_send_can_wait(self):
+        reply = self.invoke('-Tool', 'agent_chat', arguments={'operation': 'read'})
+        self.assertTrue(reply['ok'], reply)
+        self.assertEqual(reply['result']['messages'], [])
+        self.requests.clear()
+        reply = self.invoke('-Tool', 'agent_chat', '-WaitSeconds', '10',
+                            arguments={'operation': 'send', 'text': '日本語の連絡です'})
+        self.assertTrue(reply['ok'], reply)
+        calls = [r[0]['params'] for r in self.requests if r[0]['method'] == 'tools/call']
+        self.assertEqual([c['name'] for c in calls], ['agent_chat', 'agent_get_action'])
+        self.assertEqual(calls[0]['arguments']['text'], '日本語の連絡です')
+        self.requests.clear()
+        reply = self.invoke('-Tool', 'agent_chat', '-WaitSeconds', '10', arguments={'operation': 'read'})
+        self.assertEqual(reply['diagnostic_code'], 'wait_requires_start_tool')
+        self.assertEqual(self.requests, [])
 
     def test_error_or_missing_id_never_polls_or_replays(self):
         for mode, diagnostic in [('rpc', 'jsonrpc_error'), ('rpc_secret', 'secret_blocked'), ('tool', 'tool_rejected'),

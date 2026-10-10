@@ -24,6 +24,7 @@ $script:AllowedTools = @(
     'agent_run_script',
     'agent_get_action',
     'agent_cancel_action'
+    'agent_chat'
 )
 $script:TerminalStates = @('succeeded', 'failed', 'cancelled')
 $script:RequestId = 0L

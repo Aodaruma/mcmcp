@@ -110,6 +110,7 @@ $AllowedTools = @(
     'agent_run_script',
     'agent_get_action',
     'agent_cancel_action'
+    'agent_chat'
 )
 $script:PrivateReasoningNotificationMethods = @(
     'item/reasoning/summaryPartAdded',

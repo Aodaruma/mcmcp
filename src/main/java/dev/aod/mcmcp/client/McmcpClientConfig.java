@@ -20,6 +20,17 @@ public final class McmcpClientConfig {
     public static final int DEFAULT_RECOVERY_MAX_BREAKS = 4;
 
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
+    private static final ModConfigSpec.BooleanValue AGENT_CHAT_PREFIX_ENABLED = BUILDER
+            .comment("Prepend the configured prefix to Agent chat sends only")
+            .define("agent_chat_prefix_enabled", false);
+    private static final ModConfigSpec.ConfigValue<String> AGENT_CHAT_PREFIX = BUILDER
+            .define("agent_chat_prefix", "", AgentChatSettings::validFragment);
+    private static final ModConfigSpec.BooleanValue AGENT_CHAT_SUFFIX_ENABLED = BUILDER
+            .comment("Append the configured suffix to Agent chat sends only")
+            .define("agent_chat_suffix_enabled", true);
+    private static final ModConfigSpec.ConfigValue<String> AGENT_CHAT_SUFFIX = BUILDER
+            .comment("Spaces are literal; the entire formatted message must fit 256 UTF-16 units")
+            .define("agent_chat_suffix", AgentChatSettings.DEFAULT_SUFFIX, AgentChatSettings::validFragment);
     private static final ModConfigSpec.BooleanValue ENDPOINT_ENABLED = BUILDER
             .comment("Start the loopback-only embedded MCP endpoint")
             .define("endpoint_enabled", true);
@@ -113,6 +124,16 @@ public final class McmcpClientConfig {
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     private McmcpClientConfig() { }
+
+    public static AgentChatSettings agentChatSettings() {
+        return new AgentChatSettings(AGENT_CHAT_PREFIX_ENABLED.get(), AGENT_CHAT_PREFIX.get(),
+                AGENT_CHAT_SUFFIX_ENABLED.get(), AGENT_CHAT_SUFFIX.get());
+    }
+
+    public static void setAgentChatPrefixEnabled(boolean enabled) { AGENT_CHAT_PREFIX_ENABLED.set(enabled); SPEC.save(); }
+    public static void setAgentChatSuffixEnabled(boolean enabled) { AGENT_CHAT_SUFFIX_ENABLED.set(enabled); SPEC.save(); }
+    public static void setAgentChatPrefix(String text) { AGENT_CHAT_PREFIX.set(text); SPEC.save(); }
+    public static void setAgentChatSuffix(String text) { AGENT_CHAT_SUFFIX.set(text); SPEC.save(); }
 
     public static boolean endpointEnabled() {
         return ENDPOINT_ENABLED.get();

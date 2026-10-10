@@ -41,5 +41,9 @@
   "gui.mcmcp.multiplayer.enable": "ONにする",
   "gui.mcmcp.multiplayer.cancel": "キャンセル",
   "gui.mcmcp.multiplayer.write_failed": "MCMCP: サーバー許可を保存できなかったため、MCP操作はOFFのままです",
-  "gui.mcmcp.multiplayer.server_changed": "MCMCP: 接続先が変わったため、MCP操作はOFFのままです"
+  "gui.mcmcp.multiplayer.server_changed": "MCMCP: 接続先が変わったため、MCP操作はOFFのままです",
+  "gui.mcmcp.chat.title": "Agentのチャット送信",
+  "gui.mcmcp.chat.prefix": "前につける文字",
+  "gui.mcmcp.chat.suffix": "後ろにつける文字",
+  "gui.mcmcp.chat.hint": "Agent送信のみに適用。空白もそのまま付加します。本文と合わせて256文字以内（絵文字などは2文字分）。"
 }

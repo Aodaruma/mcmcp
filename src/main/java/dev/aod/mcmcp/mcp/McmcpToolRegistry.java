@@ -310,6 +310,7 @@ public final class McmcpToolRegistry {
                 && !"agent_break_block".equals(toolName)
                 && !"agent_place_block".equals(toolName)
                 && !"agent_interact".equals(toolName)
+                && !"agent_chat".equals(toolName)
                 && !"agent_inventory".equals(toolName)
                 && !"agent_craft".equals(toolName)
                 && !"agent_click".equals(toolName)
@@ -334,6 +335,7 @@ public final class McmcpToolRegistry {
             case "agent_look" -> new McpRuntimePort.StartLook(values);
             case "agent_break_block" -> new McpRuntimePort.StartBreakBlock(values);
             case "agent_place_block" -> new McpRuntimePort.StartPlaceBlock(values);
+            case "agent_chat" -> new McpRuntimePort.Chat(values);
             case "agent_interact" -> new McpRuntimePort.StartInteract(values);
             case "agent_inventory" -> new McpRuntimePort.StartInventory(values);
             case "agent_craft" -> new McpRuntimePort.StartCraft(values);
