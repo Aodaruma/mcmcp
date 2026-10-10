@@ -36,6 +36,7 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
     private long lastProgress;
     private Vec3 lastPosition;
     private String failure;
+    private boolean fineHorseApproach;
 
     MinecraftV2VehicleDriver(Minecraft minecraft, V2MoveArguments request) {
         this.minecraft = minecraft; this.request = request;
@@ -122,14 +123,26 @@ final class MinecraftV2VehicleDriver implements CoordinateMoveJobExecution.Movem
         } else {
             if (view == null) view = NavigationViewLease.acquire(player, owner);
             if (!view.matches(owner)) return fail("vehicle_view_changed");
+            if (vehicle instanceof AbstractHorse && request.exactPosition() != null
+                    && target.equals(goal) && targetDistance < 2.0D) fineHorseApproach = true;
+            // Vanilla scales backward horse input to a quarter speed. Face away for small
+            // targetward pulses, allowing natural drag to settle between them.
+            if (fineHorseApproach) yaw = Mth.wrapDegrees(yaw + 180.0F);
             view.turnToward(owner, yaw, 0);
             if (!near && Math.abs(Mth.wrapDegrees(yaw - player.getYRot())) < 15
-                    && (!(vehicle instanceof AbstractMinecart) || speed < 0.03)) desired.add(FORWARD);
+                    && (!(vehicle instanceof AbstractMinecart) || speed < 0.03)) {
+                if (!fineHorseApproach) desired.add(FORWARD);
+                else if (horseFinePulse(speed, tick)) desired.add(BACK);
+            }
         }
         if (inputs == null) inputs = MovementInputLease.acquire(minecraft, owner, System.nanoTime(), Duration.ofMillis(500));
         inputs.setDesired(owner, desired);
         if (!inputs.heartbeat(owner, System.nanoTime(), Duration.ofMillis(500))) return fail("vehicle_input_expired");
         return running();
+    }
+
+    static boolean horseFinePulse(double speed, long tick) {
+        return speed < 0.04D && tick % 4 == 0;
     }
 
     private List<NavCell> neighbors(NavCell from) {
