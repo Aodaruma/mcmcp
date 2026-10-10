@@ -8,6 +8,8 @@
 
 通常R18の収納終了待ちは373秒でも継続した後、利用者のOFF・切断・再接続・ONで手動復旧。fresh数量を確認し、旧UNKNOWNは維持した。候補ソースに終了待ちの固定理由、cursorの証拠revision、返却送信有無を追加し、自動1,776件・buildが成功。自動復帰条件は変更しておらず、追加診断の実機確認も未実施。[復旧記録と改善案](experiments/20261010_v2_r18_storage_release_pending.md)。装置の粉混入については、[水入り葉・End台再生成のコード根拠と担当の静止対照試験](experiments/20261010_concrete_powder_code_review.md)も記録した。
 
+担当の追加試験では、北の扉を水入り葉へ変えると同じNW角の粉が硬化した。全混入原因は未確定。水バケツのblock interactには通常クリックの後段に相当するuse処理がなく、対象条件付きclickとfresh観測で現場は復旧した。[操作経路の調査と未実装の修正条件](experiments/20261010_v2_bucket_interact_diagnosis.md)。扉・固体のbreak失敗後にもfresh AIRを確認し、[既知の診断課題](experiments/20261010_v2_break_post_effect_diagnosis.md)へ追記。通常R18と候補配布物は変更していない。
+
 ## 追加調査：扉端の安全判定拒否と診断改善（実機未確認）
 
 通常R18で扉端のmove失敗後、新規moveと観測のみのscriptも安全判定で拒否された。現在AABBの衝突がREPLANとなり新規受付を止める経路は確認したが、当時のhazard明細がなく直接原因は未確定。現場は手動移動で復帰した。受付条件を維持したまま公開エラーへ判定理由・局所hazard・観測時点を追加し、自動1,774件とbuildが成功。自律退避と隔離実機確認は未完了。固定済みR18～R20の配布物と通常R18は変更していない。[調査・診断仕様・次回の公開観測](experiments/20261010_v2_safe_local_diagnosis.md)。

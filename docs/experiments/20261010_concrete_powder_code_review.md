@@ -45,6 +45,16 @@ NeoForge版は水判定を `canBeHydrated` に接続するが、着地先の置�
 
 API上も水際では設置previewが完成後のconcreteになる。担当は `block:magenta_concrete` と `item:magenta_concrete_powder` の組で設置成功を確認した。粉を完成blockとして指定したときの事前拒否は、このpreview契約と整合するため新規不具合には数えない。
 
+## 北側の水を補った後の同じ角での再試験
+
+2026-10-10 14:47 JSTの担当保存記録 `conversion-nw-water-repair-20261010.json` を確認した。装置OFFのまま、北側の扉 `(98,49,-3)` を下段oak_leaves・waterlogged=true、上段 `(98,50,-3)` を同じ葉・waterlogged=falseへ変更し、西側の扉 `(97,49,-2)` は維持している。この変更と入力は地図アート担当が実施した。
+
+同じ北西角 `(98,49,-2)` へのmagenta粉の設置は今度はmagenta_concreteへ硬化した。設置 `1dcdee02-7c69-4ad0-b427-9b199218bc53` はconfirmed_count:1、fresh観測 `e2261d11-5ce2-4907-aaef-5f8068709a10` も固体を確認。撤去後は `476627bc-deba-4eb9-b874-1e6971bebf71` で対象airと葉の上下のwaterlogged状態、西扉の維持を再確認している。**同じ角でも、北に隣接水を足した前後で硬化結果が変わった**。静止設置の確認であり、実際のduperの着地分布・粉混入全量・長時間の変換率は依然として未確認。
+
+水入り化には、`agent_interact` のwater_bucketで失敗した後、担当が `agent_look` と対象blockを限定した `agent_click` の右1回を使い、別のfresh観測でwaterlogged=trueと空bucketを確認した。[操作経路のコード調査](20261010_v2_bucket_interact_diagnosis.md)に記録する。北扉と試験solidの破壊は元の失敗結果を維持し、fresh AIRを別に確認して再送していない。[破壊失敗後の効果の記録](20261010_v2_break_post_effect_diagnosis.md)も更新した。
+
+供給bag8へのstore192、葉2個と水bucket1個のtakeは、保存結果がそれぞれconfirmed_count:192/2/1、release_confirmed:true。これらの成功で過去の別の収納UNKNOWNを再分類しない。
+
 ## 根拠の保存
 
 手元のJARをJDK25のjavapで読み取り、上記class／methodの分岐を追った。bytecodeとNeoForge拡張sourceの作業用記録は `artifacts/v2-powder-code-20261010` に保存し、原ソース全体はこの文書へ転載しない。
