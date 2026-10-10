@@ -1741,6 +1741,7 @@ public final class LocalObservationVolume {
     private static boolean scaffoldingTopLanding(
             LocalPlayer player, ClientLevel level, Point origin, AABB box) {
         return Math.abs(box.minY - Math.rint(box.minY)) < MOVEMENT_EPSILON
+                && !exactScaffoldingAtFeet(level, box)
                 && exactSurvivingScaffoldingAtFeet(level, origin, box.move(0, -1, 0))
                 && loadedState(level, origin, List.of(box, supportSlab(box))) == LoadedState.LOADED
                 && level.noCollision(player, box) && !level.collidesWithSuffocatingBlock(player, box)

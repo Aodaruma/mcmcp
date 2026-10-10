@@ -384,11 +384,12 @@ final class FixtureV2Priorities {
             }
             case "portal_end" -> result.addAll(List.of("setblock 305 101 303 minecraft:air", "setblock 305 100 303 minecraft:end_portal",
                     "tp @s 305.5 101 304.5 180 40"));
-            case "scaffold_column", "scaffold_top", "seed_piston", "seed_scaffold" -> {
+            case "scaffold_column", "scaffold_long", "scaffold_top", "seed_piston", "seed_scaffold" -> {
                 result.add("fill 300 101 300 320 116 320 minecraft:air");
                 if (kind.startsWith("scaffold")) {
-                    result.addAll(List.of("fill 305 101 303 305 103 303 minecraft:scaffolding",
-                            "fill 306 103 303 308 103 303 minecraft:scaffolding"));
+                    int top = kind.equals("scaffold_long") ? 108 : 103;
+                    result.addAll(List.of("fill 305 101 303 305 " + top + " 303 minecraft:scaffolding",
+                            "fill 306 " + top + " 303 308 " + top + " 303 minecraft:scaffolding"));
                     result.add(kind.equals("scaffold_top") ? "tp @s 305.5 104 303.5 -90 0"
                             : "tp @s 305.5 101 305.5 180 0");
                 } else {
