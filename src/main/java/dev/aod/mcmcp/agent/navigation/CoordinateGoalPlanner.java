@@ -95,7 +95,7 @@ public final class CoordinateGoalPlanner {
                 && arrivals.computeIfAbsent(cell, arrival::test);
         var candidates = new TreeSet<NavCell>(Comparator
                 // A known route toward the target floor beats exploring horizontally on the wrong floor.
-                .comparingInt((NavCell cell) -> arrived.test(cell) ? 0 : ladderWaypoint(map, start, cell) ? 1 : 2)
+                .comparingInt((NavCell cell) -> arrived.test(cell) ? 0 : climbableWaypoint(map, start, cell) ? 1 : 2)
                 .thenComparingDouble(cell -> arrived.test(cell)
                         ? cell.distanceTo(start) : cell.distanceTo(goal))
                 .thenComparing(Comparator.naturalOrder()));
@@ -110,8 +110,8 @@ public final class CoordinateGoalPlanner {
             if (edge.destination()) {
                 candidates.add(edge.key().to());
                 if (edge.locomotion() == Locomotion.GROUND || edge.locomotion().aerial()) candidates.add(edge.key().from());
-            } else if (edge.traversable() && edge.locomotion() == Locomotion.LADDER
-                    && ladderWaypoint(map, start, edge.key().to())) {
+            } else if (edge.traversable() && edge.locomotion().climbable()
+                    && climbableWaypoint(map, start, edge.key().to())) {
                 candidates.add(edge.key().to());
             }
         }
@@ -164,7 +164,7 @@ public final class CoordinateGoalPlanner {
             attempts++;
             var found = search.findRoute(map, start, candidate, budget.expansions() - expanded,
                     () -> !stopped(cancelled), () -> { }, cellAllowed,
-                    ladderWaypoint(map, start, candidate));
+                    climbableWaypoint(map, start, candidate));
             expanded += found.expandedCells().size();
             if (stopped(cancelled)) return empty(Status.CANCELLED, attempts, expanded);
             if (found.found()) {
@@ -192,14 +192,14 @@ public final class CoordinateGoalPlanner {
         return Thread.currentThread().isInterrupted() || cancelled.getAsBoolean();
     }
 
-    private boolean ladderWaypoint(KnownTraversabilitySnapshot map, NavCell start, NavCell cell) {
+    private boolean climbableWaypoint(KnownTraversabilitySnapshot map, NavCell start, NavCell cell) {
         int direction = Integer.compare(goal.y(), start.y());
-        if (direction == 0 || reached(cell) || !map.containsLadderTransit(cell)
+        if (direction == 0 || reached(cell) || !map.containsClimbableTransit(cell)
                 || Integer.compare(cell.y(), start.y()) != direction
                 || Integer.compare(goal.y(), cell.y()) != direction) return false;
         // Leave another verified rung beyond the handoff while the next local snapshot arrives.
         return map.outgoing(cell).stream().anyMatch(edge -> edge.traversable()
-                && edge.locomotion() == Locomotion.LADDER
+                && edge.locomotion().climbable()
                 && edge.key().to().x() == cell.x() && edge.key().to().z() == cell.z()
                 && edge.key().to().y() - cell.y() == direction && cellAllowed.test(edge.key().to()));
     }

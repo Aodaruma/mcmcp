@@ -91,6 +91,10 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
         if (mode != Locomotion.aerialMode(minecraft.player))
             throw new IllegalStateException("navigation mode changed");
         if (mode.aerial()) return prepareFlight(clientTick, remainingDistance, outputAllowed);
+        if (LocalObservationVolume.crouchDescendsScaffolding(minecraft.player)) {
+            releasePosture();
+            return true;
+        }
         if (!request.sneak() || minecraft.player.isInWater()) return true;
         if (!outputAllowed.getAsBoolean()) return false;
         if (posture == null) {

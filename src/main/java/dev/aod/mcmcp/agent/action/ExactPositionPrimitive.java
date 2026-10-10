@@ -2,6 +2,7 @@ package dev.aod.mcmcp.agent.action;
 
 import dev.aod.mcmcp.agent.navigation.KnownTraversabilitySnapshot;
 import dev.aod.mcmcp.agent.safety.Locomotion;
+import dev.aod.mcmcp.agent.safety.LocalObservationVolume;
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.routine.MovementInputLease;
 import net.minecraft.client.Minecraft;
@@ -71,7 +72,7 @@ public final class ExactPositionPrimitive implements AutoCloseable {
             var keys = EnumSet.copyOf(desired); keys.remove(MovementInputLease.MovementKey.JUMP); desired = Set.copyOf(keys);
         }
         if (mode.aerial()) desired = flight.apply(desired, tick);
-        if (sneak && mode == Locomotion.GROUND) {
+        if (sneak && mode == Locomotion.GROUND && !LocalObservationVolume.crouchDescendsScaffolding(player)) {
             var keys = desired.isEmpty() ? EnumSet.noneOf(MovementInputLease.MovementKey.class) : EnumSet.copyOf(desired);
             keys.add(MovementInputLease.MovementKey.CROUCH); desired = Set.copyOf(keys);
         }

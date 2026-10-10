@@ -628,7 +628,9 @@ public final class LocalObservationVolume {
                             level, start, evaluated.endBox(), intended, resolved);
             boolean targetLanding = !exactClimbableAtFeet(
                     level, targetBox, intent.locomotion())
-                    && stableLanding(player, level, startPoint, targetBox);
+                    && (stableLanding(player, level, startPoint, targetBox)
+                            || intent.locomotion() == Locomotion.SCAFFOLDING
+                                    && scaffoldingTopLanding(player, level, startPoint, targetBox));
             boolean resolvedBouncy = bouncySupport(level, player, evaluated.endBox());
             boolean targetBouncy = bouncySupport(level, player, targetBox);
             boolean safe = !resolvedBouncy
@@ -734,6 +736,13 @@ public final class LocalObservationVolume {
                         && intendedTowardNavigationTarget(start, intended, intent)
                         || withinHorizontalTolerance)
                 && (ordinaryPath || plannedLadderAscentClip);
+        boolean scaffoldingAscentBootstrap = intent.locomotion() == Locomotion.SCAFFOLDING
+                && intent.verticalDelta() > 0 && sourceClimbable && resolvedClimbable
+                && (targetClimbable || targetLanding) && ordinaryPath
+                && resolved.y >= -MAX_LADDER_DESCENT_PER_TICK - MOVEMENT_EPSILON
+                && resolved.y <= MOVEMENT_EPSILON
+                && (horizontalNonDivergence && intendedTowardNavigationTarget(start, intended, intent)
+                        || withinHorizontalTolerance);
         // A same-level rung-to-floor edge can briefly clip the floor lip while the ladder descent
         // clamp is still active. Keep this exception cardinal, targetward and bounded until the
         // executor's verified supported-landing JUMP raises the player onto the floor.
@@ -768,6 +777,7 @@ public final class LocalObservationVolume {
             return false;
         }
         return ladderAscentBootstrap
+                || scaffoldingAscentBootstrap
                 || plannedLadderLandingLip
                 || movesTowardNavigationTarget(start, end, intent);
     }
@@ -1499,6 +1509,14 @@ public final class LocalObservationVolume {
             }
         }
 
+        if (locomotion == Locomotion.SCAFFOLDING) {
+            var top = rungs.lastEntry();
+            var landing = top.getValue().move(0, 1, 0);
+            if (scaffoldingTopLanding(player, level, origin, landing)
+                    && scaffoldingPathSafe(player, level, origin, top.getValue(), landing)) {
+                rungs.put(top.getKey() + 1, landing);
+            }
+        }
         var rungEntries = new ArrayList<>(rungs.entrySet());
         for (int index = 1; index < rungEntries.size(); index++) {
             var lower = rungEntries.get(index - 1);
@@ -1537,7 +1555,9 @@ public final class LocalObservationVolume {
                         entry.getX() + direction.x(), y, entry.getZ() + direction.z());
                 var landingBox = boxAtFeetCell(entryNode.box(), landingPos);
                 if (exactClimbableAtFeet(level, landingBox)
-                        || !stableLanding(player, level, origin, landingBox)
+                        || !(stableLanding(player, level, origin, landingBox)
+                                || locomotion == Locomotion.SCAFFOLDING
+                                        && scaffoldingTopLanding(player, level, origin, landingBox))
                         || !climbablePathSafe(
                                 player, level, origin, rung.getValue(), landingBox, locomotion)) {
                     continue;
@@ -1587,7 +1607,9 @@ public final class LocalObservationVolume {
         if (depth > MAX_TRANSITIONS) {
             return;
         }
-        Support targetSupport = support(level, player, origin, to);
+        Support targetSupport = locomotion == Locomotion.SCAFFOLDING
+                && scaffoldingTopLanding(player, level, origin, to)
+                ? Support.PRESENT : support(level, player, origin, to);
         if (targetSupport == Support.UNKNOWN) {
             return;
         }
@@ -1705,10 +1727,25 @@ public final class LocalObservationVolume {
 
     private static boolean noScaffoldingTraversalCollision(
             ClientLevel level, LocalPlayer player, AABB box) {
-        return !level.getBlockCollisionsFromContext(CollisionContext.empty(), box)
+        return !level.getBlockCollisionsFromContext(scaffoldingTraversalContext(box), box)
                         .iterator().hasNext()
                 && level.noEntityCollision(player, box)
                 && level.noBorderCollision(player, box);
+    }
+
+    static CollisionContext scaffoldingTraversalContext(AABB box) {
+        // Empty context reports 'above' every scaffold and invents platforms inside a climb.
+        return CollisionContext.positionContext(box.minY - 1.0D);
+    }
+
+    private static boolean scaffoldingTopLanding(
+            LocalPlayer player, ClientLevel level, Point origin, AABB box) {
+        return Math.abs(box.minY - Math.rint(box.minY)) < MOVEMENT_EPSILON
+                && exactSurvivingScaffoldingAtFeet(level, origin, box.move(0, -1, 0))
+                && loadedState(level, origin, List.of(box, supportSlab(box))) == LoadedState.LOADED
+                && level.noCollision(player, box) && !level.collidesWithSuffocatingBlock(player, box)
+                && fluid(level, origin, List.of(box)) == Fluid.NONE
+                && damageBlockHazard(level, origin, List.of(box, damageSupportRegion(box))) == Hazard.NONE;
     }
 
     private static boolean climbablePathSafe(
@@ -1770,6 +1807,13 @@ public final class LocalObservationVolume {
     private static boolean exactScaffoldingAtFeet(ClientLevel level, AABB box) {
         BlockPos position = feetBlock(box);
         return level.isLoaded(position) && level.getBlockState(position).is(Blocks.SCAFFOLDING);
+    }
+
+    /** Crouch changes scaffold support into downward travel, including while standing on its top. */
+    public static boolean crouchDescendsScaffolding(LocalPlayer player) {
+        var position = BlockPos.containing(player.getX(), player.getY() - 0.05D, player.getZ());
+        return player.level().isLoaded(position)
+                && player.level().getBlockState(position).is(Blocks.SCAFFOLDING);
     }
 
     private static boolean exactClimbableAtFeet(ClientLevel level, AABB box) {

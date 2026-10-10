@@ -281,6 +281,10 @@ final class MinecraftV2PlaceDriver
             }
             facing.close();
             facing = null;
+            if (LocalObservationVolume.crouchDescendsScaffolding(minecraft.player)) {
+                stage = Stage.WAIT_CROSSHAIR;
+                return V2BlockJobExecution.StepResult.RUNNING;
+            }
             sneak = BoundedInputLease.acquire(AgentInputState.global(),
                     Set.of(BoundedInputLease.Input.SNEAK),
                     System.nanoTime(), SNEAK_LEASE);
@@ -317,7 +321,7 @@ final class MinecraftV2PlaceDriver
             return V2BlockJobExecution.StepResult.RUNNING;
         }
         if (stage == Stage.WAIT_CROSSHAIR) {
-            if (!minecraft.player.isShiftKeyDown() || !crosshairOnSupport()) {
+            if (sneak != null && !minecraft.player.isShiftKeyDown() || !crosshairOnSupport()) {
                 return ++crosshairWaitTicks <= MAX_CROSSHAIR_WAIT_TICKS
                         ? V2BlockJobExecution.StepResult.RUNNING
                         : V2BlockJobExecution.StepResult.FAILED;
@@ -325,7 +329,7 @@ final class MinecraftV2PlaceDriver
             if (!dispatch(clientTick, outputAllowed)) {
                 return V2BlockJobExecution.StepResult.FAILED;
             }
-            sneak.close();
+            if (sneak != null) sneak.close();
             sneak = null;
             stage = Stage.CONFIRMING;
             return V2BlockJobExecution.StepResult.RUNNING;
@@ -417,8 +421,8 @@ final class MinecraftV2PlaceDriver
     }
 
     private boolean heartbeatSneak(WorldSessionTracker.Snapshot session) {
-        if (sneak == null) return stage == Stage.CONFIRMING;
-        if (!sneak.heartbeat(System.nanoTime(), SNEAK_LEASE)) return false;
+        if (stage == Stage.CONFIRMING) return true;
+        if (sneak != null && !sneak.heartbeat(System.nanoTime(), SNEAK_LEASE)) return false;
         var recon = reconciliationSignals.bindAndSnapshot(
                 minecraft.level, session.worldSessionId());
         AgentInputState.global().requireGoalMovementSafety(

@@ -136,9 +136,9 @@ public final class KnownTraversabilitySnapshot {
     }
 
     /** Internal segment handoff only; an unsupported rung is never a job destination. */
-    boolean containsLadderTransit(NavCell cell) {
+    boolean containsClimbableTransit(NavCell cell) {
         return edges.values().stream().anyMatch(edge -> edge.traversable()
-                && edge.locomotion() == Locomotion.LADDER
+                && edge.locomotion().climbable()
                 && edge.targetSupport() == TraversabilityEdge.TargetSupport.ABSENT
                 && edge.key().to().equals(cell));
     }

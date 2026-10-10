@@ -250,7 +250,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             state.edgeIndex++;
             state.resetProgress();
             if (state.edgeIndex == state.route.edges().size()) {
-                if (state.route.endsOnLadderTransit() && player.onClimbable()) {
+                if (state.route.endsOnClimbableTransit() && player.onClimbable()) {
                     boolean changed = edgeDecision(state.route, state.edgeIndex - 1, snapshot) == EdgeDecision.REPLAN;
                     return finish(changed ? Status.REPLAN_REQUIRED : Status.SUCCEEDED,
                             changed ? Reason.ROUTE_EDGE_CHANGED : Reason.NONE);
@@ -343,7 +343,9 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 player.getDeltaMovement().y);
         // Direct diagonal support is traversed slowly; actual per-tick collision/support guards remain active.
         if (locomotion.aerial()) desired = state.flightInputs.apply(desired, clientTick);
-        if (locomotion != Locomotion.WATER && !locomotion.aerial() && (sneakWhileMoving || !state.route.edges().isEmpty() && state.edgeIndex < state.route.edges().size()
+        if (locomotion != Locomotion.WATER && !locomotion.aerial()
+                && !LocalObservationVolume.crouchDescendsScaffolding(player)
+                && (sneakWhileMoving || !state.route.edges().isEmpty() && state.edgeIndex < state.route.edges().size()
                 && state.route.edges().get(state.edgeIndex).supportedDiagonal())) {
             var crouched = desired.isEmpty() ? EnumSet.noneOf(MovementInputLease.MovementKey.class)
                     : EnumSet.copyOf(desired);

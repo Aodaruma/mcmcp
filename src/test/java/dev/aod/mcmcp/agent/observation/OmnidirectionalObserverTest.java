@@ -39,6 +39,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class OmnidirectionalObserverTest {
     @Test
+    void endPortalHasAKnownSurfaceButArbitraryBlockEntityRenderersStayUnknown() {
+        assertThat(OmnidirectionalObserver.observableBlockShape(Blocks.END_PORTAL.defaultBlockState())).isTrue();
+        assertThat(OmnidirectionalObserver.observableBlockShape(Blocks.STONE.defaultBlockState())).isTrue();
+        assertThat(OmnidirectionalObserver.observableBlockShape(Blocks.MOVING_PISTON.defaultBlockState())).isFalse();
+        assertThat(OmnidirectionalObserver.observableBlockShape(Blocks.END_GATEWAY.defaultBlockState())).isFalse();
+    }
+    @Test
     void entityCrossingTheFogBoundaryCannotUseItsHiddenSamplePointsForLineOfSight() {
         var fog = new OmnidirectionalObserver.TickSample(DIMENSION,
                 new WorldPosition(DIMENSION, 0, 64, 0), 20, 100, 100,

@@ -120,9 +120,8 @@ public record RoutePlan(
                 selected, distance, probes, ticks, ticks * MILLIS_PER_ACTIVE_TICK);
     }
 
-    public boolean endsOnLadderTransit() {
-        return !edges.isEmpty() && edges.getLast().locomotion()
-                == dev.aod.mcmcp.agent.safety.Locomotion.LADDER
+    public boolean endsOnClimbableTransit() {
+        return !edges.isEmpty() && edges.getLast().locomotion().climbable()
                 && !edges.getLast().destination();
     }
 

@@ -79,7 +79,7 @@ public final class DeterministicAStar {
     SearchResult findRoute(
             KnownTraversabilitySnapshot snapshot, NavCell start, NavCell target, int expansionLimit,
             BooleanSupplier canContinue, Runnable onExpansion, Predicate<NavCell> canEnter,
-            boolean ladderTransit) {
+            boolean climbableTransit) {
         Objects.requireNonNull(snapshot, "snapshot");
         Objects.requireNonNull(start, "start");
         Objects.requireNonNull(target, "target");
@@ -99,7 +99,7 @@ public final class DeterministicAStar {
             return SearchResult.failure(FailureReason.TARGET_TOO_FAR, List.of());
         }
         if (!snapshot.containsDestination(target)
-                && !(ladderTransit && snapshot.containsLadderTransit(target))) {
+                && !(climbableTransit && snapshot.containsClimbableTransit(target))) {
             return SearchResult.failure(FailureReason.TARGET_UNKNOWN, List.of());
         }
         if (!canEnter.test(target)) {

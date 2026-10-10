@@ -16,6 +16,22 @@ class CoordinateGoalPlannerTest {
     private static final CoordinateGoalPlanner.Budget DEFAULT = CoordinateGoalPlanner.Budget.DEFAULT;
 
     @Test
+    void aLongScaffoldUsesBoundedTransitWithoutTreatingAnUnsupportedRungAsFinalArrival() {
+        var map = map();
+        for (int y = 64; y < 68; y++) {
+            var rung = ladder(rung(y), rung(y + 1));
+            map.observe(new TraversabilityEdge(SESSION, rung.key(), rung.status(), rung.targetSupport(),
+                    rung.clearance(), rung.transition(), rung.fluid(), rung.hazard(), rung.provenance(),
+                    rung.observerPosition(), 1, 0, dev.aod.mcmcp.agent.safety.Locomotion.SCAFFOLDING));
+        }
+        var result = plan(new CoordinateGoalPlanner(SESSION, rung(80)), map, rung(64));
+        assertThat(result.status()).isEqualTo(PARTIAL_WAYPOINT);
+        assertThat(result.route().orElseThrow().cells()).containsExactly(rung(64), rung(65), rung(66), rung(67));
+        assertThat(result.route().orElseThrow().endsOnClimbableTransit()).isTrue();
+        assertThat(new DeterministicAStar().findRoute(map.snapshot().orElseThrow(), rung(64), rung(67)).found()).isFalse();
+    }
+
+    @Test
     void longLadderUsesOnlyProgressingTransitWithAnotherObservedRungBeyondIt() {
         var map = map();
         for (int y = 80; y > 76; y--) map.observe(ladder(rung(y), rung(y - 1)));
@@ -23,7 +39,7 @@ class CoordinateGoalPlannerTest {
         var first = plan(planner, map, rung(80));
         assertThat(first.status()).isEqualTo(PARTIAL_WAYPOINT);
         assertThat(first.route().orElseThrow().cells()).containsExactly(rung(80), rung(79), rung(78), rung(77));
-        assertThat(first.route().orElseThrow().endsOnLadderTransit()).isTrue();
+        assertThat(first.route().orElseThrow().endsOnClimbableTransit()).isTrue();
         assertThat(map.snapshot().orElseThrow().containsDestination(rung(77))).isFalse();
         assertThat(new DeterministicAStar().findRoute(map.snapshot().orElseThrow(), rung(80), rung(77)).found()).isFalse();
         for (int y = 77; y > 73; y--) map.observe(ladder(rung(y), rung(y - 1)));
@@ -54,7 +70,7 @@ class CoordinateGoalPlannerTest {
                 source.fluid(), source.hazard(), source.provenance(), source.observerPosition(), 1, 0, source.locomotion()));
         var result = plan(new CoordinateGoalPlanner(SESSION, exit), map, rung(66));
         assertThat(result.status()).isEqualTo(KNOWN_GOAL_ROUTE);
-        assertThat(result.route().orElseThrow().endsOnLadderTransit()).isFalse();
+        assertThat(result.route().orElseThrow().endsOnClimbableTransit()).isFalse();
         assertThat(result.route().orElseThrow().cells()).containsExactly(rung(66), rung(65), rung(64), exit);
     }
 
@@ -69,7 +85,7 @@ class CoordinateGoalPlannerTest {
         var planner = new CoordinateGoalPlanner(SESSION, new NavCell("overworld", 8, 69, -4));
         var result = plan(planner, map, rung(80));
         assertThat(result.route().orElseThrow().cells().getLast()).isEqualTo(rung(77));
-        assertThat(result.route().orElseThrow().endsOnLadderTransit()).isTrue();
+        assertThat(result.route().orElseThrow().endsOnClimbableTransit()).isTrue();
     }
 
     @Test
