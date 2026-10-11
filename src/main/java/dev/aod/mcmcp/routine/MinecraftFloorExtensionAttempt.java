@@ -292,9 +292,13 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
     }
     private boolean settled() { return player.getDeltaMovement().horizontalDistanceSqr() < 0.000025; }
     private float outwardYaw() { return switch (direction) { case NORTH -> 180; case SOUTH -> 0; case EAST -> -90; case WEST -> 90; default -> throw new AssertionError(); }; }
+    public static float cameraStepDegrees(int configuredDegreesPerSecond) {
+        return Math.min(8.0F, configuredDegreesPerSecond / 20.0F);
+    }
     private boolean turn(float yaw, float pitch) {
         float dy = Mth.wrapDegrees(yaw - player.getYRot()), dp = pitch - player.getXRot();
-        player.turn(Mth.clamp(dy, -8, 8) / 0.15D, Mth.clamp(dp, -8, 8) / 0.15D);
+        float step = cameraStepDegrees(dev.aod.mcmcp.client.McmcpClientConfig.maxCameraDegreesPerSecond());
+        player.turn(Mth.clamp(dy, -step, step) / 0.15D, Mth.clamp(dp, -step, step) / 0.15D);
         expectedYaw = player.getYRot(); expectedPitch = player.getXRot();
         return Math.abs(Mth.wrapDegrees(yaw - expectedYaw)) < 0.2 && Math.abs(pitch - expectedPitch) < 0.2;
     }

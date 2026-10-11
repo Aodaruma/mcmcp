@@ -33,6 +33,9 @@ try {
     Assert-V2LedgerThrows {Read-V2ConstructionCheckpoint $ledgerFile $plan}
     [IO.File]::Delete($ledgerFile)
     $PlanPath=$planFile; $CheckpointPath=$ledgerFile
+    $plan.steps[0].wait_timeout_ms=20000
+    [IO.File]::WriteAllText($planFile,(@{version=2;dimension=$plan.dimension;steps=$plan.steps}|ConvertTo-Json -Depth 20 -Compress))
+    $plan=Read-V2ConstructionPlan $planFile
     $script:mockPlacements=0; $script:mockSession='session-one'
     function Invoke-V2ConstructionTool([string]$Name,$Arguments=@{}) {
         switch($Name) {
