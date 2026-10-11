@@ -127,7 +127,8 @@ final class MinecraftV2PlaceDriver
             V2PlaceArguments request, BooleanSupplier outputAllowed) {
         if (stage != Stage.IDLE) throw new IllegalStateException("place driver already active");
         if (!outputAllowed.getAsBoolean()) return V2BlockJobExecution.BeginResult.FAILED;
-        if (beginFloorExtension(next, request)) return V2BlockJobExecution.BeginResult.STARTED;
+        var floor = beginFloorExtension(next, request);
+        if (floor != null) return floor;
         var observed = beginObservedTarget(next, request, outputAllowed);
         if (observed != V2BlockJobExecution.BeginResult.WAITING
                 || !request.advance() || request.maxDistance() <= 0.0D) return observed;
@@ -142,8 +143,9 @@ final class MinecraftV2PlaceDriver
         return V2BlockJobExecution.BeginResult.STARTED;
     }
 
-    private boolean beginFloorExtension(NavCell next, V2PlaceArguments requested) {
-        if (!requested.advance() || remainingDistance.getAsDouble() <= 0 || floorPlacement == null) return false;
+    /** Null means other geometry; WAITING retains this support until its current-eye witness arrives. */
+    private V2BlockJobExecution.BeginResult beginFloorExtension(NavCell next, V2PlaceArguments requested) {
+        if (!requested.advance() || remainingDistance.getAsDouble() <= 0 || floorPlacement == null) return null;
         var session = sessions.get();
         var player = minecraft.player;
         var level = minecraft.level;
@@ -152,15 +154,14 @@ final class MinecraftV2PlaceDriver
                 || !next.dimension().equals(session.dimension())
                 || Math.abs(player.getY() - next.y() - 1) > 0.015
                 || !level.isLoaded(blockPos(next)) || !level.getBlockState(blockPos(next)).isAir()
-                || !requested.acceptsTarget(blockId(level.getBlockState(blockPos(next))))) return false;
+                || !requested.acceptsTarget(blockId(level.getBlockState(blockPos(next))))) return null;
         var frame = observations.latestInternalFrame();
-        if (frame.isEmpty()) return false;
         var desired = new BlockStateFingerprint(requested.blockId(), requested.properties());
         var block = BuiltInRegistries.BLOCK.get(net.minecraft.resources.Identifier.parse(requested.blockId()));
-        if (block.isEmpty()) return false;
+        if (block.isEmpty()) return null;
         var source = block.orElseThrow().value().getStateDefinition().getPossibleStates().stream()
                 .filter(state -> desired.matches(fingerprint(state))).findFirst().orElse(null);
-        if (source == null) return false;
+        if (source == null) return null;
         var recon = reconciliationSignals.bindAndSnapshot(level, session.worldSessionId());
         for (Direction direction : Direction.Plane.HORIZONTAL) {
             var support = blockPos(next).relative(direction.getOpposite());
@@ -168,28 +169,33 @@ final class MinecraftV2PlaceDriver
                     player.getX() - support.getX() - 0.5, player.getZ() - support.getZ() - 0.5)
                     || !level.isLoaded(support)) continue;
             var supportCell = new NavCell(next.dimension(), support.getX(), support.getY(), support.getZ());
-            var aim = V2BlockAimResolver.resolve(frame.orElseThrow(), supportCell, ObservationRecord.Face.UP,
-                    player.getEyePosition(), session.worldSessionId(), session.clientTick(), recon.worldRevision(),
-                    recon.surfaceBarrierWorldRevision(support.getX(), support.getY(), support.getZ()));
-            if (aim.isEmpty() || !aim.orElseThrow().blockId().equals(blockId(level.getBlockState(support)))) continue;
             try {
                 var sourceRequest = new KnownPillarUpRequest(new BlockTarget(next.dimension(),
                         support.getX(), support.getY(), support.getZ()), fingerprint(level.getBlockState(support)),
                         fingerprint(source), requested.itemId());
                 var attempt = new MinecraftFloorExtensionAttempt(minecraft, session, sourceRequest, direction,
                         floorObservations, floorPlacement, reconciliationSignals, true);
+                var aim = frame.flatMap(value -> V2BlockAimResolver.resolve(value, supportCell, ObservationRecord.Face.UP,
+                        player.getEyePosition(), session.worldSessionId(), session.clientTick(), recon.worldRevision(),
+                        recon.surfaceBarrierWorldRevision(support.getX(), support.getY(), support.getZ())));
+                if (aim.isEmpty() || !aim.orElseThrow().blockId().equals(blockId(level.getBlockState(support)))) {
+                    // Crouch release changes eye height after the previous landing. Do not let
+                    // that short witness gap navigate back off the newly confirmed support.
+                    attempt.close();
+                    return V2BlockJobExecution.BeginResult.WAITING;
+                }
                 this.target = next;
                 this.request = requested;
                 floorAfter = sourceRequest.sourceState();
                 floorExtension = attempt;
                 stage = Stage.FLOOR_EXTENSION;
-                return true;
+                return V2BlockJobExecution.BeginResult.STARTED;
             } catch (IllegalArgumentException | IllegalStateException unsupported) {
                 // Only the audited full-floor geometry uses edge movement. Ordinary placement
                 // and approach keep their existing behavior for all other blocks and poses.
             }
         }
-        return false;
+        return null;
     }
 
     private V2BlockJobExecution.BeginResult beginObservedTarget(NavCell next,
@@ -476,17 +482,22 @@ final class MinecraftV2PlaceDriver
                 case FAILED -> V2BlockJobExecution.StepResult.FAILED;
             };
         }
+        var floor = beginFloorExtension(target, request);
+        if (floor != null) {
+            if (floor == V2BlockJobExecution.BeginResult.STARTED) {
+                navigation.close();
+                navigation = null;
+                return V2BlockJobExecution.StepResult.RUNNING;
+            }
+            return ++approachEvidenceWaitTicks <= MAX_APPROACH_EVIDENCE_WAIT_TICKS
+                    ? V2BlockJobExecution.StepResult.RUNNING : V2BlockJobExecution.StepResult.FAILED;
+        }
         var observed = beginObservedTarget(target, request, outputAllowed);
         switch (observed) {
             case STARTED -> { return V2BlockJobExecution.StepResult.RUNNING; }
             case SKIPPED -> { return V2BlockJobExecution.StepResult.SKIPPED; }
             case FAILED -> { return V2BlockJobExecution.StepResult.FAILED; }
             case WAITING -> { }
-        }
-        if (beginFloorExtension(target, request)) {
-            navigation.close();
-            navigation = null;
-            return V2BlockJobExecution.StepResult.RUNNING;
         }
         if (waitingEvidence != null && waitingEvidence.equals(map.edges())) {
             return ++approachEvidenceWaitTicks <= MAX_APPROACH_EVIDENCE_WAIT_TICKS
