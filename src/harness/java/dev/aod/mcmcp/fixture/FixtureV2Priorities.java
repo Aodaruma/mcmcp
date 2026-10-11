@@ -301,6 +301,8 @@ final class FixtureV2Priorities {
     private static void prepareFloorRefill(net.minecraft.server.level.ServerPlayer player)
             throws ReflectiveOperationException {
         var wrapper = backpackWrapper(player.getInventory().getItem(6));
+        // Initialize the new backpack identity and slot counts before constructing its upgrades.
+        var inventory = wrapper.getClass().getMethod("getInventoryHandler").invoke(wrapper);
         var upgrades = wrapper.getClass().getMethod("getUpgradeHandler").invoke(wrapper);
         var upgrade = BuiltInRegistries.ITEM.getOptional(
                 net.minecraft.resources.Identifier.parse("sophisticatedbackpacks:refill_upgrade")).orElseThrow();
@@ -310,7 +312,6 @@ final class FixtureV2Priorities {
         var refill = Objects.requireNonNull(wrappers.get(0), "refill wrapper missing");
         var logic = refill.getClass().getMethod("getFilterLogic").invoke(refill);
         var filters = logic.getClass().getMethod("getFilterHandler").invoke(logic);
-        var inventory = wrapper.getClass().getMethod("getInventoryHandler").invoke(wrapper);
         var materials = List.of("minecraft:black_concrete", "minecraft:gray_concrete").stream()
                 .map(id -> BuiltInRegistries.ITEM.getOptional(net.minecraft.resources.Identifier.parse(id)).orElseThrow()).toList();
         for (int slot = 0; slot < materials.size(); slot++) {
