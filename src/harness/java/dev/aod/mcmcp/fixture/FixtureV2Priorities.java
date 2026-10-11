@@ -125,6 +125,7 @@ final class FixtureV2Priorities {
                         player.setHealth(player.getMaxHealth());
                         if (kind.equals("water_air")) player.setAirSupply(120);
                         if (kind.startsWith("storage_")) prepareBackpack(player, kind);
+                        if (kind.equals("floor_refill")) prepareFloorRefill(player);
                         storageDriftApplied = false;
                         storageCursorDrift = kind.equals("storage_cursor_drift");
                         storageDrift = kind.equals("storage_drift") || storageCursorDrift ? decision.context() : null;
@@ -297,6 +298,30 @@ final class FixtureV2Priorities {
         player.inventoryMenu.broadcastChanges();
     }
 
+    private static void prepareFloorRefill(net.minecraft.server.level.ServerPlayer player)
+            throws ReflectiveOperationException {
+        var wrapper = backpackWrapper(player.getInventory().getItem(6));
+        var upgrades = wrapper.getClass().getMethod("getUpgradeHandler").invoke(wrapper);
+        var upgrade = BuiltInRegistries.ITEM.getOptional(
+                net.minecraft.resources.Identifier.parse("sophisticatedbackpacks:refill_upgrade")).orElseThrow();
+        upgrades.getClass().getMethod("setStackInSlot", int.class, net.minecraft.world.item.ItemStack.class)
+                .invoke(upgrades, 0, new net.minecraft.world.item.ItemStack(upgrade));
+        var wrappers = (Map<?, ?>) upgrades.getClass().getMethod("getSlotWrappers").invoke(upgrades);
+        var refill = Objects.requireNonNull(wrappers.get(0), "refill wrapper missing");
+        var logic = refill.getClass().getMethod("getFilterLogic").invoke(refill);
+        var filters = logic.getClass().getMethod("getFilterHandler").invoke(logic);
+        var inventory = wrapper.getClass().getMethod("getInventoryHandler").invoke(wrapper);
+        var materials = List.of("minecraft:black_concrete", "minecraft:gray_concrete").stream()
+                .map(id -> BuiltInRegistries.ITEM.getOptional(net.minecraft.resources.Identifier.parse(id)).orElseThrow()).toList();
+        for (int slot = 0; slot < materials.size(); slot++) {
+            filters.getClass().getMethod("setStackInSlot", int.class, net.minecraft.world.item.ItemStack.class)
+                    .invoke(filters, slot, new net.minecraft.world.item.ItemStack(materials.get(slot)));
+            inventory.getClass().getMethod("setStackInSlot", int.class, net.minecraft.world.item.ItemStack.class)
+                    .invoke(inventory, slot, new net.minecraft.world.item.ItemStack(materials.get(slot), 64));
+        }
+        player.inventoryMenu.broadcastChanges();
+    }
+
     private static Map<String, Object> backpackReport(net.minecraft.world.item.ItemStack stack)
             throws ReflectiveOperationException {
         Object wrapper = backpackWrapper(stack);
@@ -392,7 +417,7 @@ final class FixtureV2Priorities {
                 "tp @s 305.5 101 305.5 180 0", "setblock 305 101 303 minecraft:crafting_table",
                 "recipe give @s *", "time set noon", "weather clear"));
         switch (kind) {
-            case "floor_east", "floor_west", "floor_north", "floor_south", "floor_offset", "floor_shortage", "floor_obstructed" -> {
+            case "floor_east", "floor_west", "floor_north", "floor_south", "floor_offset", "floor_shortage", "floor_obstructed", "floor_refill" -> {
                 result.addAll(List.of("fill 300 101 300 320 116 320 minecraft:air",
                         "setblock 310 105 310 minecraft:stone",
                         "item replace entity @s hotbar.0 with minecraft:black_concrete " + (kind.equals("floor_shortage") ? 2 : 64),
@@ -401,6 +426,7 @@ final class FixtureV2Priorities {
                         "item replace entity @s hotbar.2 with minecraft:netherite_pickaxe",
                         kind.equals("floor_offset") ? "tp @s 310.80 106 310.70 180 80" : "tp @s 310.5 106 310.5 180 80"));
                 if (kind.equals("floor_obstructed")) result.add("setblock 311 107 310 minecraft:stone");
+                if (kind.equals("floor_refill")) result.add("item replace entity @s hotbar.6 with sophisticatedbackpacks:netherite_backpack");
             }
             case "scaffold_stair", "scaffold_corner", "scaffold_step" -> {
                 result.addAll(List.of("fill 300 101 300 320 116 320 minecraft:air",
