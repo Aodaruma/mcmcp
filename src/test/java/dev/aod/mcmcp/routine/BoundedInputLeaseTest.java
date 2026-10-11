@@ -1,5 +1,6 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.client.AgentInputState;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -75,6 +76,20 @@ class BoundedInputLeaseTest {
         lease.close();
         lease.close();
         assertThat(control.releases).isEqualTo(2);
+    }
+
+    @Test
+    void middleClickLeaseUsesTheSharedInputOwnershipFence() {
+        var state = new AgentInputState();
+        var lease = BoundedInputLease.acquire(state,
+                Set.of(BoundedInputLease.Input.PICK), System.nanoTime(),
+                Duration.ofSeconds(1));
+        assertThat(state.pickActive()).isTrue();
+        assertThat(state.inputOwnerNone()).isFalse();
+
+        lease.close();
+        assertThat(state.pickActive()).isFalse();
+        assertThat(state.inputOwnerNone()).isTrue();
     }
 
     private static final class FakeControl implements BoundedInputLease.Control {

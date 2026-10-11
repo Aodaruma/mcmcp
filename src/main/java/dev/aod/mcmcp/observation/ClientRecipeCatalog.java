@@ -167,7 +167,7 @@ public final class ClientRecipeCatalog {
                 recipe.toView(),
                 recipe.extracted().durationTicks(),
                 worldSessionId,
-                revision));
+                revision, recipe.extracted().layout()));
     }
 
     public synchronized Snapshot snapshot() {
@@ -294,8 +294,6 @@ public final class ClientRecipeCatalog {
                     });
                     if (hasRemainder) {
                         unsupportedReason = "crafting_remainder";
-                        ingredients.clear();
-                        break;
                     }
                     ingredients.add(new IngredientView(index, 1, alternatives));
                 }
@@ -309,7 +307,6 @@ public final class ClientRecipeCatalog {
         if (result.alternatives().size() != 1 || !result.deterministic()) {
             unsupportedReason = unsupportedReason == null ? "non_deterministic_result" : unsupportedReason;
         }
-        boolean supported = unsupportedReason == null;
 
         var resultTags = new HashSet<String>();
         for (var alternative : result.alternatives()) {
@@ -321,12 +318,39 @@ public final class ClientRecipeCatalog {
             }
         }
 
+        var layout = displayedIngredients.stream().map(ClientRecipeCatalog::simpleDisplayItems).toList();
+        if (Set.of("shaped", "shapeless").contains(displayKind)
+                && (unsupportedReason == null || unsupportedReason.equals("crafting_remainder"))) {
+            var requiredLayout = ingredients.stream().map(IngredientView::alternatives)
+                    .map(Object::toString).sorted().toList();
+            var actualLayout = layout.stream().filter(cell -> !cell.isEmpty()).map(Object::toString).sorted().toList();
+            if (!actualLayout.equals(requiredLayout)
+                    || layout.stream().anyMatch(cell -> cell.size() > MAX_INGREDIENT_ALTERNATIVES))
+                unsupportedReason = "unsupported_crafting_layout";
+        }
+        boolean supported = unsupportedReason == null;
         var fingerprint = fingerprint(
                 entry.id().index(), displayKind, requiredScreen, shape, durationTicks,
-                result, ingredients, supported, unsupportedReason);
+                result, ingredients, supported, unsupportedReason, layout);
         return new ExtractedRecipe(
                 entry.id(), fingerprint, displayKind, requiredScreen, supported, unsupportedReason,
-                result, List.copyOf(ingredients), shape, durationTicks, Set.copyOf(resultTags));
+                result, List.copyOf(ingredients), shape, durationTicks, Set.copyOf(resultTags), layout);
+    }
+
+    private static List<String> simpleDisplayItems(SlotDisplay display) {
+        if (display instanceof SlotDisplay.WithRemainder wrapped) return simpleDisplayItems(wrapped.input());
+        if (display instanceof SlotDisplay.ItemSlotDisplay item)
+            return List.of(BuiltInRegistries.ITEM.getKey(item.item().value()).toString());
+        if (display instanceof SlotDisplay.ItemStackSlotDisplay item && item.stack().count() == 1
+                && item.stack().components().isEmpty())
+            return List.of(BuiltInRegistries.ITEM.getKey(item.stack().item().value()).toString());
+        if (display instanceof SlotDisplay.TagSlotDisplay tag)
+            return BuiltInRegistries.ITEM.get(tag.tag()).stream().flatMap(set -> set.stream())
+                    .map(item -> BuiltInRegistries.ITEM.getKey(item.value()).toString()).sorted()
+                    .limit(MAX_INGREDIENT_ALTERNATIVES + 1L).toList();
+        if (display instanceof SlotDisplay.Composite composite)
+            return composite.contents().stream().flatMap(part -> simpleDisplayItems(part).stream()).distinct().sorted().toList();
+        return List.of();
     }
 
     private static CookingFamily cookingCategory(RecipeBookCategory category) {
@@ -413,7 +437,7 @@ public final class ClientRecipeCatalog {
             Result result,
             List<IngredientView> ingredients,
             boolean supported,
-            String unsupportedReason) {
+            String unsupportedReason, List<List<String>> layout) {
         try {
             var bytes = new ByteArrayOutputStream();
             var out = new DataOutputStream(bytes);
@@ -445,6 +469,11 @@ public final class ClientRecipeCatalog {
             }
             out.writeBoolean(supported);
             writeString(out, unsupportedReason == null ? "" : unsupportedReason);
+            out.writeInt(layout.size());
+            for (var cell : layout) {
+                out.writeInt(cell.size());
+                for (var item : cell) writeString(out, item);
+            }
             out.flush();
             return "sha256:" + sha256(bytes.toByteArray());
         }
@@ -591,11 +620,18 @@ public final class ClientRecipeCatalog {
             map.put("display_kind", displayKind);
             map.put("required_screen", requiredScreen);
             map.put("supported", supported);
+            map.put("v2_craft_supported", v2CraftSupported());
             map.put("unsupported_reason", unsupportedReason);
             map.put("result", result.toMap());
             map.put("ingredients", ingredients.stream().map(IngredientView::toMap).toList());
             map.put("shape", shape == null ? null : shape.toMap());
             return map;
+        }
+
+        public boolean v2CraftSupported() {
+            return (supported || "crafting_remainder".equals(unsupportedReason))
+                    && Set.of("shaped", "shapeless").contains(displayKind)
+                    && result.deterministic() && result.alternatives().size() == 1 && !ingredients.isEmpty();
         }
     }
 
@@ -662,8 +698,13 @@ public final class ClientRecipeCatalog {
             RecipeView view,
             int cookingDurationTicks,
             UUID worldSessionId,
-            long recipeBookRevision) {
+            long recipeBookRevision, List<List<String>> layout) {
+        public ResolvedRecipe(RecipeDisplayId displayId, String fingerprint, RecipeView view,
+                int cookingDurationTicks, UUID worldSessionId, long recipeBookRevision) {
+            this(displayId, fingerprint, view, cookingDurationTicks, worldSessionId, recipeBookRevision, List.of());
+        }
         public ResolvedRecipe {
+            layout = layout.stream().map(List::copyOf).toList();
             Objects.requireNonNull(displayId, "displayId");
             Objects.requireNonNull(fingerprint, "fingerprint");
             Objects.requireNonNull(view, "view");
@@ -705,7 +746,7 @@ public final class ClientRecipeCatalog {
             List<IngredientView> ingredients,
             Shape shape,
             int durationTicks,
-            Set<String> resultTags) {
+            Set<String> resultTags, List<List<String>> layout) {
         private ExtractedRecipe {
             Objects.requireNonNull(displayId, "displayId");
             Objects.requireNonNull(fingerprint, "fingerprint");

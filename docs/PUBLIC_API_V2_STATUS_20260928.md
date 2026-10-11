@@ -1,0 +1,291 @@
+# 公開API v2：進捗と再開メモ（2026-09-28）
+
+2026-10-11 導入後の設計図確認：通常R2で149,040 entries・約9.09 MBの実設計図をpreviewし、16-entry（床15＋松明1）を29.960秒で施工成功。next_index=332、batch_complete=true、終端後の体力20・READY・Actionなし。全量施工は現場担当が継続する。[実機記録](experiments/20261011_v2_blueprint_tool.md)。
+
+2026-10-11 導入後：通常R2で現場担当のnative `agent_run_script`が6床連続成功。松明のある支持床から出発し、自動補充ONのまま13.5259秒で6床を確定、各新床へ前進した。親action `f0f6861d-7bf2-4970-ab76-9e766bd0389f`。通常ゲームの操作権は現場担当が保持し、全量施工の完了とは区別する。[詳細](experiments/20261011_v2_blueprint_tool.md)。
+
+2026-10-11 18:22 JST：通常「くらふとぶ！-v01.2」を設計図R2へ更新し、Prismのnative Explorer起動・既存server接続・MCP ONまで完了。実JVMが開いた製品JARのSHA256は`8ccd97f9…936ee`、公開17ツール全定義・入出力schema一致、体力20・位置・経験値2582を維持。旧R4はbackup済み、他MOD・設定不変。18:23に現場担当へ所有を返却した。149,040 entriesの実設計図データも登録rootへ配置済みだが、配置担当はpreview・施工を実行していない。隔離は14ケース・27 actions成功、元66/world61ファイルのhash一致復元、Docker/WSL停止・lease解放済み。[施工仕様](PUBLIC_API_V2_BUILDING.md)、[agent_build仕様](PUBLIC_API_V2_BLUEPRINT_TOOL.md)、[検証・導入記録](experiments/20261011_v2_blueprint_tool.md)。以下は各時点の履歴。
+
+2026-10-11 18:14 JST：候補`8ccd97f9…936ee`（公開17ツール）は隔離14ケース成功。旧R4の自動補充中の6回目停止を再現し、候補は同条件8回成功。torch支持床、script実行器を使う設計図の色替え・CSV・palette・batch再開・break→place・材料不足の部分結果・取消も確認した。元環境の復元と通常profileへの差し替えを担当間で進行中。現時点で通常はR4のまま。[実機記録](experiments/20261011_v2_blueprint_tool.md)。
+
+2026-10-11 17:40 JST：専用agent_buildと追加修正候補は自動1874件・build成功、隔離実機待ち。通常R4で支持床上の松明がnative入口を拒否し、自動補充で材料数が減らないと設置後確認待ちになる条件を確認した。候補は無衝突・非危険の配置物を通行可能にし、server設置確認＋当該枠の新しい受信payload一致で補充を受理する。world確認済みの床は途中停止時にも部分結果へ保持。通常現場は有限の代替手順を使用後、安全床で待機している。[追加検証](experiments/20261011_v2_floor_edge_approach.md)。
+
+2026-10-11 17:21 JST：起動経路を既存Windows ExplorerのUIへ変更し、通常「くらふとぶ！-v01.2」の起動・接続・MCP ONまで完了。新JVMが開いたJARの実体はnative Roaming側R4 `f01b1b0d...a0a8c2`、公開16ツール全定義・入出力schema一致、HP20・経験値表示復帰を確認。操作権は現場担当へ返却済み。旧LocalCacheコピーは変更していない。以下の起動是正中という記述は履歴。専用agent_buildは別候補のまま、通常R4へ未導入。
+
+2026-10-11 17:17 JST：優先1・2の床/script R4は通常profileの物理JARへ配置済み（`f01b1b0d...a0a8c2`）。その後Codex経由で開いたPrismから起動したJVMが、LocalCache側の旧JARを実際に開いていたとOSハンドルで確認。配置は正常だが起動経路の是正・live確認を進行中。専用`agent_build`（17番目）は別候補として実装し、自動1871件・build成功。設計図preview、hash/session照合、有限batch、明示break/place、部分結果と再開indexに対応。隔離実機確認はこれからで、通常R4には含めない。[専用tool仕様](PUBLIC_API_V2_BLUEPRINT_TOOL.md)。
+
+2026-10-11 16:56 JST：placeのadvance床延長・中心調整、scriptへの共通適用、子命令ごとの設置／破壊累計、設計図の区間script生成を実装。自動1862件とbuild/harness隔離・CIが成功。隔離実機はR3の4方向・位置ずれ・色替え・外部JSON・停止条件11件が成功。材料切れ時の後退を直した最終R4（source `e36dfc35`）で、その場停止・外部script成功・失敗scriptの累計保持の3件も成功。元環境復元と通常profileへの引継ぎを進行中。専用の自動施工toolは1・2の導入後に着手する。[利用方法](PUBLIC_API_V2_BUILDING.md)、[検証記録](experiments/20261011_v2_floor_edge_approach.md)。
+
+2026-10-11 15:42 JST以降：同期診断候補の隔離8job・次元往復が成功、全診断matched。不具合は未再現、収納take/store・自動補充後は未検証。元66ファイル一致復元、Docker停止・lease解放まで確認。利用者の後続指示により床延長のv2統合を優先し、現在は実装前の具体案を利用者と検討する段階。[同期検証](experiments/20261011_v2_inventory_sync.md)、[床延長](experiments/20261011_v2_floor_edge_approach.md)。
+
+2026-10-11 追加課題：水平な床の延長で、支持block側面を露出する「しゃがんで端へ寄る」動作がplace/bridgeに統合されていないことを確認。現場は有限の公開入力とplaceの組合せで1個成功・体力20。クラフト同期を優先し、この端寄り統合は後続対応とする。[コード確認と検証条件](experiments/20261011_v2_floor_edge_approach.md)。
+
+2026-10-11 追加開発：nav-r14で再接続後もクラフト・数量移送が `inventory_server_snapshot_required` で拒否される報告に対し、記録欠落・枠数・cursor・slot不一致を区別する `inventory_sync` を追加。stateのinventory sectionと失敗時resultから取得する。安全判定と入力は変更していない。自動1,854件・build成功、隔離実機確認は準備中。同期復旧の修正完了ではない。[診断契約と検証記録](experiments/20261011_v2_inventory_sync.md)。
+
+2026-10-11 14:44 JST：aod-mimoid担当の完了報告・最終receipt検証出力を取得。足場column/top/corner/stairの4件は各1回成功・体力20。元66ファイルのhash一致復元、container/Docker停止、lease解放は10:12 JST台までに完了していた。stepは復元後の追加依頼のため未実施。下記の復元「未確認」は解消したが、現場の移動停止原因は未確定。[更新した検証記録](experiments/20261011_v2_scaffold_stall.md)。
+
+2026-10-11 追加確認：収納調査で報告された照準失敗と既存GUIの公開APIをnav-r14のコード・catalogで確認。`known_menu`は最大16件の移送用参照であり、既存画面の全内容取得・終了の公開operationは未対応。閉じた画面からは`inspect_storage`、または`target=menu, clicks=[]`の一括処理が利用できる。現場は端へのlook後のinspectで調査を完了したとの報告。製品・通常ゲーム・JARは変更していない。[確認結果と開発課題](experiments/20261011_v2_open_storage_api_review.md)。
+
+2026-10-11 10:38 JST：地図アート担当のnav-r14による収集は全16色・必要147,456個を充当し、完成品159,088個、残数0、体力20、収集スケジュールPAUSEDを確認。通常ゲームは現場担当が所有し、追加交換は不要。残存する経路停止と、接続断で未確認の隔離環境の復元は別件として維持する。[完了報告と未確認事項](experiments/20261011_v2_scaffold_stall.md)。
+
+2026-10-11 09:50 JST：差し替え担当の通常nav-r14導入記録で、新JVM・session、製品hash、公開16ツール全定義の一致を確認。操作権は地図アート担当へ返却済み。その後、別の地上→石段への接近で `movement_stalled`／8回再計画後の停止が報告された。短区間では進行でき、作業は継続中。本件は旧版との同条件対照がなく回帰未断定。隔離の柱・上端横移動・角は成功したが、その後Codex host接続が切れ、stair/step結果と新runの復元・停止は未確認。SSH再認証の空lock退避・quiet loginも自動承認審査で実行前に拒否された。再接続後は復元状態の確認を優先する。[追加調査](experiments/20261011_v2_scaffold_stall.md)。以下の導入前の記述は各時点の履歴として扱う。
+
+2026-10-11 追加候補nav-r14：通常nav-r13で地上復帰時に不要な足場昇降・再計画が報告された。部分waypointの選定へ余分な経路コストを反映する候補を実装し、自動1,849件・製品CI・source checksが成功。上階の観測履歴を残した隔離対照で、旧R13の昇降・5回の再計画・距離上限停止を再現し、修正版は地上のまま到達した。8段足場・上端横移動・小数座標も成功。元66ファイルをhash一致で復元し、09:35 JSTまでにDocker停止・lease解放済み。通常ゲームはnav-r13のまま、操作・並行差し替えは行わない。[調査と検証](experiments/20261011_v2_scaffold_detour.md)。
+
+2026-10-11 08:41 JST：差し替え担当が通常「くらふとぶ！-v01.2」へのnav-r13導入・再接続・MCP ON・公開16ツール全定義一致を確認し、08:42 JSTの地図アート担当の記録で操作権返却を確認。その後、足場上から黒→灰16枠の交換・公開観測が成功し、体力20を維持したとの報告を受領した。以下のnav-r13導入前の記述は各時点の履歴として扱う。
+
+2026-10-11追加開発：短いActionの結果待機返却、既定result取得、小数座標、1マス飛び・累計落下ダメージ予算、Nether/End進入、足場の昇降・上面移動・設置を実装・修正。自動1,847件と製品CI成功。隔離Dockerで穴越え・落下・地上/飛行/水中/馬/ボートの小数位置・結果返却・Nether往復・End進入・足場3段/8段と設置後の高さ維持を確認。最終R13でもボート・馬・徒歩look・足場上の破壊と再設置が成功し、公開16ツール全定義が一致。3つのrunはそれぞれ元66ファイルをhash一致で復元、Docker停止・lease解放済み。通常レールのトロッコの0.1block精密停止、騎乗中lookなどの制限は残る。通常profileは未更新、検証済み製品JARを差し替え担当へ引き継ぐ。[仕様](PUBLIC_API_V2_MOVEMENT_RESULTS_20261011.md)、[検証記録](experiments/20261011_v2_movement_results.md)。
+
+2026-10-11：`agent_get_observation` に可視看板の文字・色・発光と、任意の `include_nbt`（既定false）を追加。client update-tagのSNBTを有界に返し、現在の遮蔽を再検証する。自動1,811件とaod-mimoid隔離Dockerの27項目が成功。通常profileには未導入。[仕様](PUBLIC_API_V2_SIGN_NBT_20261011.md)、[実機・復旧記録](experiments/20261011_v2_sign_nbt.md)。
+
+2026-10-11：公開16番目の `agent_chat` を追加。新着カーソルによる受信と、共通Actionによる通常発言の送信。[仕様](PUBLIC_API_V2_CHAT_20261011.md)、[検証記録](experiments/20261011_v2_chat.md)。通常R18の差し替えは行わない。
+
+## 追加候補：収納枠の境界（R20、R18ベース・実機未確認）
+
+通常R18は差し替え担当が13:17 JSTに導入を確認し、地図アート担当へ所有を返した。状態取得・バッグinspect・End往復・梯子降下も正常との報告を受けている。2,048個の収納枠をまたぐ448個のstoreが事前拒否された追加報告に対し、14クリックのまま別の収納枠を選ぶ計画を追加した。R20はR18ベースでR19の変更を含めず、自動1,754件・build成功、実機確認と通常導入は未実施。[原因・契約・次回試験](experiments/20261010_v2_storage_boundary_candidate.md)。
+
+## 追加調査：収納終了待ちと粉の混入
+
+自然Endポータルへの明示的な近傍進入を、`agent_interact target=portal` の別候補として追加。通常move/inputの落下防止を維持し、入力解放後の新session・期待dimension確認を分離する。自動1,789件・build・harness隔離が成功。通常R18への導入・実機確認は未実施。[候補仕様と隔離検証計画](experiments/20261010_v2_portal_entry_candidate.md)。
+
+通常R18の収納終了待ちは373秒でも継続した後、利用者のOFF・切断・再接続・ONで手動復旧。fresh数量を確認し、旧UNKNOWNは維持した。候補ソースに終了待ちの固定理由、cursorの証拠revision、返却送信有無を追加し、自動1,776件・buildが成功。自動復帰条件は変更しておらず、追加診断の実機確認も未実施。[復旧記録と改善案](experiments/20261010_v2_r18_storage_release_pending.md)。装置の粉混入については、[水入り葉・End台再生成のコード根拠と担当の静止対照試験](experiments/20261010_concrete_powder_code_review.md)も記録した。
+
+担当の追加試験では、北の扉を水入り葉へ変えると同じNW角の粉が硬化した。全混入原因は未確定。水バケツのblock interactには通常クリックの後段に相当するuse処理がなく、対象条件付きclickとfresh観測で現場は復旧した。[操作経路の調査と未実装の修正条件](experiments/20261010_v2_bucket_interact_diagnosis.md)。扉・固体のbreak失敗後にもfresh AIRを確認し、[既知の診断課題](experiments/20261010_v2_break_post_effect_diagnosis.md)へ追記。通常R18と候補配布物は変更していない。
+
+## 追加調査：扉端の安全判定拒否と診断改善（実機未確認）
+
+通常R18で扉端のmove失敗後、新規moveと観測のみのscriptも安全判定で拒否された。現在AABBの衝突がREPLANとなり新規受付を止める経路は確認したが、当時のhazard明細がなく直接原因は未確定。現場は手動移動で復帰した。受付条件を維持したまま公開エラーへ判定理由・局所hazard・観測時点を追加し、自動1,774件とbuildが成功。自律退避と隔離実機確認は未完了。固定済みR18～R20の配布物と通常R18は変更していない。[調査・診断仕様・次回の公開観測](experiments/20261010_v2_safe_local_diagnosis.md)。
+
+## 追加候補：接近先とscript診断（R19、実機未確認）
+
+R18の検証済みJARを固定したまま、操作reachを満たす接近先の選定と、script終端の `last_command` 診断を追加した。自動1,765件・buildは成功。R19の隔離実機試験と通常導入はまだ行っていない。[契約・試験・次回の固定fixture](experiments/20261010_v2_approach_script_candidate.md)を参照。
+
+## 最新更新：収納の終了待ち修正（2026-10-10）
+
+通常R15で食料移送の同期不一致後に終了待ちとなり、状態取得・取消も拒否される報告に対応。停止中でも診断・取消を受け付け、所有cursorの解放と移送数量の確認を分ける修正候補R18を作成した。隔離Dockerで並行在庫変化後のUNKNOWN保持と解放、少量取り出し、取消、拡張バッグ、予想外のcursorで停止を維持したまま診断・取消できることを確認。自動1,749件が成功。この試験時点の通常環境はR15だった。その後、13:17 JSTに担当が復旧・R18導入を確認した。[検証と復旧・導入手順](experiments/20261010_v2_storage_recovery_docker.md)を参照。
+
+## 先行更新：梯子・拡張バッグ・Waystones（2026-10-10 10:55 JST）
+
+統合候補R15を準備した。遠い下階目標への梯子移動、拡張ネザライトバッグの端数移送・取消・予算拒否、Waystonesの一覧・経験値上限・参照拒否・使用中取消・Esc停止・End往復をaod-mimoid隔離Dockerで確認。自動試験1,746件、実行中JARと公開15ツール全定義の一致、元66ファイルのhash一致復元、container・Docker Desktop停止が完了した。[統合検証記録](experiments/20261010_v2_waystones_docker.md)、[試用メモ](PUBLIC_API_V2_TRIAL_20261010.md)を参照。10:43 JSTに差し替え担当が通常profileをR15へ更新し、Prism GUI起動・接続・MCP ON・15ツール全定義一致を確認。10:49 JSTの地図アート担当の記録でもバッグ9色104個の収納とWaystonesのEnd→Overworld到着を確認した。10:55 JSTの追記では往復到着と、1つの有限scriptによる15秒稼働後の設備OFFも確認した。
+
+Cloudflare認証後もSSHが止まる原因と、同じ症状の再発時に開発担当で進める[復旧手順](experiments/20261010_cloudflared_ssh_recovery.md)を記録した。認証期間72時間の案は記録のみで、Cloudflare設定は変更していない。
+
+後続の現場報告として、script内移送失敗時に停止childのID・result・effectsが親結果に残らない[診断情報の改善候補](PUBLIC_API_V2_MAP_ART_FIXES_20261010.md#スクリプト内移送失敗の診断情報改善候補)を記録した。今回の数量は担当側で再観測・別の収納操作により確認済みで、未確認takeは再送していない。R18には未実装。R19候補で実装し、自動試験まで完了した。
+
+## 先行更新：優先機能の実機確認（2026-10-10）
+
+クラフトの材料データ、4 MOD破壊、5 水中／乗り物、6 整理、8 条件・scriptを最終候補priorities-r7で確認。このPCの実機13ケースとJava等1,719件が成功した。外部source・JSON/CSV、小規模blueprintの中断・再開・再実行も確認済み。147,456セル全量の実施工は未検証。ローカル検証profileの292ファイルを復元し、Prism起動後に「くらふとぶ！-v01.2」へ導入済み。通常profileの再起動後、公開15ツールの全入出力schema一致も確認した。[試用メモと導入状況](PUBLIC_API_V2_TRIAL_20261010.md)、[実機記録](experiments/20261010_v2_priorities_local.md)を参照。先行Docker環境も10月10日02:34 JSTに66ファイルのハッシュ一致で復元し、containerとDocker Desktopを停止済み。
+
+以下は各時点の履歴であり、過去の導入保留・検証待ちを現在の状況として扱わない。
+
+## 優先項目の追加実装（2026-10-09時点）
+
+利用者指定のクラフト材料データ、4 MOD破壊、5 水中／乗り物、6 整理、8 条件・scriptを実装した。外部source・JSON/CSVと147,456セルの設計図分割・再開も追加した。Java 1,671＋harness 14＋admin bridge 28＝1,713件が成功。隔離Dockerは候補priorities-r2で起動し、実機操作は利用者によるMCP有効化待ち。[使い方と対応範囲](PUBLIC_API_V2_PRIORITIES_20261009.md)、[検証記録](experiments/20261009_v2_priorities_docker.md)。以下のproduction-r6の合格記録は変更前のもの。通常profile導入、main統合・タグ・Releaseは未実施。
+
+## 先行の生産系実装（2026-10-09、production-r6時点）
+
+[生産系ツールの設計案と実装順序](PUBLIC_API_V2_PRODUCTION_PLAN_20261009.md)を承認後、`agent_craft`、`agent_interact` の `smelt`／`brew`、`agent_inventory` の正確な数量移送を実装した。公開15ツール。固定引数のscriptからも共通jobへ接続する。[利用方法・制限](PUBLIC_API_V2_PRODUCTION_20261009.md)を参照。
+
+最終候補production-r6で9ケース・24 jobを確認。手元2×2・作業台3×3、ケーキとバケツ回収、鉄の製錬、通常／残燃料での醸造、投入後取消、クラフト取消、数量移送の期限停止、script接続が合格。Java等1,694件とsource checksも成功。元world・設定・JARの65ファイルをhash一致で復旧済み。[実験記録と未確認範囲](experiments/20261009_v2_production_docker.md)を参照。通常profileへのJAR置換は保留を維持する。
+
+この時点の未実装項目のうち、材料データ・MOD破壊・水中／乗り物・整理・複合条件／scriptは上記の追加実装へ進んだ。連鎖クラフト、複数工程醸造、取引・金床・エンチャント、全MOD収納への一般対応、script実行位置の永続化は残る。creative作業対応は別枠。実装済み／実ゲーム合格／通常profile導入を区別する。
+
+## 先行の飛行・降下（2026-09-30）
+
+クリエイティブ／スペクテイターの`agent_move`に上下を含む空中経路を追加した。creativeは自動離陸・障害物回避・足場のない落差の飛行降下、spectatorは通常のすり抜けに対応する。既存の座標と`direction:"up"`／`"down"`を使い、公開14ツールを維持。survivalの落差制限は従来どおり。
+
+隔離Dockerで主要15ケースと準備2件を確認。落下中からの開始、壁、2 block高の通路、はしご上階、取消・期限・モード変更・Escを検証し、成功後の位置保持も比較した。Java等1,678件とsource checksが成功。元world・設定・JARの65ファイルはhash一致で復旧済み。[仕様・結果・未確認範囲](experiments/20260930_v2_flight_docker.md)を参照。
+
+最新候補flight-r7のSHA-256は`109dbb86f58ddaea37876a496f8caefac06b45b8d493cc5905b3740f0d990bd0`。**通常profileへの導入は保留中**。後程の置き換え用として保持し、今回の作業では通常ゲームを操作していない。
+
+## 基本機能と試用履歴（2026-09-29〜30）
+
+指定された優先機能を実装し、このPCの隔離Minecraftで9フェーズを確認した。「くらふとぶ！-v01.2」への初回導入はAppData仮想化領域への配置であり、実体への導入完了という判定を撤回する。その後、差し替え担当が物理パスを確認して実体へ導入し、Prism GUI再起動後の公開13ツール・schema 2を確認した。[試用メモ](PUBLIC_API_V2_TRIAL_20260929.md)と[実験記録](experiments/20260929_v2_trial_local.md)を参照。
+
+| 機能 | 現在使える範囲 |
+|---|---|
+| 移動中の障害物処理 | `clear_path`は任意・既定false。水平の局所破壊と、`bridge_block`で明示した材料による足場補充。server確認後に再観測して進む |
+| 遠方の対象への操作 | block・収納に加えて、観測済みentityにも既定`advance:true`で接近。見失った対象や到達不能では停止 |
+| 条件の拡張 | move／input_sequenceの`stop_when`に座標・見えるblock state・所持item数・画面種類 |
+| 特殊な設置 | ベッド・扉・二段植物。相方cellも事前確認し、両cellのserver更新を照合 |
+| メニュー操作 | 開封・内容取得・限定されたVanilla収納の全stack Shiftクリック・閉鎖。slot/item/count条件とserver確認を要求 |
+| 施工の保存・再開 | PC側のv2専用runner。1アンカーごとに操作IDと結果を保存し、確定済みの作業を飛ばして再開。応答不明は自動再送しない |
+
+Java 1,595件、harness 13件、admin bridge 28件とbuild、PowerShell/Pythonのsource checksが成功。実機JARと通常profileへ導入したJARのSHA-256は`03c7943f7fcd78f06021db2224a5df5b47fd77a2bc98bd99c32c5a930fadece1`。隔離profileは元の12ファイル・全hash一致で復旧した。
+
+残る主な機能は、任意MODのmenu／収納provider、クラフト・取引・独自ボタン、複合条件・任意entity状態条件、縦方向の障害物施工、高度な道具選択、詳細effect台帳、menuを開いたままのscript合成。新品backpackの自動初期化は未対応。収納の遅延同期・応答待ち取消、全MOD組合せ、PR全体の独立レビューは追加検証として残る。PR #85はDraftを維持し、main統合・タグ・Release公開はしていない。
+
+追加指定により右クリックだけに限定せず、全行動の長時間・多回数指定を開発branchへ追加した。[引数・上限・停止契約](PUBLIC_API_V2_LONG_EXECUTION_20260929.md)と[追加検証記録](experiments/20260929_v2_long_execution.md)を参照。`f7871718…`版では短い隔離入力試験A–H（補充・取消・期限・背景継続・1,500tick）、通常profileへの実体導入・再起動後の新schemaを確認し、隔離baselineも復旧した。24時間連続実測は未実施。通常環境の収納inspect終了待ちも`227ae546…`版で修正・導入済み。作業台タブ開放時の安全な失敗・解放と、タブ閉鎖後の読み取り成功を[実機再確認](experiments/20260929_v2_storage_cleanup.md)した。
+
+2026-09-30: [設計検討メモ](PUBLIC_API_V2_NAVIGATION_FOLLOWUP_20260929.md)の後続実装として、既定の非破壊再計画（`auto_replan:false`で無効化）、停止理由の詳細化、`sneak`での姿勢準備、操作前の照準再取得、視点専用`agent_look`を追加した。公開14ツール。隔離Dockerで、途中障害の迂回と無効化時の停止、はしご上端のdust/rail、1.5/1 block通路、周期door/piston越しのlever/chestと通過、lookの取消・期限・scriptを確認した。[結果と未確認範囲](experiments/20260930_v2_navigation_docker.md)を参照。通常の現場配置を含む全形状の成功は未確認。
+
+以下は履歴。未実装一覧は当時の状態であり、現在の範囲は上の表を優先する。
+
+## 履歴：所持収納と追加停止経路（2026-09-29）
+
+利用者が指定した「所持収納」「追加停止経路」の実機確認を、このPCで完了した。[追加試験の記録・証拠](experiments/20260929_v2_storage_stop_local.md)を参照。製品の既存実装は今回の範囲で正常に動作し、再実行可能な試験runner・fixture・回帰mock 13件を追加した。製品Javaの変更はない。
+
+- Sophisticated Backpacksの空収納inspect、store3、take2、毎回の再開封照合が成功。収納内snowは0→3→1、所持品は16→13→15、未確定移送なし。
+- shield使用中のAPI取消、物理Esc、UI OFF、次元移動の4経路で、指定した理由による停止と入力所有終了を確認した。UI OFF・次元移動ではcontrol OFF、次元移動では新sessionを確認した。
+- OFF中の操作拒否、手動再許可後の新しい操作成功も確認。専用profileは12ファイルの個数・全hash一致で復旧し、ゲーム・launcherを終了した。
+- `tools/check-source.ps1 -SkipJava`成功。transport 15件、smoke mockは既存7件＋追加13件。製品JARは前回と同じ`6acde6beacbea21c812c390568332ccf5bcd8a21005204085ff3eda633dbdde5`。
+- M7の基本経路と今回の追加経路は実機確認済み。全機能の完成や全停止経路の網羅とは区別し、PR #85は引き続きDraft。
+
+### 現在の主な未実装機能
+
+| 機能 | 現在の範囲と不足 |
+|---|---|
+| 一般的なmenu／GUI操作 | `interact`によるmenu操作とmenu内clickが未対応。対応収納の開封・数量移送は専用経路で動作する |
+| 移動中の障害物処理 | `agent_move`が必要なblockを壊す・置く処理が未実装。`break(advance:true)`の接近しながらの採掘は実装・基本実機確認済み |
+| 遠方entityへの自動接近 | entity操作は観測済みかつ手の届く対象まで。接近してから操作する一連の処理が未対応 |
+| 停止・到達条件の拡張 | 座標以外のblock・item・画面状態等の条件、raw入力の追加guard・効果照合が未完了。今回確認したEsc等の停止経路とは別の機能 |
+| 特殊な複数cell設置 | ベッド・扉・二段植物など、1回で複数cellを変える設置が未対応。単一cellを直方体内で順に置く処理は対応済み |
+| 収納providerの追加 | 対応済みJARのSophisticated Backpacks／Core以外はprovider・同期profileが必要。新品backpackの自動初期化も未対応 |
+| 高度な道具選択・効果記録 | 耐久・Silk Touch／Fortune等の条件を含む選択、破壊drop・消費item等の詳細effect記録が未完了 |
+| 長期の施工保存・再開 | v2のjob保持は最新と直前の完了jobまで。旧施工台帳と統合したプロジェクト全体の永続保存・再開は未完了 |
+| scriptの追加仕様 | menuをまたぐ実行、命令ごとの失敗詳細・観測量予算の整備が残る。既存の同期合成は基本実機確認済み |
+
+楕円・パス等の任意形状と任意キー入力は拡張候補。完全なJavaScript、host I/O、任意commandは対象外であり、未実装の欠落とは扱わない。
+
+### 実装済みだが追加検証が必要な範囲
+
+収納transferやSWAPの応答待ち途中取消・遅延同期、装備枠／offhand／upgrade付き収納、他item・他action種類での停止、ログアウト／再接続が残る。今回の所持収納は通常UIで初期化したhotbar slot 2のbackpack、world境界は次元移動を対象にした。前回Hazardの停止後落下を避けるfixture改善、観測の実利用token測定、PR全体の独立レビューも未完了。
+
+以下の2026-09-28更新と停止時点の表は履歴であり、上の最新結果を優先する。
+
+## 再開後の更新（2026-09-28 23:26 JST）
+
+利用者の指示で開発を再開し、このPCの独立した検証profileで実機smokeを行った。[実験記録と証拠](experiments/20260928_public_api_v2_local.md)を当日の結果として参照する。下の停止時点の表は履歴として残す。
+
+- entityのPASS後に無関係な手持ち変化で成功し得る判定を修正。仕様・catalog・単体回帰2件を同期した。
+- 実機で発見した数量投棄の確認待ちtimeoutと、接近後の破壊照準の外れを修正した。製品commitは`e79f59888e2aece6d426437e0d4c545f8e27384a`。
+- 修正JARでItemEntity／Core／Cancel／Hazardの4フェーズが成功。搾乳・飲用、所持品・チェスト移送、gate、2cell設置・破壊、10cell採掘、script、取消・危険停止を確認した。
+- Hazardの停止判定後、終了までの間に検証プレイヤーの落下死亡も確認。停止後の生存保証を合格扱いせず、試験手順に記録した。
+- Java 1,577件、harness 13件、admin bridge 28件とbuild成功。専用profileは試験前12ファイルの個数・全hash一致で復旧し、ゲームを終了した。
+- M7の基本smokeと復旧は確認できたが、所持収納のv2実機、未実装機能、追加停止経路、PR全体レビューは残る。PR #85は引き続きDraft。
+
+## 以下は再開前の停止時点の記録
+
+利用者の依頼により、ここで開発を一時停止する。**v2は未完成・未リリース**。基本行動の公開と実行器への接続、単体検査・CIは進んだが、新しいv2経路の実ゲーム試験と一部の行動範囲が残る。実装済みを、実機確認済みと読み替えないこと。
+
+この文書は停止時点のスナップショット。[設計案](PUBLIC_API_V2.md)は完成目標も含むため、現在使える範囲は下表と[クイックガイド](MCMCP_Public_API_v2_クイックガイド.md)を併読する。
+
+## 目標と現在地
+
+LLMは目的・座標・範囲・条件・反復を指定し、MODが局所観測、経路、道具選択、照準、入力、結果確認を担当する。観測文字列と操作記述を減らし、JSON Action DSLを短い行動ツールと制限付き同期スクリプトへ置き換える。
+
+完了には、合意した操作範囲の実装、公開仕様とテストの一致、隔離環境での主要成功・取消・危険停止、試験環境の復旧、レビュー可能なPRが必要。**mainへの統合・タグ・Release公開は、追加の明示指示まで行わない。**
+
+| 項目 | 停止時点の状態 |
+|---|---|
+| 主対象 | [Issue #84](https://github.com/Aodaruma/mcmcp/issues/84)／[Draft PR #85](https://github.com/Aodaruma/mcmcp/pull/85) |
+| branch／worktree | `feat/public-api-v2`／`workspaces/public-api-v2` |
+| 実装・試験準備の基準commit | `96fd6e1d759d24f23bc293b7f12f382bba394b73`（この整理文書の追加前） |
+| 製品コードの最終変更 | `a1a2a6abce7378348845dcfdb46e813ce9fd5f74`。その次の`96fd6e1`は試験runner・fixture・検査・文書 |
+| GitHub状態 | PRはOPEN・Draft。Issueの`release:verification-needed`を維持 |
+| 優先順位 | v2を主軸。旧v1の難所をv2の着手条件にはしない |
+
+## 実装マイルストーン
+
+「接続済み」は公開toolから実行器までコードがある状態。「検査済み」は単体・mock等の範囲であり、ゲームの成功証拠とは別である。
+
+| 段階 | 達成したこと | 残ること／合格条件 |
+|---|---|---|
+| M1 責任境界と公開契約 | AGENTS・設計・catalogを改訂。13ツールを公開 | 残る機能の実装に合わせて仕様を同期 |
+| M2 軽量な状態・観測 | state既定をプレイヤーとhotbar 9枠へ縮小。MCP情報を分離。block単位の観測、詳細の明示取得 | 実ゲームの読みやすさ・取得内容を確認。token削減率の実測は未実施 |
+| M3 共通job・スクリプト・raw入力 | 配送後実行、共通ID・照会・取消・解放。同期言語と有限入力列を接続。公開JSON DSLを撤去 | 実ゲームの入力所有・取消・危険停止、追加停止条件、menu内操作 |
+| M4 移動・範囲施工 | 座標／方向move、直方体break/place、`break(advance:true)`による接近＋採掘を接続 | move中の自動破壊・設置、特殊な複数cell設置、道具選択の拡張、実ゲーム試験 |
+| M5 interact・inventory・収納 | block／item／entity、所持品inspect/swap/drop、座標収納・所持収納transferを接続 | menu操作、遠方entity接近、他MODのprovider／同期profile、実ゲーム試験 |
+| M6 ソース検査・試験準備 | Java・ハーネス・transport等とCI成功。4種の実機試験runner／fixtureを準備 | runnerを実際の隔離Minecraftで動かす。mock成功だけで合格にしない |
+| M7 実ゲーム・復旧 | 今回のv2経路では未実施 | 成功・取消・危険停止の証拠、導入JAR照合、world・MOD・設定の復旧hash |
+| M8 レビューとPR完成 | Draftへ実装・制限・検査を記載。item/entity周辺の限定レビューを実施 | 指摘の評価、残る差分のレビュー、実機結果を反映して完成判断。公開は別承認 |
+
+## ツール別の実装範囲
+
+| 公開ツール | 接続済みの範囲 | 未対応・検証上の注意 |
+|---|---|---|
+| `agent_get_state` | プレイヤーとhotbar 9枠。全inventory等は明示section | 新しい既定応答の実機smokeは未実施 |
+| `agent_get_mcp_status` | 制御状態、session、frame、実行中action等 | 状態取得とworld観測を分離 |
+| `agent_get_observation` | 引数なし最新frame、block集約。詳細証拠・通行情報は明示要求 | 非表示の座標はunknown。既定でunknown boundary一覧を返さない |
+| `agent_move` | 座標／方向へ、局所観測した安全な経路を区間ごとに進む | 経路中の自動破壊・設置、追加の到達条件は未実装 |
+| `agent_break_block` | 単一cell／符号付き直方体、block条件、道具選択、`advance:true`の連続採掘 | Vanilla対象。耐久・エンチャント条件等は未完了。任意形状は将来候補 |
+| `agent_place_block` | 単一cell／直方体、任意state、支持面・持ち替え・サーバー確認 | ベッド・二段植物等の複数cell設置は明示拒否。全Vanilla設置対応は未達 |
+| `agent_interact` | block state変更、有限のitem使用、手の届く観測済みentityへの通常操作 | menu・遠方entity接近は未対応。受付と固有効果の成功を区別する |
+| `agent_inventory` | 全所持品inspect、main→hotbar SWAP、数量drop、収納inspect/transfer | 収納slot・計画の対応範囲あり。任意MOD収納への自動対応は未達 |
+| `agent_click` | world内の左右中ボタン、回数・押下時間・間隔、任意対象照合 | menu内click、追加guard・効果照合は残る |
+| `agent_input_sequence` | 9種の論理入力、同時／順次、押下tick・間隔・有限反復、座標停止条件 | 任意キー、block・item・画面状態等による追加停止条件は未実装 |
+| `agent_run_script` | 名前付き引数、変数、分岐、有限loop、小関数、8種の行動を合成 | JavaScript風の制限言語。完全なJS、async/await、host I/Oは対象外。実機未検証 |
+| `agent_get_action` | 共通IDの進行・成否。明示要求で部分結果・確定cell等 | 保持は最新jobと直前の完了job。任意期間の施工履歴や永続再開ではない |
+| `agent_cancel_action` | 指定jobを中止し、所有入力・menuの解放後に終了確定 | 確定済みのworld変更は巻き戻さない。新経路の実機解放確認は未実施 |
+
+公開名・説明・入力schemaを合わせたcompact JSONは127,779文字から23,966文字へ約81%縮小した。**tools/listの文字数比較であり、観測応答全体や実利用tokenの81%削減を測定したものではない。**
+
+所持収納は[PR #82](https://github.com/Aodaruma/mcmcp/pull/82)の共通基盤を再利用し、発見・開封・個体確認と、slot同期・数量移送を分離した。組込みproviderは現在Sophisticated Backpacks 3.25.90／Core 1.4.99。他MODはprovider／同期profileの追加が必要。共通化は進んだが、対応MODが自動的に増えたわけではない。transferは最大14 source stack／14 PICKUP入力で計画できる範囲に制限される。
+
+はしご・斜め移動等の既存機能、旧施工台帳の試験実績を、今回のv2経路の実機合格へ転用しない。過去の「全体の進捗保存・再開」という要望についても、v2の短期job結果保持だけで達成したとは扱わず、旧台帳との関係を再開後に整理する。
+
+## 検証結果と証拠
+
+| 検証 | 結果・対象 |
+|---|---|
+| Java単体 | 1,575件成功、失敗・error・skip 0。製品コード`a1a2a6a`で実施 |
+| ハーネス | 13件成功。build／harness分離検査も成功 |
+| fixture admin bridge | `96fd6e1`で28件成功。新fixtureは既存のcommand許可範囲内 |
+| MCP transport | 15件成功 |
+| source check | `a1a2a6a`で全体成功。試験tool追加後は`-SkipJava`とadmin bridgeを再検査して成功 |
+| 新smoke runnerのmock | 7ケース成功。誤session、応答消失、失敗、取消、危険試験の引渡し等。実ゲームではない |
+| 評価trace self-test | `a1a2a6a`で66/66成功 |
+| GitHub CI | [`96fd6e1`のbuild成功](https://github.com/Aodaruma/mcmcp/actions/runs/36426925108)。前の製品コードの[buildも成功](https://github.com/Aodaruma/mcmcp/actions/runs/36424315234) |
+| 新v2経路の実ゲーム | **未実施**。飲食・entity・収納・施工・取消・危険停止・長押しmixinを未確認 |
+
+準備済みの[隔離smoke手順](../tools/eval/fixtures/public-api-v2/README.md)は次の4フェーズ。全機能の網羅試験ではなく、まず基本経路を確認するためのもの。
+
+1. `ItemEntity`：cowからの搾乳とmilk使用を、手持ちのserver更新で確認。
+2. `Core`：観測、SWAP・投棄、チェストtake/store、gate操作、2cell設置・破壊、10cell連続採掘、script移動・inventory、入力反復。
+3. `Cancel`：実行開始した移動入力を取消し、その後の静止と制御解放を確認。
+4. `Hazard`：かがみ入力の稼働を確認してから外部fixture controllerが水を適用し、危険停止と解放を確認。
+
+candidate・runner・fixtureは作業用artifactsの`20260928-v2-smoke-96fd6e1.zip`に保存済み。SHA-256は`3fc3943553461a60047979674931cd4fe17b364136e11ba4a6727f49e7bc3910`。14ファイルと個別hashのmanifestを含み、認証情報・通常profileは含まない。再開後に製品コードを修正した場合は、この古いJARで新実装を検証しない。
+
+## 現在の課題
+
+### 1. コード接続と実ゲーム成立の間に確認が残る
+
+最も大きい未完了部分。試験準備はできたが、実ゲームで新しいv2経路が成立した証拠はない。とくに長押しmixinの実行時適用、server同期を伴う操作、取消時の入力・menu解放は単体テストだけでは確定できない。Hazardにはrunnerとは別のfixture controllerが必要であり、実行時の連携も確認する。
+
+### 2. entity操作の成功判定にレビュー上の懸念
+
+`a1a2a6a`のitem/entityと共通入力・終了処理を、固定したソース束でCodex CLI（gpt-5.6-sol）へ渡し、限定レビューを実施した。PR全体のレビューや実機検証ではない。
+
+指摘は「`result_item`未指定時、native操作がPASSでも、後から無関係な拾得等で手持ちが変わると成功になり得る」というもの。`MinecraftV2EntityInteractDriver`の`clientConsumed || held.changed()`という経路はコード上確認できる。ただし「現契約ではclientConsumedのみが既定」というレビューの前提は設計文書と一致しない。**仕様上の因果関係の扱いと、誤成功として修正すべき条件を未整理。再現未確認・未修正として残す。** レビュー合格とは扱わない。
+
+同様に、送信済みSWAPの応答前取消と遅延同期が次jobへ与える影響は追加確認候補。こちらは確定不具合ではなく、再現と既存停止契約の照合が先になる。
+
+### 3. 完成目標に対して未実装の範囲がある
+
+move中の障害物処理、menu操作、遠方entity接近、追加停止条件、複数cell設置、MOD収納の追加profile等は上表のとおり。すべてを「実機確認だけ残った」と扱わない。楕円・パス等の任意範囲形状は利用者が将来候補として許容したものなので、現在の直方体実装と区別する。
+
+### 4. 検証環境と補助CLI
+
+2026-09-28 22:21 JSTのローカル空き物理メモリは3.21 GiB（総量31.87 GiB）、空き仮想メモリ21.55 GiB。直前の空き物理約1.82 GiBから改善した。一時点の値であり、ゲーム試験を起動して余裕を確認した結果ではない。今回は停止の依頼に従い、新しいゲーム試験を開始していない。
+
+通常のCLIレビューは`codex-code-mode-host.exe`欠落でファイル読取りに失敗した。失敗した試行をレビュー済みと数えず、ソース束を入力する方法で上記の限定レビューだけを完了した。CLI本体・global設定の変更はしていない。
+
+ローカル資源不足、remote試験時間帯、CLI不具合はそれぞれ確認できた障害だが、過去の頻繁な停止すべての原因を一つに特定できたわけではない。単体検査、実装不足、実機待ちを混同せず、次回は一つのフェーズの成果と未完了を区切って報告する。
+
+## 再開時の順序と運用条件
+
+1. 利用者の再開指示後、goal・この文書・PRのHEAD・worktree差分・稼働processを確認する。新しい作業者の変更を上書きしない。
+2. entity成功判定の懸念を限定した回帰例で評価する。修正する場合は関連コード・仕様・テストを揃え、candidate JARとmanifestを更新する。
+3. 時間帯と資源を確認し、隔離環境を退避して4フェーズのsmokeを実施する。**12:00～23:00 JSTはこのPCのみ。23:00～12:00 JSTは許可済みaod-mimoidの隔離Dockerも可。** 通常profileや稼働中の他担当へ割り込まない。
+4. action ID、導入JAR hash、readback、取消／危険停止、復旧後の全hashを実験記録へ残す。失敗は同一操作を無条件に再送せず、原因を限定して修正する。
+5. 残る機能を上の表から選び、小さな単位で実装・確認する。未完了要件を断りなく落とさない。所持収納の実機試験はCoreのチェスト試験とは別に追加する。
+6. 全体の差分レビューとPR本文・仕様・試験証拠を整合させて完成を判断する。利用者の追加指示なしでmerge・tag・Releaseへ進めない。
+
+subagentsは使わない。必要な場合のみ範囲を絞ったCodex CLIを利用する。共有main、通常ゲームprofile、他担当worktree、private logを作業対象にしない。
+
+旧v1関連では[Issue #26](https://github.com/Aodaruma/mcmcp/issues/26)がOPEN・実機確認待ち、PR #82もOPEN・Draftのまま。これらを完了・merge済みとは扱わない。難しいv1対応よりv2を優先するという利用者指示を維持する。
+
+## 停止時に残す状態
+
+この整理文書と入口リンクを専用branchへ保存し、PR #85にも現在地を反映して停止する。新しいゲーム試験・SSH試験・実装委託は開始しない。限定レビューのCLIは終了済み。新v2試験によるworld・MOD変更は今回行っていない。ゴールは「完了」ではなく、利用者指示による「一時停止」とする。

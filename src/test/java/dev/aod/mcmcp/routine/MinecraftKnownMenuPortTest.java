@@ -21,6 +21,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class MinecraftKnownMenuPortTest {
     @Test
+    void storageCleanupCapturesOpeningIdentityWithoutRequiringAcceptedContents() throws Exception {
+        var port = classNode(MinecraftKnownMenuPort.class);
+        assertThat(invocations(port, "maintainStorage")).containsSubsequence(
+                "dev/aod/mcmcp/routine/MinecraftKnownMenuPort#captureStorageOpening",
+                "dev/aod/mcmcp/runtime/KnownMenuProfileSupport#current");
+        assertThat(invocations(port, "captureStorageOpening")).containsSubsequence(
+                "dev/aod/mcmcp/runtime/KnownMenuProfileSupport#freshOpenedMenuMatches",
+                "dev/aod/mcmcp/runtime/StorageAccess$Target#matchesOpenedMenu")
+                .doesNotContain("dev/aod/mcmcp/runtime/KnownMenuProfileSupport#current");
+        assertThat(invocations(port, "maintainRelease"))
+                .contains("dev/aod/mcmcp/routine/MinecraftKnownMenuPort#captureStorageOpening")
+                .doesNotContain("dev/aod/mcmcp/routine/MinecraftKnownMenuPort#currentContext");
+    }
+
+    @Test
     void absoluteGoalCeilingUsesActualSingleDoubleAndNonstackableSlotCapacity() {
         var holder = Items.DIRT.builtInRegistryHolder();
         if (!holder.areComponentsBound()) {

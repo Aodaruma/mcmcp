@@ -472,6 +472,76 @@ public final class LocalObservationVolume {
                 && goalIntendedMovementSafe(atTick(evaluated.record(), observedTick));
     }
 
+    /** Only an explicit portal job may substitute exact portal contact for a ground landing. */
+    public synchronized boolean verifiesPortalResolvedMovement(LocalPlayer player, Vec3 intended,
+            Vec3 resolved, long observedTick, long worldRevision, PortalEntryGeometry intent) {
+        if (!finite(intended) || !finite(resolved) || intended.length() > 0.7
+                || resolved.length() > 0.7 || observedTick < 0
+                || latestFor(player).filter(frame -> frame.worldRevision() == worldRevision).isEmpty()) return false;
+        var level = (ClientLevel) player.level();
+        var portal = intent.portal();
+        if (!level.isLoaded(portal) || !level.getWorldBorder().isWithinBounds(portal)
+                || !level.getBlockState(portal).is(intent.nether() ? net.minecraft.world.level.block.Blocks.NETHER_PORTAL
+                        : net.minecraft.world.level.block.Blocks.END_PORTAL)) return false;
+        var before = player.getBoundingBox();
+        var after = before.move(resolved);
+        if (!intent.approaches(before, after)) return false;
+        var origin = point(before.getCenter());
+        if (intent.nether()) {
+            // Nether entry keeps the ordinary supported floor contract throughout the wait.
+            return Math.abs(intended.x - resolved.x) < MOVEMENT_EPSILON
+                    && Math.abs(intended.z - resolved.z) < MOVEMENT_EPSILON
+                    && dryGroundCorridor(player, level, origin, List.of(before.minmax(after)), after);
+        }
+        var evaluated = evaluateResolvedHypothetical(player, level, origin, before,
+                intended, resolved, 1, worldRevision);
+        var record = evaluated.record();
+        var regions = append(sweptRegions(SweptAabbPath.segments(before, intended, resolved)),
+                damageSupportRegion(after));
+        // FALL can mask a second block hazard in the aggregate record, so check it independently.
+        if (record.loaded() != LoadedState.LOADED || record.clearance() != Clearance.CLEAR
+                || record.transition() != Transition.PROBE_ALLOWED || record.fluid() != Fluid.NONE
+                || record.suffocation() || damageBlockHazard(level, origin, regions) != Hazard.NONE
+                || bouncySupport(level, player, after)) return false;
+        return goalIntendedMovementSafe(record) || intent.overPortal(after)
+                && (record.hazard() == Hazard.NONE || record.hazard() == Hazard.FALL)
+                && record.drop() != Drop.UNKNOWN;
+    }
+
+    /** Centers the body in a verified ladder's free space before entering from a side landing. */
+    public synchronized Optional<LadderSteering> ladderSteering(
+            LocalPlayer player, Vec3 target, long worldRevision) {
+        if (latestFor(player).filter(frame -> frame.worldRevision() == worldRevision).isEmpty())
+            return Optional.empty();
+        var level = (ClientLevel) player.level();
+        var box = player.getBoundingBox();
+        var origin = point(box.getCenter());
+        var targetBox = box.move(target.subtract(box.getCenter()));
+        if (!safeLadderCell(player, level, origin, targetBox)) return Optional.empty();
+        var position = BlockPos.containing(target.x, targetBox.minY + MOVEMENT_EPSILON, target.z);
+        var facing = level.getBlockState(position).getValue(net.minecraft.world.level.block.LadderBlock.FACING);
+        // A vanilla ladder occupies 3/16 of its cell; the free interval's center is offset by 3/32.
+        var centered = target.add(facing.getStepX() * 3.0D / 32.0D, 0, facing.getStepZ() * 3.0D / 32.0D);
+        targetBox = box.move(centered.subtract(box.getCenter()));
+        if (!safeLadderCell(player, level, origin, targetBox)) return Optional.empty();
+        var steering = centered;
+        if (!player.onClimbable() && Math.abs(targetBox.minY - box.minY) < MOVEMENT_EPSILON) {
+            int dx = position.getX() - Mth.floor(player.getX());
+            int dz = position.getZ() - Mth.floor(player.getZ());
+            // The route proves a centered corridor. Align the actual body before crossing its lip.
+            if (dx == 0 && Math.abs(dz) == 1
+                    && !level.noCollision(player, targetBox.move(player.getX() - centered.x, 0, 0))) {
+                steering = new Vec3(centered.x, centered.y, player.getZ());
+            } else if (dz == 0 && Math.abs(dx) == 1
+                    && !level.noCollision(player, targetBox.move(0, 0, player.getZ() - centered.z))) {
+                steering = new Vec3(player.getX(), centered.y, centered.z);
+            }
+        }
+        return Optional.of(new LadderSteering(centered, steering));
+    }
+
+    public record LadderSteering(Vec3 target, Vec3 steeringTarget) { }
+
     /** Allows only the selected one-block vertical edge to relax the horizontal ground preview. */
     public synchronized boolean verifiesNavigationResolvedMovement(
             LocalPlayer player,
@@ -496,6 +566,17 @@ public final class LocalObservationVolume {
         var level = (ClientLevel) player.level();
         var start = player.getBoundingBox();
         var startPoint = point(start.getCenter());
+        if (intent.groundTraversal() != null)
+            return intent.groundTraversal().resolvedSafe(player, intended, resolved);
+        if (intent.locomotion().aerial()) {
+            if (Locomotion.aerialMode(player) != intent.locomotion()) return false;
+            var target = start.move(intent.target().subtract(start.getCenter()));
+            // Recheck the full body corridor immediately before vanilla movement. Gravity and
+            // residual inertia can briefly move away from a waypoint; neither grants new space.
+            return aerialPathSafe(player, level, startPoint, start, target)
+                    && aerialLoaded(level, startPoint, start.minmax(start.move(intended)))
+                    && aerialPathSafe(player, level, startPoint, start, start.move(resolved));
+        }
         var evaluated = evaluateResolvedHypothetical(
                 player,
                 level,
@@ -547,7 +628,9 @@ public final class LocalObservationVolume {
                             level, start, evaluated.endBox(), intended, resolved);
             boolean targetLanding = !exactClimbableAtFeet(
                     level, targetBox, intent.locomotion())
-                    && stableLanding(player, level, startPoint, targetBox);
+                    && (stableLanding(player, level, startPoint, targetBox)
+                            || intent.locomotion() == Locomotion.SCAFFOLDING
+                                    && scaffoldingTopLanding(player, level, startPoint, targetBox));
             boolean resolvedBouncy = bouncySupport(level, player, evaluated.endBox());
             boolean targetBouncy = bouncySupport(level, player, targetBox);
             boolean safe = !resolvedBouncy
@@ -653,6 +736,13 @@ public final class LocalObservationVolume {
                         && intendedTowardNavigationTarget(start, intended, intent)
                         || withinHorizontalTolerance)
                 && (ordinaryPath || plannedLadderAscentClip);
+        boolean scaffoldingAscentBootstrap = intent.locomotion() == Locomotion.SCAFFOLDING
+                && intent.verticalDelta() > 0 && sourceClimbable && resolvedClimbable
+                && (targetClimbable || targetLanding) && ordinaryPath
+                && resolved.y >= -MAX_LADDER_DESCENT_PER_TICK - MOVEMENT_EPSILON
+                && resolved.y <= MOVEMENT_EPSILON
+                && (horizontalNonDivergence && intendedTowardNavigationTarget(start, intended, intent)
+                        || withinHorizontalTolerance);
         // A same-level rung-to-floor edge can briefly clip the floor lip while the ladder descent
         // clamp is still active. Keep this exception cardinal, targetward and bounded until the
         // executor's verified supported-landing JUMP raises the player onto the floor.
@@ -687,6 +777,7 @@ public final class LocalObservationVolume {
             return false;
         }
         return ladderAscentBootstrap
+                || scaffoldingAscentBootstrap
                 || plannedLadderLandingLip
                 || movesTowardNavigationTarget(start, end, intent);
     }
@@ -966,12 +1057,80 @@ public final class LocalObservationVolume {
         latest = null;
     }
 
+    private List<ObservationRecord> expandAerial(LocalPlayer player, ClientLevel level,
+            AABB start, Point origin, long revision) {
+        var records = new ArrayList<ObservationRecord>();
+        var queue = new ArrayDeque<AerialNode>();
+        var visited = new HashSet<BlockPos>();
+        queue.add(new AerialNode(start, 0));
+        visited.add(BlockPos.containing(start.getCenter().x, start.minY, start.getCenter().z));
+        int evaluations = 0;
+        while (!queue.isEmpty() && evaluations < MAX_OBSERVATIONS) {
+            var node = queue.removeFirst();
+            for (var direction : net.minecraft.core.Direction.values()) {
+                if (evaluations++ >= MAX_OBSERVATIONS) break;
+                var center = node.box().getCenter();
+                var cell = BlockPos.containing(center.x, node.box().minY, center.z).relative(direction);
+                var target = node.box().move(cell.getX() + 0.5D - center.x,
+                        cell.getY() + Locomotion.FLIGHT_FEET_OFFSET - node.box().minY, cell.getZ() + 0.5D - center.z);
+                if (origin.distanceSquared(point(target.getCenter())) > RADIUS_SQUARED) continue;
+                var record = aerialRecord(player, level, origin, node.box(), target, node.depth() + 1, revision);
+                records.add(record);
+                if (record.loaded() == LoadedState.LOADED && record.hazard() == Hazard.NONE
+                        && visited.add(cell)) queue.addLast(new AerialNode(target, node.depth() + 1));
+            }
+        }
+        return List.copyOf(records);
+    }
+
+    private record AerialNode(AABB box, int depth) { }
+
+    /** Only derived, bounded local traversability leaves this classifier. */
+    private ObservationRecord aerialRecord(LocalPlayer player, ClientLevel level, Point origin,
+            AABB from, AABB to, int depth, long revision) {
+        var corridor = from.minmax(to);
+        boolean loaded = aerialLoaded(level, origin, corridor);
+        boolean safe = loaded && aerialPathSafe(player, level, origin, from, to);
+        var fromPoint = point(from.getCenter());
+        var toPoint = point(to.getCenter());
+        return new ObservationRecord(player.tickCount, revision, depth, fromPoint, toPoint, toPoint,
+                loaded ? Support.ABSENT : Support.UNKNOWN,
+                !loaded ? Clearance.UNKNOWN : safe ? Clearance.CLEAR : Clearance.BLOCKED,
+                depth == 0 ? Transition.STATIONARY : !loaded ? Transition.UNKNOWN
+                        : safe ? Transition.PROBE_ALLOWED : Transition.BLOCKED,
+                loaded ? Fluid.NONE : Fluid.UNKNOWN, false,
+                !loaded ? Hazard.UNKNOWN : safe ? Hazard.NONE : Hazard.COLLISION,
+                loaded ? LoadedState.LOADED : LoadedState.UNKNOWN,
+                loaded ? Drop.AIRBORNE_OR_SWIMMING : Drop.UNKNOWN, !safe,
+                depth == 0 ? Locomotion.GROUND : Locomotion.aerialMode(player));
+    }
+
+    private static boolean aerialLoaded(ClientLevel level, Point origin, AABB region) {
+        return level.getWorldBorder().isWithinBounds(region)
+                && !level.isOutsideBuildHeight(Mth.floor(region.minY))
+                && !level.isOutsideBuildHeight(Mth.floor(Math.nextDown(region.maxY)))
+                && loadedState(level, origin, List.of(region)) == LoadedState.LOADED;
+    }
+
+    private static boolean aerialPathSafe(LocalPlayer player, ClientLevel level, Point origin,
+            AABB from, AABB to) {
+        var mode = Locomotion.aerialMode(player);
+        var corridor = from.minmax(to).deflate(1.0E-7D);
+        if (!mode.aerial() || !aerialLoaded(level, origin, corridor)) return false;
+        // Spectator's vanilla no-clip needs no block identity or collision query.
+        return mode == Locomotion.SPECTATOR || level.noCollision(player, corridor)
+                && fluid(level, origin, List.of(corridor)) == Fluid.NONE
+                && damageBlockHazard(level, origin, List.of(corridor)) == Hazard.NONE;
+    }
+
     private List<ObservationRecord> expandTraversable(
             LocalPlayer player,
             ClientLevel level,
             AABB originBox,
             Point origin,
             long worldRevision) {
+        if (Locomotion.observedMode(player).aerial())
+            return expandAerial(player, level, originBox, origin, worldRevision);
         var records = new ArrayList<ObservationRecord>();
         var queue = new ArrayDeque<Node>();
         var reached = new HashSet<NodeKey>();
@@ -1141,12 +1300,13 @@ public final class LocalObservationVolume {
                 record.neutralizeAgentHorizontal(), record.locomotion(), true);
     }
 
-    /** Only ordinary source water is admitted; flowing water and bubble columns stay unknown. */
+    /** Water plants and currents use their real collision/fluid state; bubble columns need a separate controller. */
     private static boolean waterAtFeet(ClientLevel level, Point origin, AABB box) {
         var feet = feetBlock(box);
         return insideRadius(origin, feet.getX(), feet.getY(), feet.getZ())
-                && level.isLoaded(feet) && level.getBlockState(feet).is(Blocks.WATER)
-                && level.getFluidState(feet).isSource();
+                && level.isLoaded(feet) && level.getFluidState(feet).is(FluidTags.WATER)
+                && !level.getBlockState(feet).is(Blocks.BUBBLE_COLUMN)
+                && level.getBlockState(feet).getCollisionShape(level, feet).isEmpty();
     }
 
     /** A bounded surface exit may briefly lift the feet above water before reaching the bank. */
@@ -1166,7 +1326,7 @@ public final class LocalObservationVolume {
                     Mth.floor(region.maxZ - 1.0E-6D))) {
                 var state = level.getBlockState(pos);
                 if (state.isAir()) continue;
-                if (!state.is(Blocks.WATER) || !state.getFluidState().isSource()) return false;
+                if (!state.getFluidState().is(FluidTags.WATER) || state.is(Blocks.BUBBLE_COLUMN)) return false;
             }
         }
         return true;
@@ -1349,6 +1509,14 @@ public final class LocalObservationVolume {
             }
         }
 
+        if (locomotion == Locomotion.SCAFFOLDING) {
+            var top = rungs.lastEntry();
+            var landing = top.getValue().move(0, 1, 0);
+            if (scaffoldingTopLanding(player, level, origin, landing)
+                    && scaffoldingPathSafe(player, level, origin, top.getValue(), landing)) {
+                rungs.put(top.getKey() + 1, landing);
+            }
+        }
         var rungEntries = new ArrayList<>(rungs.entrySet());
         for (int index = 1; index < rungEntries.size(); index++) {
             var lower = rungEntries.get(index - 1);
@@ -1387,7 +1555,9 @@ public final class LocalObservationVolume {
                         entry.getX() + direction.x(), y, entry.getZ() + direction.z());
                 var landingBox = boxAtFeetCell(entryNode.box(), landingPos);
                 if (exactClimbableAtFeet(level, landingBox)
-                        || !stableLanding(player, level, origin, landingBox)
+                        || !(stableLanding(player, level, origin, landingBox)
+                                || locomotion == Locomotion.SCAFFOLDING
+                                        && scaffoldingTopLanding(player, level, origin, landingBox))
                         || !climbablePathSafe(
                                 player, level, origin, rung.getValue(), landingBox, locomotion)) {
                     continue;
@@ -1437,7 +1607,9 @@ public final class LocalObservationVolume {
         if (depth > MAX_TRANSITIONS) {
             return;
         }
-        Support targetSupport = support(level, player, origin, to);
+        Support targetSupport = locomotion == Locomotion.SCAFFOLDING
+                && scaffoldingTopLanding(player, level, origin, to)
+                ? Support.PRESENT : support(level, player, origin, to);
         if (targetSupport == Support.UNKNOWN) {
             return;
         }
@@ -1498,11 +1670,25 @@ public final class LocalObservationVolume {
         return switch (locomotion) {
             case LADDER -> safeLadderCell(player, level, origin, box);
             case SCAFFOLDING -> safeScaffoldingCell(player, level, origin, box);
-            case GROUND, WATER -> false;
+            case GROUND, GAP_JUMP, DROP, WATER, FLIGHT, SPECTATOR -> false;
         };
     }
 
-    private static boolean stableLanding(
+    /** Collision-only local evidence for a selected jump/drop; no block identities are exposed. */
+    static boolean dryGroundCorridor(LocalPlayer player, ClientLevel level, Point origin,
+            List<AABB> regions, AABB landing) {
+        return loadedState(level, origin, append(regions, supportSlab(landing))) == LoadedState.LOADED
+                && regions.stream().allMatch(box -> level.noCollision(player, box.deflate(1.0E-7)))
+                && fluid(level, origin, regions) == Fluid.NONE
+                && damageBlockHazard(level, origin, append(regions, damageSupportRegion(landing))) == Hazard.NONE
+                && stableLanding(player, level, origin, landing) && !bouncySupport(level, player, landing);
+    }
+
+    static boolean loadedGroundRegion(ClientLevel level, Point origin, AABB region) {
+        return loadedState(level, origin, List.of(region)) == LoadedState.LOADED;
+    }
+
+    static boolean stableLanding(
             LocalPlayer player, ClientLevel level, Point origin, AABB box) {
         return stableEndpoint(endpointSafety(player, level, origin, box));
     }
@@ -1541,10 +1727,26 @@ public final class LocalObservationVolume {
 
     private static boolean noScaffoldingTraversalCollision(
             ClientLevel level, LocalPlayer player, AABB box) {
-        return !level.getBlockCollisionsFromContext(CollisionContext.empty(), box)
+        return !level.getBlockCollisionsFromContext(scaffoldingTraversalContext(box), box)
                         .iterator().hasNext()
                 && level.noEntityCollision(player, box)
                 && level.noBorderCollision(player, box);
+    }
+
+    static CollisionContext scaffoldingTraversalContext(AABB box) {
+        // Empty context reports 'above' every scaffold and invents platforms inside a climb.
+        return CollisionContext.positionContext(box.minY - 1.0D);
+    }
+
+    private static boolean scaffoldingTopLanding(
+            LocalPlayer player, ClientLevel level, Point origin, AABB box) {
+        return Math.abs(box.minY - Math.rint(box.minY)) < MOVEMENT_EPSILON
+                && !exactScaffoldingAtFeet(level, box)
+                && exactSurvivingScaffoldingAtFeet(level, origin, box.move(0, -1, 0))
+                && loadedState(level, origin, List.of(box, supportSlab(box))) == LoadedState.LOADED
+                && level.noCollision(player, box) && !level.collidesWithSuffocatingBlock(player, box)
+                && fluid(level, origin, List.of(box)) == Fluid.NONE
+                && damageBlockHazard(level, origin, List.of(box, damageSupportRegion(box))) == Hazard.NONE;
     }
 
     private static boolean climbablePathSafe(
@@ -1557,7 +1759,7 @@ public final class LocalObservationVolume {
         return switch (locomotion) {
             case LADDER -> ladderPathSafe(player, level, origin, from, to);
             case SCAFFOLDING -> scaffoldingPathSafe(player, level, origin, from, to);
-            case GROUND, WATER -> false;
+            case GROUND, GAP_JUMP, DROP, WATER, FLIGHT, SPECTATOR -> false;
         };
     }
 
@@ -1608,6 +1810,13 @@ public final class LocalObservationVolume {
         return level.isLoaded(position) && level.getBlockState(position).is(Blocks.SCAFFOLDING);
     }
 
+    /** Crouch changes scaffold support into downward travel, including while standing on its top. */
+    public static boolean crouchDescendsScaffolding(LocalPlayer player) {
+        var position = BlockPos.containing(player.getX(), player.getY() - 0.05D, player.getZ());
+        return player.level().isLoaded(position)
+                && player.level().getBlockState(position).is(Blocks.SCAFFOLDING);
+    }
+
     private static boolean exactClimbableAtFeet(ClientLevel level, AABB box) {
         return exactLadderAtFeet(level, box) || exactScaffoldingAtFeet(level, box);
     }
@@ -1617,7 +1826,7 @@ public final class LocalObservationVolume {
         return switch (locomotion) {
             case LADDER -> exactLadderAtFeet(level, box);
             case SCAFFOLDING -> exactScaffoldingAtFeet(level, box);
-            case GROUND, WATER -> false;
+            case GROUND, GAP_JUMP, DROP, WATER, FLIGHT, SPECTATOR -> false;
         };
     }
 
@@ -1684,6 +1893,8 @@ public final class LocalObservationVolume {
             AABB box,
             Point origin,
             long worldRevision) {
+        if (Locomotion.aerialMode(player).aerial() && (!player.onGround() || player.getAbilities().flying))
+            return aerialRecord(player, level, origin, box, box, 0, worldRevision);
         var loaded = loadedState(level, origin, List.of(box, supportSlab(box)));
         if (loaded == LoadedState.UNKNOWN) {
             return unknownRecord(
@@ -1944,6 +2155,8 @@ public final class LocalObservationVolume {
             AgentMovementTrace.TickMovement frame,
             AgentMovementTrace.CollisionResolution collision,
             long worldRevision) {
+        if (Locomotion.observedMode(player).aerial())
+            return aerialRecord(player, level, origin, collision.start(), collision.resolvedEnd(), 1, worldRevision);
         var start = collision.start();
         var end = collision.resolvedEnd();
         var from = point(start.getCenter());
@@ -2066,7 +2279,9 @@ public final class LocalObservationVolume {
         if (support == Support.UNKNOWN) {
             return new DropEvaluation(Drop.UNKNOWN, Vec3.ZERO);
         }
-        if (currentAabb && !player.onGround()) {
+        // Vanilla retains onGround for the first tick entering a ladder from the floor lip.
+        if (currentAabb && (!player.onGround()
+                || player.onClimbable() && safeLadderCell(player, level, origin, box))) {
             return new DropEvaluation(Drop.AIRBORNE_OR_SWIMMING, Vec3.ZERO);
         }
         if (fluid == Fluid.WATER) {
@@ -2339,7 +2554,7 @@ public final class LocalObservationVolume {
                 box.maxZ);
     }
 
-    private static boolean bouncySupport(
+    static boolean bouncySupport(
             ClientLevel level, LocalPlayer player, AABB endBox) {
         if (player.isSuppressingBounce()) {
             return false;

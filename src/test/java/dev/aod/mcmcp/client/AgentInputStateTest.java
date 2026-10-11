@@ -6,6 +6,45 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class AgentInputStateTest {
+    @Test void passivePlayerTicksDoNotReacquireReleasedAgentOwnership() {
+        var state = new AgentInputState();
+        var player = new Object(); var level = new Object();
+        for (int tick = 0; tick < 20; tick++) {
+            state.beginPlayerMovementTick(player, level);
+            state.endPlayerMovementTick(player, level);
+            assertThat(state.inputOwnerNone()).isTrue();
+        }
+        state.publishMovement(true, false, false, false, false);
+        state.requireGoalMovementSafety(player, level, 1, 1);
+        state.beginPlayerMovementTick(player, level);
+        state.addAgentMoveContribution(new Vec3(0.2, 0, 0));
+        state.endPlayerMovementTick(player, level);
+        state.releaseMovement();
+        state.beginPlayerMovementTick(player, level);
+        assertThat(state.inputOwnershipSnapshot().velocityTracked()).isTrue();
+        state.discardTrackedAgentVelocity();
+        state.beginPlayerMovementTick(player, level);
+        state.endPlayerMovementTick(player, level);
+        assertThat(state.inputOwnerNone()).isTrue();
+    }
+    @Test
+    void portalIntentIsOwnedAndCannotLeakIntoOrdinaryMovementOrAnotherWorld() {
+        var state = new AgentInputState();
+        var player = new Object(); var level = new Object();
+        var portal = new dev.aod.mcmcp.agent.safety.PortalEntryGeometry(new net.minecraft.core.BlockPos(0, 64, 0));
+        state.publishMovement(true, false, false, false, false);
+        state.requirePortalMovementSafety(player, level, 7, .7, portal);
+        assertThat(state.goalMovementProofFor(player, level)).isPresent();
+        assertThat(state.goalMovementProof().portalIntent()).isEqualTo(portal);
+        assertThat(state.goalMovementProofFor(player, new Object())).isEmpty();
+        state.requireGoalMovementSafety(player, level, 8, .7);
+        assertThat(state.goalMovementProof().portalIntent()).isNull();
+        state.requirePortalMovementSafety(player, level, 9, .7, portal);
+        state.releaseMovement();
+        assertThat(state.goalMovementProof().portalIntent()).isNull();
+        assertThat(state.goalMovementProofFor(player, level)).isEmpty();
+    }
+
     @Test
     void staleLeaseIsNeutralAtTheActualInputBoundary() {
         var state = new AgentInputState();
@@ -165,6 +204,25 @@ class AgentInputStateTest {
     }
 
     @Test
+    void singleUseHoldDoesNotRestartOnHeartbeatButTheNextLeaseCan() {
+        var state = new AgentInputState();
+        state.publishUse(Long.MAX_VALUE);
+        assertThat(state.useMayStart()).isTrue();
+        state.suppressUseRestart();
+        state.publishUse(Long.MAX_VALUE);
+        assertThat(state.useActive()).isTrue();
+        assertThat(state.useMayStart()).isFalse();
+        state.suppressAll();
+        assertThat(state.useActive()).isFalse();
+        state.releaseUse();
+        assertThat(state.useMayStart()).isFalse();
+        state.publishUse(Long.MAX_VALUE);
+        assertThat(state.useMayStart()).isTrue();
+        state.releaseUse();
+        assertThat(state.inputOwnerNone()).isTrue();
+    }
+
+    @Test
     void boundedAttackAndUseExpireNeutralButRetainOwnershipUntilClosed() {
         var state = new AgentInputState();
         state.publishAttack(100L);
@@ -177,6 +235,21 @@ class AgentInputStateTest {
 
         state.releaseAttack();
         state.releaseUse();
+        assertThat(state.inputOwnerNone()).isTrue();
+    }
+
+    @Test
+    void pickInputRetainsOwnershipUntilReleaseAndStopsOnSafetySuppression() {
+        var state = new AgentInputState();
+        state.publishPick(System.nanoTime() + 1_000_000_000L);
+        assertThat(state.pickActive()).isTrue();
+        assertThat(state.inputOwnershipSnapshot().pickOwned()).isTrue();
+
+        state.suppressAll();
+        assertThat(state.pickActive()).isFalse();
+        assertThat(state.inputOwnerNone()).isFalse();
+
+        state.releasePick();
         assertThat(state.inputOwnerNone()).isTrue();
     }
 

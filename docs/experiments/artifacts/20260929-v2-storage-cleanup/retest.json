@@ -1,0 +1,56 @@
+{
+  "request": {
+    "operation": "inspect",
+    "target": "storage",
+    "storage_slot": 8,
+    "storage_item": "sophisticatedbackpacks:netherite_backpack",
+    "max_ticks": 400
+  },
+  "jar_sha256": "227ae54631d1b09f3fbd75f617bfcd03c1eaf348cef48f4b0e6416ea516a597c",
+  "action": {
+    "schema_version": 2,
+    "action_id": "cc80db30-51a0-43ce-bcb7-8009424be852",
+    "kind": "inventory",
+    "state": "failed",
+    "progress": {
+      "completed_operations": 65,
+      "max_operations": 400,
+      "elapsed_seconds": 3.24275,
+      "remaining_seconds": 116.7561054,
+      "max_duration_seconds": 119.9988554
+    },
+    "stop_reason": "inventory_not_confirmed",
+    "cancel_requested": false,
+    "failure": "inventory_not_confirmed",
+    "result": {
+      "storage_item": "sophisticatedbackpacks:netherite_backpack",
+      "storage_progress": {
+        "phase": "terminal",
+        "awaiting_open_evidence": false,
+        "release_pending": false,
+        "wait_reason": "storage_layout_unsupported",
+        "failure": "storage_layout_unsupported",
+        "release_confirmed": true,
+        "release_fault": false
+      },
+      "storage_slot": 8,
+      "operation": "inspect",
+      "complete": false,
+      "target": "storage",
+      "failure": "container_unknown"
+    }
+  },
+  "control": {
+    "schema_version": 2,
+    "control_mode": "ready",
+    "game_paused": false,
+    "ready_expires_at": null,
+    "world_session_id": "793da3a8-87e6-4ada-b741-5665b76ffe4f",
+    "latest_frame_id": "obs-13b10d8a5e42ffcd",
+    "running_action_id": null
+  },
+  "cleanup_retest_passed": true,
+  "storage_contents_confirmed": false,
+  "transfers_executed": 0,
+  "powder_placed": 0
+}

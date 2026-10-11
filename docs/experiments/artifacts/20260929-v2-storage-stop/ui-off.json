@@ -1,0 +1,77 @@
+{
+  "status": "passed",
+  "phase": "UiOff",
+  "failure": null,
+  "active_action_id": null,
+  "final_control": {
+    "schema_version": 2,
+    "control_mode": "off",
+    "game_paused": false,
+    "ready_expires_at": null,
+    "world_session_id": "ef8dcc0c-5f92-41fe-8054-c9da6298b295",
+    "latest_frame_id": "obs-dc1a2c7ae6d5215c",
+    "running_action_id": null
+  },
+  "events": [
+    {
+      "arguments": {
+        "hold_ticks": 1000,
+        "item": "minecraft:shield",
+        "max_ticks": 1200,
+        "target": "item"
+      },
+      "tool": "agent_interact",
+      "receipt": {
+        "state": "queued",
+        "action_id": "ba8e5534-74e8-4777-af7c-72f2637180f8",
+        "schema_version": 2
+      }
+    },
+    {
+      "before_stop": {
+        "schema_version": 2,
+        "action_id": "ba8e5534-74e8-4777-af7c-72f2637180f8",
+        "kind": "interact",
+        "state": "running",
+        "progress": {
+          "completed_operations": 4,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "client_consumed": true,
+          "inventory_layout_may_have_changed": false,
+          "server_processed": true,
+          "target": "item",
+          "slot": 3,
+          "dispatched": true,
+          "effect_confirmed": false
+        }
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "ba8e5534-74e8-4777-af7c-72f2637180f8",
+        "kind": "interact",
+        "state": "failed",
+        "progress": {
+          "completed_operations": 655,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": "local_ui_disabled",
+        "result": {
+          "client_consumed": true,
+          "inventory_layout_may_have_changed": false,
+          "server_processed": true,
+          "target": "item",
+          "slot": 3,
+          "dispatched": true,
+          "effect_confirmed": false
+        }
+      }
+    }
+  ]
+}

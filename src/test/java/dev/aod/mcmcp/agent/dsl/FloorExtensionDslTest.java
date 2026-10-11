@@ -39,6 +39,18 @@ class FloorExtensionDslTest {
         assertThat(MinecraftFloorExtensionAttempt.withinCorridor(0.6, 0.3, false)).isFalse();
         assertThat(MinecraftFloorExtensionAttempt.withinCorridor(Double.NaN, 0, true)).isFalse();
     }
+    @Test void centeringNeverAuthorizesLeavingTheWitnessedSupport() {
+        assertThat(MinecraftFloorExtensionAttempt.centeredSupportOverlap(-0.7, 0.7)).isTrue();
+        assertThat(MinecraftFloorExtensionAttempt.centeredSupportOverlap(0.74, 0)).isFalse();
+        assertThat(MinecraftFloorExtensionAttempt.centeredSupportOverlap(0, -0.74)).isFalse();
+        assertThat(MinecraftFloorExtensionAttempt.centeredSupportOverlap(Double.NaN, 0)).isFalse();
+        assertThat(MinecraftFloorExtensionAttempt.centeredSupportOverlap(0, Double.POSITIVE_INFINITY)).isFalse();
+    }
+    @Test void floorTurnsRespectTheConfiguredCameraLimit() {
+        assertThat(MinecraftFloorExtensionAttempt.cameraStepDegrees(90)).isEqualTo(4.5F);
+        assertThat(MinecraftFloorExtensionAttempt.cameraStepDegrees(20)).isEqualTo(1.0F);
+        assertThat(MinecraftFloorExtensionAttempt.cameraStepDegrees(360)).isEqualTo(8.0F);
+    }
     private static JsonObject request(String direction) {
         return JsonParser.parseString("""
                 {"schema_version":1,"program":{"dsl_version":1,"capabilities":["movement","camera","block_place"],"body":[

@@ -1,0 +1,19 @@
+{
+  "source_commit": "48852653c1e412a5070c0390bdd45d95c0374db4",
+  "product_jar": "mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar",
+  "product_sha256": "03c7943f7fcd78f06021db2224a5df5b47fd77a2bc98bd99c32c5a930fadece1",
+  "minecraft": "26.2",
+  "neoforge": "26.2.0.59",
+  "java": 25,
+  "fixture_admin_sha256": "9b4aeb58e57c6ac3353fe8d553f55971cf11b50766506b4e9c2cd7dc6a584230",
+  "verification": "Deterministic MCP-only action smoke in isolated local Windows profile; setup via game UI before each phase",
+  "java_tests": 1595,
+  "harness_tests": 13,
+  "admin_bridge_tests": 28,
+  "source_checks_passed": true,
+  "earlier_failed_builds": {
+    "path-clear-05-failed.json": "e9968d8cf0a170cd929d0eafca2c71339be9fd9e70b2a4b6e19eb22ca2030e6f",
+    "path-clear-06-failed.json": "d56153db1a4a91b7757125e7f201e44d638ce01e604ca025c63408cd29f70708",
+    "special-07-failed.json": "03c7943f7fcd78f06021db2224a5df5b47fd77a2bc98bd99c32c5a930fadece1"
+  }
+}

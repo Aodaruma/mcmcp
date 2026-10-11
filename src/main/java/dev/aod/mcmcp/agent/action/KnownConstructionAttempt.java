@@ -45,6 +45,7 @@ public final class KnownConstructionAttempt implements AutoCloseable {
     private boolean currentActionConfirmed;
     private boolean currentUnknownRecorded;
     private boolean currentStagingRecorded;
+    private final java.util.Set<dev.aod.mcmcp.routine.BlockTarget> serverConfirmedTargets = new java.util.HashSet<>();
 
     public KnownConstructionAttempt(
             ApplyBlockPlanPort port,
@@ -238,6 +239,18 @@ public final class KnownConstructionAttempt implements AutoCloseable {
         if (!action.attemptId().equals(evidence.attemptId())) {
             return fail("construction_adapter_contract");
         }
+        // A server-confirmed block remains a real change even if inventory synchronization
+        // or the following movement is interrupted. Local prediction alone is never enough.
+        if (evidence.acknowledged()
+                && (evidence.worldDiffObserved()
+                    || Boolean.TRUE.equals(evidence.basis().get("server_block_state_exact"))
+                        && Boolean.TRUE.equals(evidence.basis().get("secondary_block_state_exact")))
+                && evidence.liveStateAfter().filter(after -> request.breakOnly()
+                        ? child.expectedAfter().equals(after)
+                        : SafeConstructionBlockPolicy.placementStateMatchesFinalStableProperties(
+                                child.expectedAfter(), after)).isPresent()) {
+            serverConfirmedTargets.add(child.target());
+        }
         if (evidence.failure() != null) {
             return fail(failureCode(evidence.failure()));
         }
@@ -341,6 +354,10 @@ public final class KnownConstructionAttempt implements AutoCloseable {
         List<EffectDelta> drained = List.copyOf(pendingEffects);
         pendingEffects.clear();
         return drained;
+    }
+
+    public boolean serverConfirmed(dev.aod.mcmcp.routine.BlockTarget target) {
+        return serverConfirmedTargets.contains(target);
     }
 
     private int completedCount() {

@@ -32,6 +32,31 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class KnownConstructionAttemptTest {
     @Test
+    void remembersServerConfirmedWorldWhileInventoryIsStillPending() {
+        for (boolean ack : List.of(false, true)) {
+            for (boolean server : List.of(false, true)) {
+                var request = request(1);
+                var port = new FakePort(request);
+                port.inventorySynchronized = false;
+                port.acknowledged = ack;
+                port.serverStateExact = server;
+                var attempt = new KnownConstructionAttempt(port, request, 1, 301);
+                attempt.tick(1);
+                port.tick = 2;
+                attempt.tick(2);
+                port.tick = 3;
+                var waiting = attempt.tick(3);
+                assertThat(waiting.status()).isEqualTo(KnownConstructionAttempt.Status.RUNNING);
+                assertThat(waiting.confirmedEntries()).isZero();
+                assertThat(attempt.serverConfirmed(target(0, 65, 0))).isEqualTo(ack && server);
+                attempt.close();
+                assertThat(attempt.serverConfirmed(target(0, 65, 0))).isEqualTo(ack && server);
+                assertThat(port.dispatchedEntryIds).containsExactly("cell0");
+            }
+        }
+    }
+
+    @Test
     void cancellingAfterSwapSendKeepsOneUnknownReceiptAndNeverDispatchesPlacement() {
         var request = request(1);
         var port = new FakePort(request);
@@ -606,6 +631,9 @@ class KnownConstructionAttemptTest {
         private RuntimeException observeFailure;
         private RuntimeException beginPreparationFailure;
         private boolean retired;
+        private boolean inventorySynchronized = true;
+        private boolean acknowledged = true;
+        private boolean serverStateExact = true;
         private ApplyBlockPlanPort.StagingEvidence staging;
         private ApplyBlockPlanChildAction activeChild;
         private ApplyBlockPlanPreparationAttempt preparation;
@@ -711,8 +739,9 @@ class KnownConstructionAttemptTest {
             states.put(activeChild.target(), packetAfter);
             available--;
             return new ApplyBlockPlanActionEvidence(
-                    action.attemptId(), tick, tick, true, true,
-                    Optional.of(packetAfter), Map.of(), null);
+                    action.attemptId(), tick, tick, acknowledged, serverStateExact && inventorySynchronized,
+                    Optional.of(packetAfter), Map.of("server_block_state_exact", serverStateExact,
+                            "secondary_block_state_exact", true), null);
         }
 
         @Override

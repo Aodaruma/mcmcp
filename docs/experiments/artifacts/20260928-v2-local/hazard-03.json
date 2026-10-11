@@ -1,0 +1,16 @@
+{
+  "status": "failed",
+  "phase": "Hazard",
+  "failure": "Hazard test requires the designated cell",
+  "active_action_id": null,
+  "final_control": {
+    "schema_version": 2,
+    "control_mode": "ready",
+    "game_paused": false,
+    "ready_expires_at": null,
+    "world_session_id": "f4b2d604-2959-4982-b37f-8e7c6f96df69",
+    "latest_frame_id": "obs-fc8a7b8335028bda",
+    "running_action_id": null
+  },
+  "events": []
+}

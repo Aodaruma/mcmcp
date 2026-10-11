@@ -1,0 +1,1373 @@
+{
+  "phase": "B",
+  "api_checks_passed": true,
+  "failure": null,
+  "terminal": {
+    "schema_version": 2,
+    "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+    "kind": "input_sequence",
+    "state": "succeeded",
+    "progress": {
+      "completed_operations": 400,
+      "max_operations": 400,
+      "remaining_seconds": 0.0,
+      "elapsed_seconds": 20.0462242,
+      "max_duration_seconds": 19.9999711
+    },
+    "stop_reason": "duration_elapsed",
+    "cancel_requested": false,
+    "failure": null,
+    "result": {
+      "stop_reason": "duration_elapsed"
+    }
+  },
+  "events": [
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "control_mode": "ready",
+            "game_paused": false,
+            "ready_expires_at": null,
+            "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+            "latest_frame_id": "obs-dfe5b1fbd0eeace4",
+            "running_action_id": null
+          }
+        },
+        "arguments": {},
+        "tool": "agent_get_mcp_status"
+      },
+      "elapsed": 0.4270891,
+      "utc": "2026-09-29T05:29:57.9345670Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "player": {
+              "on_fire": false,
+              "yaw": 0.0,
+              "pitch": 60.0,
+              "position": {
+                "z": 200.5,
+                "x": 200.5,
+                "y": 201.0
+              },
+              "air": 300,
+              "status_effects": [],
+              "dimension": "minecraft:overworld",
+              "absorption": 0.0,
+              "max_air": 300,
+              "health": 20.0,
+              "hunger": 20,
+              "submerged": false
+            },
+            "hotbar": {
+              "slots": [
+                {
+                  "slot": 0,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 1,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 2,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 3,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 4,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 5,
+                  "selected": true,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 6,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 7,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 8,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                }
+              ],
+              "selected_slot": 5
+            }
+          }
+        },
+        "arguments": {},
+        "tool": "agent_get_state"
+      },
+      "elapsed": 0.5770452,
+      "utc": "2026-09-29T05:29:58.0872693Z"
+    },
+    {
+      "data": {
+        "receipt": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "state": "queued"
+          }
+        },
+        "request": {
+          "inputs": [
+            "sneak"
+          ],
+          "duration_seconds": 20
+        },
+        "start_cli_started": "2026-09-29T05:29:58.0958344Z",
+        "start_cli_exited": "2026-09-29T05:29:59.4103912Z",
+        "exit_code": 0
+      },
+      "elapsed": 1.9027738,
+      "utc": "2026-09-29T05:29:59.4130080Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 7,
+              "max_operations": 400,
+              "remaining_seconds": 19.6186555,
+              "elapsed_seconds": 0.3813156,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 2.1438698,
+      "utc": "2026-09-29T05:29:59.6540994Z"
+    },
+    {
+      "data": {
+        "no_mcp_gap_start": true
+      },
+      "elapsed": 2.1460156,
+      "utc": "2026-09-29T05:29:59.6562538Z"
+    },
+    {
+      "data": {
+        "no_mcp_gap_end": true
+      },
+      "elapsed": 7.1469781,
+      "utc": "2026-09-29T05:30:04.6572022Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 117,
+              "max_operations": 400,
+              "remaining_seconds": 14.1029505,
+              "elapsed_seconds": 5.8970206,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 7.6499263,
+      "utc": "2026-09-29T05:30:05.1601591Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 127,
+              "max_operations": 400,
+              "remaining_seconds": 13.5983078,
+              "elapsed_seconds": 6.4016633,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 8.1511091,
+      "utc": "2026-09-29T05:30:05.6613455Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 137,
+              "max_operations": 400,
+              "remaining_seconds": 13.0986817,
+              "elapsed_seconds": 6.9012894,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 8.6547275,
+      "utc": "2026-09-29T05:30:06.1649645Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 147,
+              "max_operations": 400,
+              "remaining_seconds": 12.6007675,
+              "elapsed_seconds": 7.3992036,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 9.1542154,
+      "utc": "2026-09-29T05:30:06.6644516Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 157,
+              "max_operations": 400,
+              "remaining_seconds": 12.1125984,
+              "elapsed_seconds": 7.8873727,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 9.6389754,
+      "utc": "2026-09-29T05:30:07.1491908Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 167,
+              "max_operations": 400,
+              "remaining_seconds": 11.6303633,
+              "elapsed_seconds": 8.3696078,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 10.1247364,
+      "utc": "2026-09-29T05:30:07.6349724Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 177,
+              "max_operations": 400,
+              "remaining_seconds": 11.1437048,
+              "elapsed_seconds": 8.8562663,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 10.6080144,
+      "utc": "2026-09-29T05:30:08.1182520Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 187,
+              "max_operations": 400,
+              "remaining_seconds": 10.6490059,
+              "elapsed_seconds": 9.3509652,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 11.1041667,
+      "utc": "2026-09-29T05:30:08.6144047Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 197,
+              "max_operations": 400,
+              "remaining_seconds": 10.1596727,
+              "elapsed_seconds": 9.8402984,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 11.6026713,
+      "utc": "2026-09-29T05:30:09.1129044Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 207,
+              "max_operations": 400,
+              "remaining_seconds": 9.6596524,
+              "elapsed_seconds": 10.3403187,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 12.0859912,
+      "utc": "2026-09-29T05:30:09.5962299Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 216,
+              "max_operations": 400,
+              "remaining_seconds": 9.1657283,
+              "elapsed_seconds": 10.8342428,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 12.5801301,
+      "utc": "2026-09-29T05:30:10.0903677Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 226,
+              "max_operations": 400,
+              "remaining_seconds": 8.6626098,
+              "elapsed_seconds": 11.3373613,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 13.0844204,
+      "utc": "2026-09-29T05:30:10.5946568Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 237,
+              "max_operations": 400,
+              "remaining_seconds": 8.1590033,
+              "elapsed_seconds": 11.8409678,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 13.588232,
+      "utc": "2026-09-29T05:30:11.0984710Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 246,
+              "max_operations": 400,
+              "remaining_seconds": 7.6605274,
+              "elapsed_seconds": 12.3394437,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 14.0849086,
+      "utc": "2026-09-29T05:30:11.5951504Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 256,
+              "max_operations": 400,
+              "remaining_seconds": 7.1593525,
+              "elapsed_seconds": 12.8406186,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 14.5857822,
+      "utc": "2026-09-29T05:30:12.0960253Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 266,
+              "max_operations": 400,
+              "remaining_seconds": 6.6610814,
+              "elapsed_seconds": 13.3388897,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 15.0842558,
+      "utc": "2026-09-29T05:30:12.5944967Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 276,
+              "max_operations": 400,
+              "remaining_seconds": 6.1611134,
+              "elapsed_seconds": 13.8388577,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 15.5918263,
+      "utc": "2026-09-29T05:30:13.1020635Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 286,
+              "max_operations": 400,
+              "remaining_seconds": 5.6773035,
+              "elapsed_seconds": 14.3226676,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 16.0775967,
+      "utc": "2026-09-29T05:30:13.5878335Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 296,
+              "max_operations": 400,
+              "remaining_seconds": 5.1803756,
+              "elapsed_seconds": 14.8195955,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 16.5699268,
+      "utc": "2026-09-29T05:30:14.0801647Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 305,
+              "max_operations": 400,
+              "remaining_seconds": 4.6929777,
+              "elapsed_seconds": 15.3069934,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 17.0596205,
+      "utc": "2026-09-29T05:30:14.5698524Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 315,
+              "max_operations": 400,
+              "remaining_seconds": 4.2059048,
+              "elapsed_seconds": 15.7940663,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 17.5476498,
+      "utc": "2026-09-29T05:30:15.0578868Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 325,
+              "max_operations": 400,
+              "remaining_seconds": 3.7088674,
+              "elapsed_seconds": 16.2911037,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 18.0446058,
+      "utc": "2026-09-29T05:30:15.5548388Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 335,
+              "max_operations": 400,
+              "remaining_seconds": 3.2240473,
+              "elapsed_seconds": 16.7759238,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 18.5274915,
+      "utc": "2026-09-29T05:30:16.0377307Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 345,
+              "max_operations": 400,
+              "remaining_seconds": 2.7355604,
+              "elapsed_seconds": 17.2644107,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 19.0171561,
+      "utc": "2026-09-29T05:30:16.5273926Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 355,
+              "max_operations": 400,
+              "remaining_seconds": 2.2327597,
+              "elapsed_seconds": 17.7672114,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 19.5125068,
+      "utc": "2026-09-29T05:30:17.0227437Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 365,
+              "max_operations": 400,
+              "remaining_seconds": 1.7458926,
+              "elapsed_seconds": 18.2540785,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 19.9993654,
+      "utc": "2026-09-29T05:30:17.5095811Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 374,
+              "max_operations": 400,
+              "remaining_seconds": 1.2614295,
+              "elapsed_seconds": 18.7385416,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 20.4841564,
+      "utc": "2026-09-29T05:30:17.9943923Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 384,
+              "max_operations": 400,
+              "remaining_seconds": 0.7735722,
+              "elapsed_seconds": 19.2263989,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 20.9714162,
+      "utc": "2026-09-29T05:30:18.4816520Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 394,
+              "max_operations": 400,
+              "remaining_seconds": 0.2692737,
+              "elapsed_seconds": 19.7306974,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 21.4755553,
+      "utc": "2026-09-29T05:30:18.9857989Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "succeeded",
+            "progress": {
+              "completed_operations": 400,
+              "max_operations": 400,
+              "remaining_seconds": 0.0,
+              "elapsed_seconds": 20.0462242,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": "duration_elapsed",
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "stop_reason": "duration_elapsed"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf"
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 21.8747675,
+      "utc": "2026-09-29T05:30:19.3850048Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "control_mode": "ready",
+            "game_paused": false,
+            "ready_expires_at": null,
+            "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+            "latest_frame_id": "obs-479ad1b3334e87b8",
+            "running_action_id": null
+          }
+        },
+        "arguments": {},
+        "tool": "agent_get_mcp_status"
+      },
+      "elapsed": 21.9937122,
+      "utc": "2026-09-29T05:30:19.5039536Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "player": {
+              "on_fire": false,
+              "yaw": 0.0,
+              "pitch": 60.0,
+              "position": {
+                "z": 200.5,
+                "x": 200.5,
+                "y": 201.0
+              },
+              "air": 300,
+              "status_effects": [],
+              "dimension": "minecraft:overworld",
+              "absorption": 0.0,
+              "max_air": 300,
+              "health": 20.0,
+              "hunger": 20,
+              "submerged": false
+            },
+            "hotbar": {
+              "slots": [
+                {
+                  "slot": 0,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 1,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 2,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 3,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 4,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 5,
+                  "selected": true,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 6,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 7,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 8,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                }
+              ],
+              "selected_slot": 5
+            }
+          }
+        },
+        "arguments": {},
+        "tool": "agent_get_state"
+      },
+      "elapsed": 22.0973787,
+      "utc": "2026-09-29T05:30:19.6076204Z"
+    },
+    {
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+            "kind": "input_sequence",
+            "state": "succeeded",
+            "progress": {
+              "completed_operations": 400,
+              "max_operations": 400,
+              "remaining_seconds": 0.0,
+              "elapsed_seconds": 20.0462242,
+              "max_duration_seconds": 19.9999711
+            },
+            "stop_reason": "duration_elapsed",
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "stop_reason": "duration_elapsed"
+            }
+          }
+        },
+        "arguments": {
+          "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+          "include_result": true
+        },
+        "tool": "agent_get_action"
+      },
+      "elapsed": 22.1851777,
+      "utc": "2026-09-29T05:30:19.6954124Z"
+    }
+  ],
+  "gui_note": "GUI observations are reported separately; physical key state was not directly measured."
+}

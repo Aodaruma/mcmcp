@@ -1,0 +1,57 @@
+{
+  "phase": "PathClear",
+  "world_session_id": "346bb7fa-5e92-4bb9-bd7a-acb7e96fa3b3",
+  "passed": false,
+  "events": [
+    {
+      "receipt": {
+        "action_id": "873aabc4-ca73-4303-9053-05b208806b19",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "y": 201,
+        "max_distance": 20,
+        "z": 207,
+        "x": 200,
+        "clear_path": true
+      },
+      "tool": "agent_move"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "873aabc4-ca73-4303-9053-05b208806b19",
+        "kind": "move",
+        "state": "failed",
+        "progress": {
+          "completed_operations": 1200,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": "tick_limit",
+        "result": {
+          "path_changes": [
+            {
+              "after": "minecraft:air",
+              "before": "minecraft:dirt",
+              "x": 200,
+              "y": 201,
+              "z": 203,
+              "operation": "break"
+            },
+            {
+              "after": "minecraft:air",
+              "before": "minecraft:dirt",
+              "x": 200,
+              "y": 202,
+              "z": 203,
+              "operation": "break"
+            }
+          ],
+          "path_changed_count": 2
+        }
+      }
+    }
+  ]
+}

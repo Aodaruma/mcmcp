@@ -15,6 +15,7 @@ import java.util.Objects;
 public final class KnownBlockBreakAttempt implements AutoCloseable {
     private final StationaryBreakPort port;
     private final StationaryBreakRequest request;
+    private final Completion completion;
     private final AttackAttempt attack;
     private long lastPredictionSequence;
     private boolean inputStopped;
@@ -31,12 +32,23 @@ public final class KnownBlockBreakAttempt implements AutoCloseable {
             StationaryBreakPort port,
             StationaryBreakRequest request,
             long clientTick) {
+        this(port, request, clientTick, Completion.DROP_CONFIRMED);
+    }
+
+    public KnownBlockBreakAttempt(
+            StationaryBreakPort port,
+            StationaryBreakRequest request,
+            long clientTick,
+            Completion completion) {
         this.port = Objects.requireNonNull(port, "port");
         this.request = Objects.requireNonNull(request, "request");
+        this.completion = Objects.requireNonNull(completion, "completion");
         request.validateAdmissionTick(clientTick);
         var before = Objects.requireNonNull(
                 port.observe(request), "adapter returned no stationary break frame");
-        if (before.clientTick() > clientTick || !before.inventoryServerSynchronized()) {
+        if (before.clientTick() > clientTick
+                || completion == Completion.DROP_CONFIRMED
+                        && !before.inventoryServerSynchronized()) {
             port.retire(request);
             throw new IllegalStateException("stationary break inventory baseline unavailable");
         }
@@ -83,6 +95,11 @@ public final class KnownBlockBreakAttempt implements AutoCloseable {
             }
         }
         if (authoritativeBreakConfirmed) {
+            if (completion == Completion.AUTHORITATIVE_AIR) {
+                recordConfirmedEffect(null);
+                close();
+                return TickResult.SUCCEEDED;
+            }
             var frame = Objects.requireNonNull(
                     port.observe(request), "adapter returned no stationary break frame");
             if (frame.clientTick() > clientTick
@@ -168,6 +185,11 @@ public final class KnownBlockBreakAttempt implements AutoCloseable {
     }
 
     private Map<String, Object> sourceObservation() {
+        if (completion == Completion.AUTHORITATIVE_AIR) {
+            return Map.of(
+                    "block", request.expectedSourceState().blockId(),
+                    "properties", request.expectedSourceState().properties());
+        }
         return Map.of(
                 "block", request.expectedSourceState().blockId(),
                 "properties", request.expectedSourceState().properties(),
@@ -192,4 +214,6 @@ public final class KnownBlockBreakAttempt implements AutoCloseable {
     }
 
     public enum TickResult { RUNNING, SUCCEEDED, SERVER_DENIED_OR_DESYNC }
+
+    public enum Completion { DROP_CONFIRMED, AUTHORITATIVE_AIR }
 }

@@ -1,5 +1,7 @@
 package dev.aod.mcmcp.routine;
 
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
 import java.util.Objects;
 
 /** Immutable Phase 5 execution envelope without widening Phase 3's 120-second bound. */
@@ -25,8 +27,8 @@ public record PhaseFiveBounds(
         if (maxTravelBlocks < 0 || maxTravelBlocks > 128) {
             throw new IllegalArgumentException("max travel blocks must be in 0..128");
         }
-        if (maxDurationSeconds < 1 || maxDurationSeconds > 7_200) {
-            throw new IllegalArgumentException("max duration seconds must be in 1..7200");
+        if (maxDurationSeconds < 1 || maxDurationSeconds > AgentJobLimits.MAX_SECONDS) {
+            throw new IllegalArgumentException("max duration seconds must be in 1..86400");
         }
     }
 

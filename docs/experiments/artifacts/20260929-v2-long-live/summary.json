@@ -1,0 +1,111 @@
+{
+  "date": "2026-09-29",
+  "jar_sha256": "f787171893dff9ea3027fb9139c28ad28f8dad0b05ffcc375b8fa304bc9b2e7b",
+  "source_commit": "633caff0d69562a63b187e7aa22bb8fe5060cf1a",
+  "fixture_commit": "cec2f8911b8d49304bb5746529995100c4782291",
+  "environment": "Windows / Minecraft 26.2 / NeoForge 26.2.0.59 / Zulu Java 25 / isolated singleplayer",
+  "admin_fixture_mod_used": false,
+  "pause_on_lost_focus": false,
+  "cases": [
+    {
+      "phase": "A",
+      "evidence": "duration.json",
+      "action_id": "382f7cb7-6f9e-4c1f-bfd7-8834065c36cf",
+      "state": "succeeded",
+      "stop_reason": "duration_elapsed",
+      "completed_operations": 60,
+      "elapsed_seconds": 3.0328823,
+      "api_checks_passed": true
+    },
+    {
+      "phase": "B",
+      "evidence": "detached.json",
+      "action_id": "ed9b6a67-2264-4716-a1ac-528d961223bf",
+      "state": "succeeded",
+      "stop_reason": "duration_elapsed",
+      "completed_operations": 400,
+      "elapsed_seconds": 20.0462242,
+      "api_checks_passed": true
+    },
+    {
+      "phase": "C",
+      "evidence": "cancel.json",
+      "action_id": "4cef5cc3-92fd-49ed-9210-56a2f1fe65f0",
+      "state": "cancelled",
+      "stop_reason": "client_request",
+      "completed_operations": 9,
+      "elapsed_seconds": 0.5000802,
+      "api_checks_passed": true
+    },
+    {
+      "phase": "D",
+      "evidence": "refill.json",
+      "action_id": "c78ac081-6c81-468e-b1e9-c1644f2da1d0",
+      "state": "cancelled",
+      "stop_reason": "client_request",
+      "completed_operations": 14,
+      "elapsed_seconds": 4.7109628,
+      "api_checks_passed": true
+    },
+    {
+      "phase": "E",
+      "evidence": "late.json",
+      "action_id": "53c9a2b3-c56e-4425-afe0-707aeb511ca8",
+      "state": "failed",
+      "stop_reason": "refill_timeout",
+      "completed_operations": 1,
+      "elapsed_seconds": 3.1025961,
+      "api_checks_passed": true
+    },
+    {
+      "phase": "F",
+      "evidence": "wrong.json",
+      "action_id": "458edc4e-fa4d-4948-950f-8a2729e66a84",
+      "state": "failed",
+      "stop_reason": "item_changed",
+      "completed_operations": 1,
+      "elapsed_seconds": 4.0919377,
+      "api_checks_passed": true
+    },
+    {
+      "phase": "G",
+      "evidence": "background.json",
+      "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+      "state": "succeeded",
+      "stop_reason": "duration_elapsed",
+      "completed_operations": 399,
+      "elapsed_seconds": 20.0006649,
+      "api_checks_passed": true
+    },
+    {
+      "phase": "H",
+      "evidence": "extended.json",
+      "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+      "state": "succeeded",
+      "stop_reason": "completed",
+      "completed_operations": 1500,
+      "elapsed_seconds": 75.0596604,
+      "api_checks_passed": true
+    }
+  ],
+  "invalid_runs": [
+    "background-invalid.json"
+  ],
+  "gui_observations": {
+    "physical_key_internal_state_measured": false,
+    "screenshots_published": false,
+    "A_B_C": "Observed normal first-person view and idle indicator after completion. Images not archived; no per-case assertion of directly measured key state.",
+    "D": "Observed powder count 28 after cancellation and fixture placed counter 5; no continued consumption.",
+    "E": "Observed 32 powder retained after late refill and fixture placed counter 1.",
+    "F": "Observed 32 dirt retained and fixture placed counter 1.",
+    "G": "Observed Prism foreground during the valid run; after restoring Minecraft, normal standing pose and idle indicator. Private screenshots retained.",
+    "H": "Recorded standing before, crouching while running, and standing after refreshing rendering with F3. Stale post-terminal capture was excluded from release evidence; no Shift/Escape release was injected. Private screenshots retained."
+  },
+  "fixture_stop_executed": true,
+  "final_control": "off",
+  "final_running_action": null,
+  "normal_profile_installed": true,
+  "baseline_restoration_confirmed": true,
+  "twenty_four_hour_continuous_run": false,
+  "deployment_evidence": "deployment.json"
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "public-api-v2-water-stop",
+  "dimension": "minecraft:overworld",
+  "mutation_bounds": {
+    "min": {"x": 206, "y": 200, "z": 199},
+    "max": {"x": 208, "y": 202, "z": 201}
+  },
+  "player_bounds": {
+    "min": {"x": 207, "y": 201, "z": 200},
+    "max": {"x": 208, "y": 202, "z": 201}
+  },
+  "max_changed_blocks": 1,
+  "containers": []
+}

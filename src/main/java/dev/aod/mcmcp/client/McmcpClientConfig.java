@@ -20,6 +20,17 @@ public final class McmcpClientConfig {
     public static final int DEFAULT_RECOVERY_MAX_BREAKS = 4;
 
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
+    private static final ModConfigSpec.BooleanValue AGENT_CHAT_PREFIX_ENABLED = BUILDER
+            .comment("Prepend the configured prefix to Agent chat sends only")
+            .define("agent_chat_prefix_enabled", false);
+    private static final ModConfigSpec.ConfigValue<String> AGENT_CHAT_PREFIX = BUILDER
+            .define("agent_chat_prefix", "", AgentChatSettings::validFragment);
+    private static final ModConfigSpec.BooleanValue AGENT_CHAT_SUFFIX_ENABLED = BUILDER
+            .comment("Append the configured suffix to Agent chat sends only")
+            .define("agent_chat_suffix_enabled", true);
+    private static final ModConfigSpec.ConfigValue<String> AGENT_CHAT_SUFFIX = BUILDER
+            .comment("Spaces are literal; the entire formatted message must fit 256 UTF-16 units")
+            .define("agent_chat_suffix", AgentChatSettings.DEFAULT_SUFFIX, AgentChatSettings::validFragment);
     private static final ModConfigSpec.BooleanValue ENDPOINT_ENABLED = BUILDER
             .comment("Start the loopback-only embedded MCP endpoint")
             .define("endpoint_enabled", true);
@@ -30,6 +41,12 @@ public final class McmcpClientConfig {
             .comment("Maximum MCP HTTP request body size in bytes")
             .defineInRange(
                     "max_request_bytes", DEFAULT_MAX_REQUEST_BYTES, 1_024, 65_536);
+    private static final ModConfigSpec.ConfigValue<String> SCRIPT_RESOURCE_ROOT = BUILDER
+            .comment("Trusted local script/data directory, relative to the game directory or an absolute local path")
+            .define("script_resource_root", "mcmcp/scripts");
+    private static final ModConfigSpec.IntValue SCRIPT_RESOURCE_MIB = BUILDER
+            .comment("Total source and JSON/CSV input per script, independent of HTTP and execution budgets")
+            .defineInRange("script_resource_max_mib", 32, 1, 256);
     private static final ModConfigSpec.IntValue HUD_OFFSET_X = BUILDER
             .comment("Horizontal pixel offset from the right edge for the MCMCP status UI")
             .defineInRange("hud_offset_x", DEFAULT_HUD_OFFSET, 0, 2048);
@@ -108,6 +125,16 @@ public final class McmcpClientConfig {
 
     private McmcpClientConfig() { }
 
+    public static AgentChatSettings agentChatSettings() {
+        return new AgentChatSettings(AGENT_CHAT_PREFIX_ENABLED.get(), AGENT_CHAT_PREFIX.get(),
+                AGENT_CHAT_SUFFIX_ENABLED.get(), AGENT_CHAT_SUFFIX.get());
+    }
+
+    public static void setAgentChatPrefixEnabled(boolean enabled) { AGENT_CHAT_PREFIX_ENABLED.set(enabled); SPEC.save(); }
+    public static void setAgentChatSuffixEnabled(boolean enabled) { AGENT_CHAT_SUFFIX_ENABLED.set(enabled); SPEC.save(); }
+    public static void setAgentChatPrefix(String text) { AGENT_CHAT_PREFIX.set(text); SPEC.save(); }
+    public static void setAgentChatSuffix(String text) { AGENT_CHAT_SUFFIX.set(text); SPEC.save(); }
+
     public static boolean endpointEnabled() {
         return ENDPOINT_ENABLED.get();
     }
@@ -119,6 +146,8 @@ public final class McmcpClientConfig {
     public static int maxRequestBytes() {
         return MAX_REQUEST_BYTES.get();
     }
+    public static String scriptResourceRoot() { return SCRIPT_RESOURCE_ROOT.get(); }
+    public static long scriptResourceMaxBytes() { return SCRIPT_RESOURCE_MIB.get() * 1_048_576L; }
 
     public static int hudOffsetX() {
         return HUD_OFFSET_X.get();

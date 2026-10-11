@@ -532,7 +532,7 @@ function Write-KillZoneArtifacts {
     $manifest = [ordered]@{
         schema_version = 1; gate = 'phase9-kill-zone'
         status = if ($null -eq $Failure) { 'passed' } else { 'failed' }
-        fixed_tools = @($script:AllowedTools); fixed_five_only = $true
+        fixed_tools = @($script:AllowedTools); fixed_five_only = $false
         normal_player_actions_only = $true
         approval_mode = $ApprovalMode
         explicit_user_authorization_required = $true

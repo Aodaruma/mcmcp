@@ -1,0 +1,149 @@
+{
+  "events": [
+    {
+      "receipt": {
+        "schema_version": 2,
+        "action_id": "b32b8516-fc10-4de4-b747-b06307f57f2c",
+        "state": "queued"
+      },
+      "tool": "agent_move",
+      "arguments": {
+        "bridge_block": "minecraft:smooth_stone",
+        "x": 200,
+        "y": 201,
+        "z": 207,
+        "max_distance": 20,
+        "clear_path": true
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "b32b8516-fc10-4de4-b747-b06307f57f2c",
+        "kind": "move",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 140,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "path_changes": [
+            {
+              "y": 200,
+              "z": 203,
+              "operation": "place",
+              "after": "minecraft:smooth_stone",
+              "before": "minecraft:air",
+              "x": 200
+            },
+            {
+              "y": 200,
+              "z": 204,
+              "operation": "place",
+              "after": "minecraft:smooth_stone",
+              "before": "minecraft:air",
+              "x": 200
+            }
+          ],
+          "path_changed_count": 2
+        }
+      }
+    },
+    {
+      "after": {
+        "schema_version": 2,
+        "player": {
+          "hunger": 20,
+          "submerged": false,
+          "on_fire": false,
+          "yaw": 0.0,
+          "pitch": 0.0,
+          "position": {
+            "y": 201.0,
+            "z": 207.52721005751187,
+            "x": 200.5
+          },
+          "air": 300,
+          "status_effects": [],
+          "dimension": "minecraft:overworld",
+          "absorption": 0.0,
+          "max_air": 300,
+          "health": 20.0
+        },
+        "hotbar": {
+          "slots": [
+            {
+              "slot": 0,
+              "selected": true,
+              "item": "minecraft:smooth_stone",
+              "count": 30
+            },
+            {
+              "slot": 1,
+              "selected": false,
+              "item": "minecraft:netherite_pickaxe",
+              "count": 1
+            },
+            {
+              "slot": 2,
+              "selected": false,
+              "item": "minecraft:leather",
+              "count": 1
+            },
+            {
+              "slot": 3,
+              "selected": false,
+              "item": "minecraft:beef",
+              "count": 2
+            },
+            {
+              "slot": 4,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 5,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 6,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 7,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 8,
+              "selected": false,
+              "item": null,
+              "count": 0
+            }
+          ],
+          "selected_slot": 0
+        }
+      },
+      "control": {
+        "schema_version": 2,
+        "control_mode": "ready",
+        "game_paused": false,
+        "ready_expires_at": null,
+        "world_session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+        "latest_frame_id": "obs-c6d8a16dd8b3a5f8",
+        "running_action_id": null
+      }
+    }
+  ],
+  "passed": true,
+  "world_session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+  "phase": "Bridge"
+}

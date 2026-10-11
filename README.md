@@ -29,6 +29,8 @@ The illustrated guide is currently in Japanese. See [Releases](https://github.co
 
 ## 対応状況 / Status
 
+このbranchは公開API v2の開発中です。[v2のツールと例](docs/MCMCP_Public_API_v2_クイックガイド.md)が現在の公開口です。以下の表・DSLガイド・施工runnerはリリース済みv1の実績であり、v2の実機合格を意味しません。旧`agent_start_action`はv2から削除しました。
+
 ✅ 実装済み / Implemented　☐ 未対応・改善中 / Pending or in progress
 
 | 観測・管理<br>Observation & inventory | 作業・建築<br>Tasks & building | 操作・連携<br>Controls & integration |

@@ -66,6 +66,12 @@ public record TraversabilityEdge(
             throw new IllegalArgumentException("edge tick and revision must be non-negative");
         }
         validateStatus(status, targetSupport, clearance, transition, fluid, hazard, locomotion);
+        if (locomotion.ballistic()) {
+            if (!(locomotion == Locomotion.GAP_JUMP ? key.gapJump() : key.drop())
+                    || targetSupport != TargetSupport.CONFIRMED || clearance != Clearance.CONFIRMED
+                    || fluid != Fluid.NONE || hazard != Hazard.NONE || supportedDiagonal)
+                throw new IllegalArgumentException("ballistic edge requires a clear supported landing");
+        } else if (!key.adjacent()) throw new IllegalArgumentException("ordinary edge must be adjacent");
         if (supportedDiagonal && (locomotion != Locomotion.GROUND
                 || !key.from().horizontallyDiagonalTo(key.to()) || key.from().y() != key.to().y()
                 || targetSupport != TargetSupport.CONFIRMED || clearance != Clearance.CONFIRMED
@@ -73,7 +79,7 @@ public record TraversabilityEdge(
                 || status == Status.BLOCKED)) {
             throw new IllegalArgumentException("supported diagonal requires a safe level ground edge");
         }
-        if (locomotion != Locomotion.GROUND && locomotion != Locomotion.WATER
+        if (locomotion != Locomotion.GROUND && !locomotion.ballistic() && locomotion != Locomotion.WATER
                 && !key.climbableAdjacent()) {
             throw new IllegalArgumentException(
                     "climbable edges must be vertical or cardinal horizontal transitions");
@@ -91,7 +97,7 @@ public record TraversabilityEdge(
     /** Ladder rungs remain internal transit nodes unless they also have floor support. */
     public boolean destination() {
         return traversable()
-                && (locomotion == Locomotion.GROUND || locomotion == Locomotion.WATER
+                && (locomotion == Locomotion.GROUND || locomotion.ballistic() || locomotion == Locomotion.WATER || locomotion.aerial()
                         || targetSupport == TargetSupport.CONFIRMED);
     }
 
@@ -160,9 +166,25 @@ public record TraversabilityEdge(
             long dx = Math.abs((long) to.x() - from.x());
             long dy = Math.abs((long) to.y() - from.y());
             long dz = Math.abs((long) to.z() - from.z());
-            if (dx > 1 || dy > 1 || dz > 1 || dx + dy + dz == 0) {
-                throw new IllegalArgumentException("edge endpoints must be distinct adjacent cells");
+            boolean adjacent = dx <= 1 && dy <= 1 && dz <= 1 && dx + dy + dz > 0;
+            boolean gap = dy == 0 && dx + dz == 2 && (dx == 0 || dz == 0);
+            boolean drop = dx + dz == 1 && to.y() < from.y() && dy <= 5;
+            if (!adjacent && !gap && !drop) {
+                throw new IllegalArgumentException("edge endpoints exceed bounded movement geometry");
             }
+        }
+
+        public boolean adjacent() {
+            return Math.abs((long) to.x() - from.x()) <= 1 && Math.abs((long) to.y() - from.y()) <= 1
+                    && Math.abs((long) to.z() - from.z()) <= 1;
+        }
+        public boolean gapJump() {
+            return from.y() == to.y() && Math.abs((long) to.x() - from.x()) + Math.abs((long) to.z() - from.z()) == 2
+                    && (from.x() == to.x() || from.z() == to.z());
+        }
+        public boolean drop() {
+            return from.y() > to.y() && (long) from.y() - to.y() <= 5
+                    && Math.abs((long) to.x() - from.x()) + Math.abs((long) to.z() - from.z()) == 1;
         }
 
         public double length() {

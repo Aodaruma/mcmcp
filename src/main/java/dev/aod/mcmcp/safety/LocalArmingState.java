@@ -67,6 +67,11 @@ public final class LocalArmingState {
         if (worldSessionId != null && !worldSessionId.equals(currentSessionId)) {
             lock("world_session_changed");
         }
+        return peek();
+    }
+
+    /** Read-only observation for a worker that must not lock a newer world session. */
+    public synchronized Snapshot peek() {
         return new Snapshot(
                 mode,
                 worldSessionId,

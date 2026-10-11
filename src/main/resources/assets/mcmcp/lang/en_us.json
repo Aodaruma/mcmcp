@@ -41,5 +41,9 @@
   "gui.mcmcp.multiplayer.enable": "Enable",
   "gui.mcmcp.multiplayer.cancel": "Cancel",
   "gui.mcmcp.multiplayer.write_failed": "MCMCP: server permission could not be saved; MCP control remains off",
-  "gui.mcmcp.multiplayer.server_changed": "MCMCP: the connected server changed; MCP control remains off"
+  "gui.mcmcp.multiplayer.server_changed": "MCMCP: the connected server changed; MCP control remains off",
+  "gui.mcmcp.chat.title": "Agent chat messages",
+  "gui.mcmcp.chat.prefix": "Prefix",
+  "gui.mcmcp.chat.suffix": "Suffix",
+  "gui.mcmcp.chat.hint": "Agent sends only. Spaces are literal. The complete message must fit 256 UTF-16 units."
 }

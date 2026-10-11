@@ -56,6 +56,10 @@ final class CatalogSchemaValidator {
             String path,
             int depth,
             List<ValidationFailure> failures) {
+        if (depth > 64) {
+            addFailure(failures, path, "catalog nesting limit", depth);
+            return;
+        }
         if (failures.size() >= MAX_REPORTED_FAILURES) {
             return;
         }
@@ -98,7 +102,8 @@ final class CatalogSchemaValidator {
                     }
                 }
                 if (matched == 0) {
-                    addFailure(failures, deepestFailure(branchFailures, path, depth));
+                    addFailure(failures, deepestFailure(presentRequiredFailures(
+                            root, alternatives, value, path, depth, branchFailures), path, depth));
                     return;
                 }
                 if (matched != 1) {
@@ -245,6 +250,7 @@ final class CatalogSchemaValidator {
     private static ValidationFailure validate(
             JsonObject root, JsonObject schema, JsonElement value, String path, int depth,
             boolean report) {
+        if (depth > 64) return failure(path, "catalog nesting limit", depth, report);
         if (schema.has("$ref")) {
             JsonObject referenced = resolve(root, schema.get("$ref").getAsString());
             if (referenced == null) {
@@ -277,7 +283,8 @@ final class CatalogSchemaValidator {
                 ValidationFailure discriminated = discriminateOneOf(
                         root, alternatives, value, path, depth);
                 return discriminated != null
-                        ? discriminated : deepestFailure(branchFailures, path, depth);
+                        ? discriminated : deepestFailure(presentRequiredFailures(
+                                root, alternatives, value, path, depth, branchFailures), path, depth);
             }
             if (matched != 1) {
                 return failure(path, "matches multiple catalog variants", depth, report);
@@ -597,6 +604,27 @@ final class CatalogSchemaValidator {
             }
         }
         return false;
+    }
+
+    /** Prefer the supplied request shape over missing fields from unrelated oneOf variants. */
+    private static List<ValidationFailure> presentRequiredFailures(JsonObject root,
+            JsonArray alternatives, JsonElement value, String path, int depth,
+            List<ValidationFailure> fallback) {
+        if (!value.isJsonObject()) return fallback;
+        var candidates = new ArrayList<ValidationFailure>();
+        for (JsonElement alternative : alternatives) {
+            var branch = dereference(root, alternative.getAsJsonObject());
+            if (branch == null || !branch.has("required")) continue;
+            boolean present = true;
+            for (JsonElement key : branch.getAsJsonArray("required")) {
+                if (!value.getAsJsonObject().has(key.getAsString())) { present = false; break; }
+            }
+            if (present) {
+                var failure = validate(root, alternative.getAsJsonObject(), value, path, depth, true);
+                if (failure != null) candidates.add(failure);
+            }
+        }
+        return candidates.isEmpty() ? fallback : candidates;
     }
 
     private static ValidationFailure deepestFailure(

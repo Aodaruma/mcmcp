@@ -42,17 +42,27 @@ class DiagonalGroundPathTest {
     }
 
     @Test
-    void crouchingStillRequiresStandingHeadroomInTheCorridor() {
+    void crouchingUsesActualBodyHeightAndKeepsFullFootprintCorridor() {
         var start = new AABB(0.2, 64, 0.2, 0.8, 65.5, 0.8);
         var corridor = DiagonalGroundPath.between(start, start.move(1, 0, 1))
                 .orElseThrow().corridor();
-        assertThat(corridor.maxY).isEqualTo(65.8);
+        assertThat(corridor.maxY).isEqualTo(65.5);
         assertThat(corridor.minX).isLessThan(start.minX);
         assertThat(corridor.maxZ).isGreaterThan(start.maxZ + 1);
     }
 
     private static AABB box(double x, double y, double z) {
         return new AABB(x - 0.3, y, z - 0.3, x + 0.3, y + 1.8, z + 0.3);
+    }
+
+    @Test
+    void crawlingCorridorDoesNotAssumeStandingClearanceButGrowthUsesLargerBody() {
+        var crawling = new AABB(0.2, 64, 0.2, 0.8, 64.6, 0.8);
+        assertThat(DiagonalGroundPath.between(crawling, crawling.move(1, 0, 1))
+                .orElseThrow().corridor().maxY).isEqualTo(64.6);
+        var standingEnd = new AABB(1.2, 64, 1.2, 1.8, 65.8, 1.8);
+        assertThat(DiagonalGroundPath.between(crawling, standingEnd)
+                .orElseThrow().corridor().maxY).isEqualTo(65.8);
     }
 
     @Test

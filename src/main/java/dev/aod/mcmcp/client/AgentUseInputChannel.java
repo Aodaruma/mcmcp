@@ -18,7 +18,7 @@ public final class AgentUseInputChannel {
         if (!minecraft.isSameThread()) {
             throw new IllegalStateException("agent use input must run on the client thread");
         }
-        if (!inputState.useActive() || minecraft.player == null || minecraft.level == null
+        if (!inputState.useMayStart() || minecraft.player == null || minecraft.level == null
                 || minecraft.gameMode == null || !AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen())
                 || minecraft.gui.overlay() != null) {
             return;

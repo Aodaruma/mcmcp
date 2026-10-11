@@ -28,6 +28,19 @@ class LocalObservationVolumeTest {
     private static final Point ORIGIN = new Point(0.0D, 64.0D, 0.0D);
 
     @Test
+    void scaffoldTraversalDoesNotInventPlatformsInsideTheClimbingCorridor() {
+        var position = new net.minecraft.core.BlockPos(0, 64, 0);
+        var world = net.minecraft.world.level.EmptyBlockGetter.INSTANCE;
+        var scaffold = Blocks.SCAFFOLDING.defaultBlockState().setValue(ScaffoldingBlock.DISTANCE, 0);
+        var context = LocalObservationVolume.scaffoldingTraversalContext(new AABB(.2, 64, .2, .8, 67.8, .8));
+        assertThat(scaffold.getCollisionShape(world, position,
+                net.minecraft.world.phys.shapes.CollisionContext.empty()).isEmpty()).isFalse();
+        assertThat(scaffold.getCollisionShape(world, position, context).isEmpty()).isTrue();
+        assertThat(scaffold.getCollisionShape(world, position.above(2), context).isEmpty()).isTrue();
+        assertThat(Blocks.STONE.defaultBlockState().getCollisionShape(world, position, context).isEmpty()).isFalse();
+    }
+
+    @Test
     void waterMovementAllowsDepthControlButRejectsDivergingDrift() {
         var start = new Point(-1.5, 64.9, -2.5);
         var target = new AgentInputState.NavigationIntent(new Vec3(-0.5, 65.9, -2.5), 1, Locomotion.WATER, 0.2);
@@ -305,6 +318,23 @@ class LocalObservationVolumeTest {
                 false,
                 Vec3.ZERO,
                 Vec3.ZERO)).isTrue();
+    }
+
+    @Test
+    void scaffoldAscentAllowsOnlyTheBoundedInitialGravityTickInsideTheColumn() {
+        var start = new Point(.5, 65.9, .5);
+        var target = new AgentInputState.NavigationIntent(new Vec3(.5, 66.9, .5), 1, Locomotion.SCAFFOLDING);
+        var path = ladderPath(Clearance.CLEAR, Fluid.NONE, false, Hazard.FALL);
+        var end = ladderEndpoint(Clearance.CLEAR, Fluid.NONE, false, Hazard.FALL);
+        for (double descent : List.of(0.08, 0.15, 0.25)) {
+            var delta = new Vec3(0, -descent, 0);
+            assertThat(LocalObservationVolume.climbableNavigationMovementSafe(path, end,
+                    start, new Point(.5, start.y() - descent, .5), target,
+                    true, true, false, true, false, delta, delta)).isEqualTo(descent <= .15);
+        }
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(path, end,
+                start, new Point(.5, 65.82, .5), target,
+                false, false, false, true, false, new Vec3(0, -.08, 0), new Vec3(0, -.08, 0))).isFalse();
     }
 
     @Test

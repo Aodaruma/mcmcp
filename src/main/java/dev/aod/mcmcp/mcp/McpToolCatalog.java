@@ -15,10 +15,22 @@ final class McpToolCatalog {
     static final String RESOURCE = "/mcmcp/MCMCP_MCP_Tool_Catalog.json";
     static final List<String> REQUIRED_NAMES = List.of(
             "agent_get_state",
+            "agent_get_mcp_status",
             "agent_get_observation",
-            "agent_start_action",
+            "agent_move",
+            "agent_look",
+            "agent_break_block",
+            "agent_place_block",
+            "agent_interact",
+            "agent_inventory",
+            "agent_craft",
+            "agent_click",
+            "agent_input_sequence",
+            "agent_run_script",
             "agent_get_action",
-            "agent_cancel_action");
+            "agent_cancel_action",
+            "agent_chat",
+            "agent_build");
 
     private final JsonObject listResult;
     private final Map<String, JsonObject> tools;
@@ -47,7 +59,7 @@ final class McpToolCatalog {
             requiredObject(tool, "outputSchema");
         }
         if (!List.copyOf(loaded.keySet()).equals(REQUIRED_NAMES)) {
-            throw new IllegalStateException("MCP tool catalog must contain the fixed five tools in order");
+            throw new IllegalStateException("MCP tool catalog must contain the public tools in order");
         }
         if (!"complete".equals(requiredString(listResult, "resultType"))
                 || listResult.get("ttlMs").getAsLong() != 0

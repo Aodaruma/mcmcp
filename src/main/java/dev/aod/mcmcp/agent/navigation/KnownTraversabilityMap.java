@@ -68,6 +68,8 @@ public final class KnownTraversabilityMap {
     public synchronized boolean observe(TraversabilityEdge evidence) {
         requireSession();
         Objects.requireNonNull(evidence, "evidence");
+        if (evidence.locomotion().ballistic())
+            throw new IllegalArgumentException("ground transfers belong to a single move's damage budget");
         if (!evidence.provenance().mayUpdateTraversability()) {
             throw new IllegalArgumentException(
                     "visual and sound evidence cannot update the traversability map");

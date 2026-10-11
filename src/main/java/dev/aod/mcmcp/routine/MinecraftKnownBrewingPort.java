@@ -501,9 +501,16 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
             return;
         }
         var sources = new ArrayList<Integer>();
+        Optional<Integer> ingredient = chooseIngredientSource(view.snapshot().slots(), state.ingredientKey, inputs.orElseThrow());
+        if (ingredient.isEmpty()) {
+            fail(state, failure("BREWING_INGREDIENT_SINGLETON_REQUIRED",
+                    RoutineFailure.Category.PRECONDITION, RoutineFailure.Recovery.REPLAN,
+                    Map.of("ingredient_source_count", 1, "blaze_ingredient_requires_hotbar", true), Map.of()));
+            return;
+        }
         if (state.loadsInventoryFuel) {
             Optional<Integer> fuel = chooseSingletonSource(
-                    view.snapshot().slots(), state.fuelKey, sources);
+                    view.snapshot().slots(), state.fuelKey, List.of(ingredient.orElseThrow()));
             if (fuel.isEmpty()) {
                 fail(state, failure("BREWING_FUEL_SINGLETON_REQUIRED",
                         RoutineFailure.Category.PRECONDITION,
@@ -514,15 +521,8 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
             sources.add(fuel.orElseThrow());
         }
         sources.addAll(inputs.orElseThrow());
-        Optional<Integer> ingredient = chooseSingletonSource(
-                view.snapshot().slots(), state.ingredientKey, sources);
-        if (ingredient.isEmpty()) {
-            fail(state, failure("BREWING_INGREDIENT_SINGLETON_REQUIRED",
-                    RoutineFailure.Category.PRECONDITION,
-                    RoutineFailure.Recovery.REPLAN,
-                    Map.of("ingredient_source_count", 1), Map.of()));
-            return;
-        }
+        state.ingredientHotbarSlot = state.ingredientKey.itemId().equals("minecraft:blaze_powder")
+                ? ingredient.orElseThrow() - (PLAYER_SLOT_END - 8) : -1;
         sources.add(ingredient.orElseThrow());
         state.expectedLoadedInventory = expectedLoaded;
         state.expectedInventory = expectedFinal;
@@ -553,7 +553,17 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
                     Map.of("planned_singleton_source", true), Map.of()));
             return;
         }
-        if (!dispatchQuickMove(state, menu, state.loadSourceSlots.get(index))) return;
+        if (index == state.loadSourceSlots.size() - 1 && state.ingredientHotbarSlot >= 0) {
+            // Vanilla prioritizes the fuel slot for blaze powder. A number-key swap selects
+            // the ingredient slot explicitly without acquiring or predicting a cursor stack.
+            if (!menu.getSlot(INGREDIENT_SLOT).getItem().isEmpty()
+                    || !menu.getSlot(INGREDIENT_SLOT).mayPlace(menu.getSlot(state.loadSourceSlots.get(index)).getItem())) {
+                fail(state, failure("BREWING_INGREDIENT_SLOT_CHANGED", RoutineFailure.Category.DIVERGENCE,
+                        RoutineFailure.Recovery.REPLAN, Map.of(), Map.of()));
+                return;
+            }
+            if (!dispatchClick(state, menu, INGREDIENT_SLOT, state.ingredientHotbarSlot, ContainerInput.SWAP)) return;
+        } else if (!dispatchQuickMove(state, menu, state.loadSourceSlots.get(index))) return;
         state.loadDispatchIndex++;
         if (state.loadDispatchIndex >= state.loadSourceSlots.size()) {
             state.stage = Stage.CLOSING_LOADED_CHECKPOINT;
@@ -947,6 +957,10 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
     }
 
     private boolean dispatchQuickMove(AttemptState state, BrewingStandMenu menu, int slot) {
+        return dispatchClick(state, menu, slot, 0, ContainerInput.QUICK_MOVE);
+    }
+
+    private boolean dispatchClick(AttemptState state, BrewingStandMenu menu, int slot, int button, ContainerInput input) {
         if (state.openCount + state.containerClicks
                 >= KnownBrewingRequest.MAX_INTERACTIONS) {
             fail(state, failure("BREWING_INTERACTION_LIMIT",
@@ -969,7 +983,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         // Account before dispatch so a rejected/throwing call cannot disappear from usage.
         state.containerClicks++;
         Objects.requireNonNull(minecraft.gameMode).handleContainerInput(
-                menu.containerId, slot, 0, ContainerInput.QUICK_MOVE, minecraft.player);
+                menu.containerId, slot, button, input, minecraft.player);
         state.stageDeadlineClientTick = boundedDeadline(currentTick(), CLICK_TIMEOUT_TICKS);
         return true;
     }
@@ -1547,6 +1561,16 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
             if (!excluded.contains(slot) && matches(stack, key, 1)) {
                 return Optional.of(slot);
             }
+        }
+        return Optional.empty();
+    }
+
+    static Optional<Integer> chooseIngredientSource(List<ContainerSyncSignals.StackFingerprint> slots,
+            StackKey ingredient, List<Integer> excluded) {
+        if (!ingredient.itemId().equals("minecraft:blaze_powder")) return chooseSingletonSource(slots, ingredient, excluded);
+        for (int slot = PLAYER_SLOT_END - 8; slot <= PLAYER_SLOT_END; slot++) {
+            requireSlot(slots, slot);
+            if (!excluded.contains(slot) && matches(slots.get(slot), ingredient, 1)) return Optional.of(slot);
         }
         return Optional.empty();
     }
@@ -2163,6 +2187,7 @@ public final class MinecraftKnownBrewingPort implements PhaseFivePort {
         private boolean serverCursorReleaseConfirmed;
         private boolean screenReleaseConfirmed;
         private boolean releaseConfirmed;
+        private int ingredientHotbarSlot = -1;
         private boolean releaseFault;
 
         private AttemptState(PhaseFiveRequest request, KnownBrewingRequest brewing) {

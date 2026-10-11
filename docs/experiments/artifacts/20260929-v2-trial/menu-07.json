@@ -1,0 +1,1531 @@
+{
+  "world_session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+  "phase": "Menu",
+  "events": [
+    {
+      "arguments": {
+        "z": 200,
+        "y": 201,
+        "menu_type": "minecraft:generic_9x3",
+        "block": "minecraft:chest",
+        "advance": true,
+        "target": "menu",
+        "x": 199
+      },
+      "receipt": {
+        "schema_version": 2,
+        "action_id": "535cdb2c-77ff-4355-9960-86200400a20c",
+        "state": "queued"
+      },
+      "tool": "agent_interact"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "535cdb2c-77ff-4355-9960-86200400a20c",
+        "kind": "interact",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 38,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "target": "menu",
+          "unconfirmed_click": false,
+          "confirmed_clicks": 0,
+          "menu_type": "minecraft:generic_9x3",
+          "slots": [
+            {
+              "count": 16,
+              "item": "minecraft:snow_block",
+              "slot": 0
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 1
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 2
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 3
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 4
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 5
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 6
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 7
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 8
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 9
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 10
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 11
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 12
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 13
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 14
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 15
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 16
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 17
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 18
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 19
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 20
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 21
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 22
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 23
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 24
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 25
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 26
+            },
+            {
+              "count": 16,
+              "item": "minecraft:black_wool",
+              "slot": 27
+            },
+            {
+              "count": 3,
+              "item": "minecraft:oak_door",
+              "slot": 28
+            },
+            {
+              "count": 1,
+              "item": "minecraft:red_bed",
+              "slot": 29
+            },
+            {
+              "count": 3,
+              "item": "minecraft:sunflower",
+              "slot": 30
+            },
+            {
+              "count": 32,
+              "item": "minecraft:smooth_stone",
+              "slot": 31
+            },
+            {
+              "count": 1,
+              "item": "minecraft:shield",
+              "slot": 32
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 33
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 34
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 35
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 36
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 37
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 38
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 39
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 40
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 41
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 42
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 43
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 44
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 45
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 46
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 47
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 48
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 49
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 50
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 51
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 52
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 53
+            },
+            {
+              "count": 1,
+              "item": "minecraft:bucket",
+              "slot": 54
+            },
+            {
+              "count": 1,
+              "item": "minecraft:netherite_pickaxe",
+              "slot": 55
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 56
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 57
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 58
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 59
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 60
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 61
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 62
+            }
+          ]
+        }
+      }
+    },
+    {
+      "arguments": {
+        "block": "minecraft:chest",
+        "clicks": [
+          {
+            "count": 15,
+            "slot": 0,
+            "type": "quick_move",
+            "item": "minecraft:snow_block"
+          }
+        ],
+        "x": 199,
+        "y": 201,
+        "menu_type": "minecraft:generic_9x3",
+        "advance": true,
+        "z": 200,
+        "target": "menu"
+      },
+      "receipt": {
+        "schema_version": 2,
+        "action_id": "22a8703e-0f04-400f-9211-ed9d84965eae",
+        "state": "queued"
+      },
+      "tool": "agent_interact"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "22a8703e-0f04-400f-9211-ed9d84965eae",
+        "kind": "interact",
+        "state": "failed",
+        "progress": {
+          "completed_operations": 83,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": "interaction_not_confirmed",
+        "result": {
+          "target": "menu",
+          "menu_type": "minecraft:generic_9x3",
+          "confirmed_clicks": 0,
+          "unconfirmed_click": false,
+          "slots": [
+            {
+              "count": 16,
+              "item": "minecraft:snow_block",
+              "slot": 0
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 1
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 2
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 3
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 4
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 5
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 6
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 7
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 8
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 9
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 10
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 11
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 12
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 13
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 14
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 15
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 16
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 17
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 18
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 19
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 20
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 21
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 22
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 23
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 24
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 25
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 26
+            },
+            {
+              "count": 16,
+              "item": "minecraft:black_wool",
+              "slot": 27
+            },
+            {
+              "count": 3,
+              "item": "minecraft:oak_door",
+              "slot": 28
+            },
+            {
+              "count": 1,
+              "item": "minecraft:red_bed",
+              "slot": 29
+            },
+            {
+              "count": 3,
+              "item": "minecraft:sunflower",
+              "slot": 30
+            },
+            {
+              "count": 32,
+              "item": "minecraft:smooth_stone",
+              "slot": 31
+            },
+            {
+              "count": 1,
+              "item": "minecraft:shield",
+              "slot": 32
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 33
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 34
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 35
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 36
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 37
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 38
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 39
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 40
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 41
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 42
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 43
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 44
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 45
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 46
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 47
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 48
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 49
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 50
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 51
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 52
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 53
+            },
+            {
+              "count": 1,
+              "item": "minecraft:bucket",
+              "slot": 54
+            },
+            {
+              "count": 1,
+              "item": "minecraft:netherite_pickaxe",
+              "slot": 55
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 56
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 57
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 58
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 59
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 60
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 61
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 62
+            }
+          ],
+          "failure": "menu_slot_condition_changed"
+        }
+      }
+    },
+    {
+      "arguments": {
+        "block": "minecraft:chest",
+        "clicks": [
+          {
+            "count": 16,
+            "slot": 0,
+            "type": "quick_move",
+            "item": "minecraft:snow_block"
+          }
+        ],
+        "x": 199,
+        "y": 201,
+        "menu_type": "minecraft:generic_9x3",
+        "advance": true,
+        "z": 200,
+        "target": "menu"
+      },
+      "receipt": {
+        "schema_version": 2,
+        "action_id": "91741a74-b668-4744-831e-b594dee68ae9",
+        "state": "queued"
+      },
+      "tool": "agent_interact"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "91741a74-b668-4744-831e-b594dee68ae9",
+        "kind": "interact",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 71,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "target": "menu",
+          "unconfirmed_click": false,
+          "confirmed_clicks": 1,
+          "menu_type": "minecraft:generic_9x3",
+          "slots": [
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 0
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 1
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 2
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 3
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 4
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 5
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 6
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 7
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 8
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 9
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 10
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 11
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 12
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 13
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 14
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 15
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 16
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 17
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 18
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 19
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 20
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 21
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 22
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 23
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 24
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 25
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 26
+            },
+            {
+              "count": 16,
+              "item": "minecraft:black_wool",
+              "slot": 27
+            },
+            {
+              "count": 3,
+              "item": "minecraft:oak_door",
+              "slot": 28
+            },
+            {
+              "count": 1,
+              "item": "minecraft:red_bed",
+              "slot": 29
+            },
+            {
+              "count": 3,
+              "item": "minecraft:sunflower",
+              "slot": 30
+            },
+            {
+              "count": 32,
+              "item": "minecraft:smooth_stone",
+              "slot": 31
+            },
+            {
+              "count": 1,
+              "item": "minecraft:shield",
+              "slot": 32
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 33
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 34
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 35
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 36
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 37
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 38
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 39
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 40
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 41
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 42
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 43
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 44
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 45
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 46
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 47
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 48
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 49
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 50
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 51
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 52
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 53
+            },
+            {
+              "count": 1,
+              "item": "minecraft:bucket",
+              "slot": 54
+            },
+            {
+              "count": 1,
+              "item": "minecraft:netherite_pickaxe",
+              "slot": 55
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 56
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 57
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 58
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 59
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 60
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 61
+            },
+            {
+              "count": 16,
+              "item": "minecraft:snow_block",
+              "slot": 62
+            }
+          ]
+        }
+      }
+    },
+    {
+      "arguments": {
+        "z": 200,
+        "y": 201,
+        "menu_type": "minecraft:generic_9x3",
+        "block": "minecraft:chest",
+        "advance": true,
+        "target": "menu",
+        "x": 199
+      },
+      "receipt": {
+        "schema_version": 2,
+        "action_id": "f5c20931-ee12-48c7-8544-d55653ef59e1",
+        "state": "queued"
+      },
+      "tool": "agent_interact"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "f5c20931-ee12-48c7-8544-d55653ef59e1",
+        "kind": "interact",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 71,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "target": "menu",
+          "unconfirmed_click": false,
+          "confirmed_clicks": 0,
+          "menu_type": "minecraft:generic_9x3",
+          "slots": [
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 0
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 1
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 2
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 3
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 4
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 5
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 6
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 7
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 8
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 9
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 10
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 11
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 12
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 13
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 14
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 15
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 16
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 17
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 18
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 19
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 20
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 21
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 22
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 23
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 24
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 25
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 26
+            },
+            {
+              "count": 16,
+              "item": "minecraft:black_wool",
+              "slot": 27
+            },
+            {
+              "count": 3,
+              "item": "minecraft:oak_door",
+              "slot": 28
+            },
+            {
+              "count": 1,
+              "item": "minecraft:red_bed",
+              "slot": 29
+            },
+            {
+              "count": 3,
+              "item": "minecraft:sunflower",
+              "slot": 30
+            },
+            {
+              "count": 32,
+              "item": "minecraft:smooth_stone",
+              "slot": 31
+            },
+            {
+              "count": 1,
+              "item": "minecraft:shield",
+              "slot": 32
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 33
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 34
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 35
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 36
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 37
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 38
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 39
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 40
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 41
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 42
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 43
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 44
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 45
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 46
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 47
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 48
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 49
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 50
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 51
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 52
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 53
+            },
+            {
+              "count": 1,
+              "item": "minecraft:bucket",
+              "slot": 54
+            },
+            {
+              "count": 1,
+              "item": "minecraft:netherite_pickaxe",
+              "slot": 55
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 56
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 57
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 58
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 59
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 60
+            },
+            {
+              "count": 0,
+              "item": "minecraft:air",
+              "slot": 61
+            },
+            {
+              "count": 16,
+              "item": "minecraft:snow_block",
+              "slot": 62
+            }
+          ]
+        }
+      }
+    },
+    {
+      "control": {
+        "schema_version": 2,
+        "control_mode": "ready",
+        "game_paused": false,
+        "ready_expires_at": null,
+        "world_session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+        "latest_frame_id": "obs-3412988d4303d57c",
+        "running_action_id": null
+      },
+      "after": {
+        "schema_version": 2,
+        "player": {
+          "hunger": 20,
+          "submerged": false,
+          "on_fire": false,
+          "yaw": -138.57904,
+          "pitch": 48.717426,
+          "position": {
+            "y": 201.0,
+            "z": 200.66592867671076,
+            "x": 198.5558975881693
+          },
+          "air": 300,
+          "status_effects": [],
+          "dimension": "minecraft:overworld",
+          "absorption": 0.0,
+          "max_air": 300,
+          "health": 20.0
+        },
+        "hotbar": {
+          "slots": [
+            {
+              "slot": 0,
+              "selected": true,
+              "item": "minecraft:bucket",
+              "count": 1
+            },
+            {
+              "slot": 1,
+              "selected": false,
+              "item": "minecraft:netherite_pickaxe",
+              "count": 1
+            },
+            {
+              "slot": 2,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 3,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 4,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 5,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 6,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 7,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 8,
+              "selected": false,
+              "item": "minecraft:snow_block",
+              "count": 16
+            }
+          ],
+          "selected_slot": 0
+        }
+      }
+    }
+  ],
+  "passed": true
+}

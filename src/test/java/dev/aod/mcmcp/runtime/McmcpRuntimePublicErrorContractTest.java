@@ -2,16 +2,60 @@ package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.action.AgentActionStore;
 import dev.aod.mcmcp.agent.dsl.ActionDslException;
+import dev.aod.mcmcp.agent.safety.ObservationRecord;
 import dev.aod.mcmcp.routine.RoutineManager;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
 import java.util.HashSet;
+import java.util.List;
 import java.util.concurrent.RejectedExecutionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class McmcpRuntimePublicErrorContractTest {
+    @Test
+    void v2LocalSafetyDiagnosisIsInTheMessageBecausePublicErrorsDoNotPublishDetails() {
+        var point = new ObservationRecord.Point(98.0, 49.9, -1.5);
+        var current = new ObservationRecord(
+                3859, 42, 0, point, point, point,
+                ObservationRecord.Support.PRESENT,
+                ObservationRecord.Clearance.BLOCKED,
+                ObservationRecord.Transition.STATIONARY,
+                ObservationRecord.Fluid.NONE, false,
+                ObservationRecord.Hazard.COLLISION,
+                ObservationRecord.LoadedState.LOADED,
+                ObservationRecord.Drop.SUPPORTED, false);
+        var reply = RuntimeFailures.mapFailure(RuntimeFailures.v2SafetyPrecondition(
+                "Move", "local_safety_unconfirmed", current));
+        assertThat(reply.successful()).isFalse();
+        assertThat(reply.failure().code()).isEqualTo("unsafe_state");
+        assertThat(reply.failure().retryable()).isTrue();
+        assertThat(reply.failure().message())
+                .contains("Reason: local_safety_unconfirmed.", "Local hazard: collision;",
+                        "observed_tick: 3859; world_revision: 42.")
+                .hasSizeLessThan(512);
+        assertThat(reply.failure().details()).containsEntry("safety_reason", "local_safety_unconfirmed")
+                .containsEntry("local_hazard", "collision");
+    }
+
+    @Test
+    void absentLocalEvidenceAndNonlocalRejectionsDoNotClaimASafeObservation() {
+        var missing = RuntimeFailures.mapFailure(RuntimeFailures.v2SafetyPrecondition(
+                "Script", "local_safety_unconfirmed", null));
+        assertThat(missing.failure().message()).endsWith("Local observation: unavailable.")
+                .doesNotContain("hazard: none");
+        for (String reason : List.of("game_paused", "endpoint_fault", "multiplayer_policy",
+                "screen_changed", "screen_owned", "overlay_open", "world_unavailable")) {
+            var rejected = RuntimeFailures.mapFailure(RuntimeFailures.v2SafetyPrecondition(
+                    "Input sequence", reason, null));
+            assertThat(rejected.failure().code()).isEqualTo("unsafe_state");
+            assertThat(rejected.failure().message()).endsWith("Reason: " + reason + ".")
+                    .doesNotContain("Local hazard:", "Local observation:");
+            assertThat(rejected.failure().details()).containsOnlyKeys("safety_reason");
+        }
+    }
+
     @Test
     void rendererWaitTimeoutHasAFixedDiagnosisButUnrelatedFailuresAreNotReclassified() {
         var recovery = new SurfacePreflightRecovery(new dev.aod.mcmcp.agent.dsl.ActionDsl.Budget(

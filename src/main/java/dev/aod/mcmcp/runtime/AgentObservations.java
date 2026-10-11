@@ -13,6 +13,7 @@ import dev.aod.mcmcp.agent.observation.ObservationFrameStore;
 import dev.aod.mcmcp.agent.observation.ObservationKind;
 import dev.aod.mcmcp.agent.observation.ObservationPage;
 import dev.aod.mcmcp.agent.observation.ObservationStoreException;
+import dev.aod.mcmcp.agent.observation.ObservationRecord.VisibleSurface;
 import dev.aod.mcmcp.agent.observation.ObservationValues.ResourceId;
 import dev.aod.mcmcp.agent.observation.ObservationWireMapper;
 import dev.aod.mcmcp.agent.observation.OmnidirectionalObserver;
@@ -37,6 +38,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
@@ -57,6 +59,7 @@ final class AgentObservations {
     private LocalObservationVolume.Snapshot latestLocalObservation;
     private LocalObservationProjector.CurrentSafety localSafety =
             LocalObservationProjector.CurrentSafety.REPLAN;
+    private dev.aod.mcmcp.agent.safety.Locomotion navigationMode;
     private long knownTraversabilityRevision;
     private boolean soundPlaybackTruncated;
 
@@ -98,15 +101,38 @@ final class AgentObservations {
     }
 
     PreparedObservationPage getAgentObservation(Map<String, Object> arguments) {
+        return getAgentObservation(arguments, this::readBlockEntityData);
+    }
+
+    PreparedObservationPage getAgentObservation(Map<String, Object> arguments,
+            java.util.function.BiFunction<List<VisibleSurface>, Boolean, Map<String, Object>> blockData) {
+        boolean includeNbt = arguments.containsKey("include_nbt")
+                && RuntimeArguments.booleanArgument(arguments, "include_nbt");
+        boolean compact = arguments.isEmpty() || arguments.keySet().equals(Set.of("include_nbt"));
+        if (compact) {
+            String frameId = agentObservationFrames.announceLatestSummary()
+                    .orElseThrow(() -> new RuntimeInvocationException(
+                            "frame_expired", "No observation frame is available yet.", true, Map.of()))
+                    .latestFrameId();
+            arguments = new LinkedHashMap<>();
+            arguments.put("schema_version", 1);
+            arguments.put("frame_id", frameId);
+            arguments.put("kinds", List.of(
+                    ObservationKind.VISIBLE_SURFACE.wireName(),
+                    ObservationKind.VISIBLE_ENTITY.wireName(),
+                    ObservationKind.HAZARD.wireName()));
+            arguments.put("cursor", null);
+            arguments.put("limit", 64);
+        }
         Set<String> required = Set.of("schema_version", "frame_id", "kinds", "cursor", "limit");
         RuntimeArguments.requireAllowedKeys(arguments, "agent_get_observation",
-                Set.of("schema_version", "frame_id", "kinds", "filter", "cursor", "limit"));
+                Set.of("schema_version", "frame_id", "kinds", "filter", "cursor", "limit", "include_nbt"));
         if (!arguments.keySet().containsAll(required)
                 || arguments.size() < required.size()
-                || arguments.size() > required.size() + 1) {
+                || arguments.size() > required.size() + 2) {
             throw new IllegalArgumentException(
                     "agent_get_observation must contain schema_version, frame_id, kinds, cursor, "
-                            + "and limit; filter is optional");
+                            + "and limit; filter and include_nbt are optional");
         }
         if (RuntimeArguments.intArgument(arguments, "schema_version") != 1) {
             throw new IllegalArgumentException("schema_version must be 1");
@@ -132,9 +158,13 @@ final class AgentObservations {
                     cursor,
                     RuntimeArguments.intArgument(arguments, "limit"));
             UUID receiptId = deliveredAgentEvidence.prepareDelivery(page);
-            Map<String, Object> wirePage = ObservationWireMapper.page(page, surface ->
-                    deliveredAgentEvidence.preparedPlacementStateRef(receiptId, surface)
-                            .orElse(null));
+            Function<VisibleSurface, String> placementStateRefs = surface ->
+                            deliveredAgentEvidence.preparedPlacementStateRef(receiptId, surface)
+                                    .orElse(null);
+            Map<String, Object> wirePage = compact
+                    ? ObservationWireMapper.compactPage(page, placementStateRefs)
+                    : ObservationWireMapper.page(page, placementStateRefs);
+            wirePage = BlockEntityObservation.enrich(wirePage, page, includeNbt, blockData);
             return new PreparedObservationPage(wirePage, receiptId);
         } catch (ObservationStoreException failure) {
             throw new RuntimeInvocationException(
@@ -143,6 +173,26 @@ final class AgentObservations {
                     failure.code() != ObservationStoreException.Code.INVALID_CURSOR,
                     Map.of());
         }
+    }
+
+    private Map<String, Object> readBlockEntityData(List<VisibleSurface> surfaces, Boolean includeNbt) {
+        if (agentObserver == null || sessions == null) return BlockEntityObservation.unavailable("not_currently_visible", includeNbt);
+        var minecraft = Minecraft.getInstance();
+        var session = sessions.snapshot();
+        if (!session.worldReady() || minecraft.level == null || minecraft.player == null)
+            return BlockEntityObservation.unavailable("not_currently_visible", includeNbt);
+        var fog = ClientFogDistanceSignals.current(minecraft.level, minecraft.player, minecraft.player.tickCount);
+        if (fog.isEmpty()) return BlockEntityObservation.unavailable("not_currently_visible", includeNbt);
+        var revision = reconciliationSignals.bindAndSnapshot(minecraft.level, session.worldSessionId()).worldRevision();
+        for (var surface : surfaces) {
+            var current = agentObserver.reobserveSurface(minecraft.level, minecraft.player, surface,
+                    session.clientTick(), revision, fog.getAsDouble());
+            if (current.isPresent()) {
+                try { return BlockEntityObservation.readVisible(minecraft, current.get(), session.clientTick(), includeNbt); }
+                catch (RuntimeException | LinkageError failure) { return BlockEntityObservation.unavailable("unavailable", includeNbt); }
+            }
+        }
+        return BlockEntityObservation.unavailable("not_currently_visible", includeNbt);
     }
 
     void abandonUnconfirmedDelivery(RuntimeReply reply) {
@@ -170,6 +220,11 @@ final class AgentObservations {
      */
     Optional<ObservationFrame> agentPlanningFrame() {
         return agentPlanningFrame(null);
+    }
+
+    /** v2 handlers use newly collected local rays without requiring an MCP observation round trip. */
+    Optional<ObservationFrame> latestInternalFrame() {
+        return agentObservationFrames.latestFrame();
     }
 
     Optional<ObservationFrame> agentPlanningFrame(ActionDsl.Node primitive) {
@@ -307,6 +362,13 @@ final class AgentObservations {
         var reconciliation = reconciliationSignals.bindAndSnapshot(
                 minecraft.level, session.worldSessionId());
         long worldRevision = reconciliation.worldRevision();
+        var mode = dev.aod.mcmcp.agent.safety.Locomotion.observedMode(minecraft.player);
+        if (mode != navigationMode) {
+            // Ground, collision-bound flight and spectator proofs are never interchangeable.
+            knownTraversability.startSession(session.worldSessionId(), session.dimension(), worldRevision);
+            knownTraversabilityRevision = worldRevision;
+            navigationMode = mode;
+        }
         var dimension = new ResourceId(session.dimension());
         latestLocalObservation = LocalObservationVolume.global().observe(
                 minecraft.player, session.clientTick(), worldRevision);

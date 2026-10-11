@@ -61,6 +61,25 @@ class KnownBlockBreakAttemptTest {
                         .isEqualTo(AgentActionStore.Verification.UNKNOWN));
     }
 
+    @Test
+    void v2SucceedsOnConfirmedAirWithoutRequiringAnExpectedDrop() {
+        var port = new FakePort();
+        var attempt = new KnownBlockBreakAttempt(port, request(), 10,
+                KnownBlockBreakAttempt.Completion.AUTHORITATIVE_AIR);
+        port.evidence = new PredictionEvidence(
+                7, false, true, Optional.of(state("minecraft:air")), 11, 1);
+        assertThat(attempt.tick(11, true)).isEqualTo(KnownBlockBreakAttempt.TickResult.RUNNING);
+        port.evidence = new PredictionEvidence(
+                7, true, true, Optional.of(state("minecraft:air")), 12, 2);
+        assertThat(attempt.tick(12, true)).isEqualTo(KnownBlockBreakAttempt.TickResult.SUCCEEDED);
+        assertThat(port.released).isTrue();
+        assertThat(attempt.drainEffectDeltas()).singleElement().satisfies(effect -> {
+            assertThat(effect.verification()).isEqualTo(AgentActionStore.Verification.CONFIRMED);
+            assertThat(effect.observedAfter()).containsEntry("block", "minecraft:air");
+            assertThat(effect.observedBefore()).doesNotContainKey("expected_drop");
+        });
+    }
+
     private static StationaryBreakRequest request() {
         return new StationaryBreakRequest(
                 new BlockTarget("minecraft:overworld", 1, 64, 2),

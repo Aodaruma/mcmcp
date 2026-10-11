@@ -12,6 +12,7 @@ import dev.aod.mcmcp.agent.observation.ObservationValues.Vector;
 import dev.aod.mcmcp.agent.observation.ObservationValues.WorldPosition;
 
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -60,6 +61,52 @@ public final class ObservationWireMapper {
                 "records", records,
                 "next_cursor", page.nextCursor(),
                 "sampling_coverage", page.samplingCoverage());
+    }
+
+    /** Compact projection for the argument-free latest-frame query. */
+    public static Map<String, Object> compactPage(
+            ObservationPage page,
+            Function<VisibleSurface, String> placementStateRefs) {
+        Objects.requireNonNull(page, "page");
+        Objects.requireNonNull(placementStateRefs, "placementStateRefs");
+        var records = new java.util.ArrayList<Map<String, Object>>();
+        var otherRecords = new java.util.ArrayList<Map<String, Object>>();
+        var blocks = new LinkedHashMap<CompactBlockKey, CompactBlock>();
+        for (ObservationRecord record : page.records()) {
+            if (record instanceof VisibleSurface surface) {
+                var key = new CompactBlockKey(surface.position(), surface.block().value(), surface.state());
+                blocks.computeIfAbsent(key, ignored -> new CompactBlock(
+                                surface, placementStateRefs.apply(surface)))
+                        .addFace(surface.face());
+            } else if (record instanceof VisibleEntity entity) {
+                otherRecords.add(compactVisibleEntity(entity));
+            } else if (record instanceof Hazard hazard) {
+                otherRecords.add(map(
+                        "kind", "hazard",
+                        "hazard_type", hazard.hazardType().wireName(),
+                        "position", worldPosition(hazard.position()),
+                        "severity", hazard.severity().wireName()));
+            } else {
+                otherRecords.add(record(record, placementStateRefs));
+            }
+        }
+        flushBlocks(records, blocks);
+        records.addAll(otherRecords);
+        return map(
+                "schema_version", page.schemaVersion(),
+                "frame_id", page.frameId(),
+                "frame_completed_tick", page.frameCompletedTick(),
+                "visible_entities_truncated", page.visibleEntitiesTruncated(),
+                "records", List.copyOf(records),
+                "next_cursor", page.nextCursor(),
+                "sampling_coverage", page.samplingCoverage());
+    }
+
+    private static void flushBlocks(
+            List<Map<String, Object>> records,
+            LinkedHashMap<CompactBlockKey, CompactBlock> blocks) {
+        blocks.values().forEach(block -> records.add(block.toWire()));
+        blocks.clear();
     }
 
     public static Map<String, Object> record(ObservationRecord record) {
@@ -147,6 +194,54 @@ public final class ObservationWireMapper {
         return Collections.unmodifiableMap(result);
     }
 
+    private record CompactBlockKey(
+            BlockPosition position,
+            String block,
+            ObservationRecord.BlockStateView state) {
+    }
+
+    private static final class CompactBlock {
+        private final VisibleSurface surface;
+        private final String placementStateRef;
+        private final EnumSet<ObservationRecord.Face> faces =
+                EnumSet.noneOf(ObservationRecord.Face.class);
+
+        private CompactBlock(VisibleSurface surface, String placementStateRef) {
+            this.surface = surface;
+            this.placementStateRef = placementStateRef;
+        }
+
+        private void addFace(ObservationRecord.Face face) {
+            faces.add(face);
+        }
+
+        private Map<String, Object> toWire() {
+            var result = new LinkedHashMap<String, Object>();
+            result.put("kind", "block");
+            result.put("position", blockPosition(surface.position()));
+            result.put("block", surface.block().value());
+            result.put("state", surface.state() == null ? null : map(
+                    "block", surface.state().block().value(),
+                    "properties", surface.state().properties()));
+            var visibleFaces = new StringBuilder();
+            for (var face : List.of(
+                    ObservationRecord.Face.DOWN,
+                    ObservationRecord.Face.UP,
+                    ObservationRecord.Face.NORTH,
+                    ObservationRecord.Face.SOUTH,
+                    ObservationRecord.Face.WEST,
+                    ObservationRecord.Face.EAST)) {
+                if (faces.contains(face)) visibleFaces.append(face.wireName().charAt(0));
+            }
+            result.put("faces", visibleFaces.toString().toUpperCase(java.util.Locale.ROOT));
+            result.put("placement_item", surface.placementItem() == null
+                    ? null : surface.placementItem().value());
+            result.put("placement_state_ref", placementStateRef);
+            if (surface.cropMature() != null) result.put("crop_mature", surface.cropMature());
+            return Collections.unmodifiableMap(result);
+        }
+    }
+
     private static Map<String, Object> visibleEntity(VisibleEntity entity) {
         var result = new LinkedHashMap<String, Object>();
         result.put("kind", entity.kind().wireName());
@@ -178,6 +273,34 @@ public final class ObservationWireMapper {
         result.put("observed_tick", entity.observedTick());
         result.put("world_revision", entity.worldRevision());
         result.put("provenance", entity.provenance().name());
+        return Collections.unmodifiableMap(result);
+    }
+
+    private static Map<String, Object> compactVisibleEntity(VisibleEntity entity) {
+        var result = new LinkedHashMap<String, Object>();
+        result.put("kind", entity.kind().wireName());
+        result.put("entity_type", entity.entityType().value());
+        result.put("entity_ref", entity.entityRef());
+        result.put("position", worldPosition(entity.position()));
+        result.put("hazard_class", entity.hazardClass().wireName());
+        if (entity.displayedItem() != null) {
+            result.put("displayed_item", entity.displayedItem().value());
+        }
+        if (entity.frameDisplay() != null) {
+            var display = entity.frameDisplay();
+            result.put("frame_display", map(
+                    "item", display.item() == null ? null : display.item().value(),
+                    "rotation", display.rotation(),
+                    "aim_point", worldPosition(display.aimPoint())));
+        }
+        if (entity.containerLabel() != null) {
+            var label = entity.containerLabel();
+            result.put("container_label", map(
+                    "item", label.item().value(),
+                    "container_position", blockPosition(label.containerPosition()),
+                    "container_block", label.containerBlock().value(),
+                    "attachment_face", label.attachmentFace().wireName()));
+        }
         return Collections.unmodifiableMap(result);
     }
 

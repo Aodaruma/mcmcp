@@ -37,6 +37,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class MinecraftPhaseFiveInventoryPortTest {
     private static final int DEFAULT_HASH = 41;
 
+    @Test void providerHandSelectionRejectsSideEffectsBeforeDispatchAndUsesSafeEmptyFallback() {
+        var hotbar = new ArrayList<>(java.util.Collections.nCopies(9, testItemStack(Items.WATER_BUCKET, 1)));
+        assertThat(InventoryOpenHandPolicy.chooseProviderOpenSlot(hotbar, true, item -> false)).isEmpty();
+        hotbar.set(3, testItemStack(Items.STONE, 1));
+        assertThat(InventoryOpenHandPolicy.chooseProviderOpenSlot(hotbar, true, item -> item.is(Items.STONE))).hasValue(3);
+        hotbar.set(3, ItemStack.EMPTY);
+        assertThat(InventoryOpenHandPolicy.chooseProviderOpenSlot(hotbar, true, item -> false)).hasValue(3);
+        assertThat(InventoryOpenHandPolicy.chooseProviderOpenSlot(hotbar, false, item -> false)).isEmpty();
+    }
+
     @Test
     void rendererWaitGatesOnlyUnsentInitialOpenAndNeverAckReadbackOrCleanup() throws Exception {
         var checks = new java.util.concurrent.atomic.AtomicInteger();

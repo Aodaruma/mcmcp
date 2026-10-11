@@ -1,0 +1,345 @@
+package dev.aod.mcmcp.agent.script;
+
+import dev.aod.mcmcp.agent.action.AgentJobLimits;
+
+import java.util.Collections;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.function.BooleanSupplier;
+
+/** Restricted synchronous language used by the public script job. */
+final class ActionScript {
+    static final int MAX_SOURCE = 32_768;
+    static final int MAX_NODES = 4_096;
+    static final int MAX_DEPTH = 64;
+    static final int MAX_CALL_DEPTH = 16;
+    static final Budget DEFAULT_BUDGET = new Budget(100_000, 10_000, 1_000);
+    static final Set<String> BUILTINS = Set.of("read_json", "read_csv", "length", "number", "report");
+
+    record Budget(int work, int iterations, int calls) {
+        Budget {
+            if (work < 0 || work > AgentJobLimits.MAX_SCRIPT_WORK || iterations < 0 || iterations > AgentJobLimits.MAX_SCRIPT_ITERATIONS
+                    || calls < 0 || calls > AgentJobLimits.MAX_SCRIPT_CALLS) throw new IllegalArgumentException("Invalid budget");
+        }
+    }
+
+    enum Status { SUCCESS, INVALID, LIMIT, CANCELLED, FAILED }
+    enum Outcome { SUCCESS, FAILURE, CANCELLED }
+    record Command(String name, Map<String, Object> arguments) {
+        Command { arguments = Collections.unmodifiableMap(new LinkedHashMap<>(arguments)); }
+    }
+    /** Must return only on completion; must cooperate with cancellation while waiting. No retries. */
+    interface Sink {
+        Outcome execute(Command command, BooleanSupplier cancelled);
+        default Map<String, Object> result() { return Map.of(); }
+        default boolean mayContinueAfterFailure() { return false; }
+        default Map<String, Object> observe(Map<String, Object> args, BooleanSupplier cancelled) {
+            throw new Stop(Status.INVALID, "Observation unavailable");
+        }
+    }
+    record Result(Status status, int work, int iterations, int calls, int completed, String detail,
+            java.util.List<Object> reports) {}
+
+    static Result run(String source, Set<String> commands, Sink sink, BooleanSupplier cancelled, Budget budget) {
+        return run(source, commands, sink, cancelled, budget, Map.of());
+    }
+
+    static Result run(String source, Set<String> commands, Sink sink, BooleanSupplier cancelled, Budget budget,
+            Map<String, ScriptResources.Resource> resources) {
+        Objects.requireNonNull(sink);
+        var execution = new Execution(budget, cancelled, sink, resources);
+        try {
+            execution.checkCancelled();
+            var parser = new ActionScriptParser(source, Set.copyOf(commands), cancelled);
+            var program = parser.parse();
+            execution.functions = parser.functions();
+            execution.eval(program, new Scope(null));
+            execution.checkCancelled();
+            return execution.result(Status.SUCCESS, "");
+        } catch (Stop stop) {
+            return execution.result(stop.status, stop.getMessage());
+        }
+    }
+
+    static final class Stop extends RuntimeException {
+        final Status status;
+        Stop(Status status, String detail) { super(detail); this.status = status; }
+    }
+
+    private static final class Scope {
+        final Scope parent;
+        final Map<String, Object> values = new LinkedHashMap<>();
+        Scope(Scope parent) { this.parent = parent; }
+        Scope owner(String name) {
+            if (values.containsKey(name)) return this;
+            if (parent != null) return parent.owner(name);
+            throw new Stop(Status.INVALID, "Unknown variable: " + name);
+        }
+    }
+
+    private static final class Execution {
+        final Budget budget;
+        final BooleanSupplier cancelled;
+        final Sink sink;
+        int work, iterations, calls, completed;
+        int callDepth;
+        Map<String, ActionScriptParser.Node> functions = Map.of();
+        final Map<String, ScriptResources.Resource> resources;
+        final ArrayList<Object> reports = new ArrayList<>();
+        int reportNodes, reportCharacters, reportBytes = 2;
+
+        Execution(Budget budget, BooleanSupplier cancelled, Sink sink, Map<String, ScriptResources.Resource> resources) {
+            this.budget = Objects.requireNonNull(budget);
+            this.cancelled = Objects.requireNonNull(cancelled);
+            this.sink = sink;
+            this.resources = Map.copyOf(resources);
+        }
+        Result result(Status status, String detail) {
+            return new Result(status, work, iterations, calls, completed, detail,
+                    Collections.unmodifiableList(new ArrayList<>(reports)));
+        }
+        void checkCancelled() {
+            if (isCancelled())
+                throw new Stop(Status.CANCELLED, "Cancelled");
+        }
+        boolean isCancelled() { return cancelled.getAsBoolean() || Thread.currentThread().isInterrupted(); }
+        void step() {
+            checkCancelled();
+            if (work == budget.work()) throw new Stop(Status.LIMIT, "Work limit");
+            work++;
+        }
+        void iteration() {
+            checkCancelled();
+            if (iterations == budget.iterations()) throw new Stop(Status.LIMIT, "Iteration limit");
+            iterations++;
+        }
+        Object eval(ActionScriptParser.Node node, Scope scope) {
+            step();
+            var children = node.children();
+            return switch (node.kind()) {
+                case "function" -> null;
+                case "literal" -> node.value();
+                case "variable" -> scope.owner(node.text()).values.get(node.text());
+                case "access" -> {
+                    Object target = eval(children.getFirst(), scope);
+                    Object key = eval(children.get(1), scope);
+                    if (target instanceof Map<?, ?> map && key instanceof String name) {
+                        if (!map.containsKey(name)) throw new Stop(Status.INVALID, "Missing data field");
+                        yield map.get(name);
+                    }
+                    if (target instanceof java.util.List<?> list && key instanceof Number index) {
+                        double value = index.doubleValue();
+                        if (value < 0 || value != Math.rint(value) || value >= list.size()) throw new Stop(Status.INVALID, "Array index out of bounds");
+                        yield list.get((int) value);
+                    }
+                    throw new Stop(Status.INVALID, "Data field or array index required");
+                }
+                case "array" -> {
+                    var values = new ArrayList<Object>();
+                    for (var child : children) values.add(eval(child, scope));
+                    yield Collections.unmodifiableList(values);
+                }
+                case "object" -> {
+                    var values = new LinkedHashMap<String, Object>();
+                    for (var child : children) values.put(child.text(), eval(child.children().getFirst(), scope));
+                    yield Collections.unmodifiableMap(values);
+                }
+                case "block" -> {
+                    var local = new Scope(scope);
+                    for (var child : children) eval(child, local);
+                    yield null;
+                }
+                case "let", "assign" -> {
+                    Object value = eval(children.getFirst(), scope);
+                    Scope target = node.kind().equals("let") ? scope : scope.owner(node.text());
+                    if (node.kind().equals("let") && target.values.containsKey(node.text()))
+                        throw new Stop(Status.INVALID, "Duplicate variable: " + node.text());
+                    target.values.put(node.text(), value);
+                    yield null;
+                }
+                case "if" -> {
+                    if (bool(eval(children.getFirst(), scope))) eval(children.get(1), scope);
+                    else if (children.size() == 3) eval(children.get(2), scope);
+                    yield null;
+                }
+                case "repeat" -> {
+                    double count = number(eval(children.getFirst(), scope));
+                    if (count < 0 || count != Math.rint(count))
+                        throw new Stop(Status.INVALID, "Repeat count must be a nonnegative integer");
+                    if (count > budget.iterations() - iterations) throw new Stop(Status.LIMIT, "Iteration limit");
+                    for (int i = 0; i < (int) count; i++) {
+                        iteration();
+                        eval(children.get(1), scope);
+                    }
+                    yield null;
+                }
+                case "for" -> {
+                    var local = new Scope(scope);
+                    eval(children.getFirst(), local);
+                    while (bool(eval(children.get(1), local))) {
+                        iteration();
+                        eval(children.get(3), local);
+                        eval(children.get(2), local);
+                    }
+                    yield null;
+                }
+                case "call" -> {
+                    var args = new LinkedHashMap<String, Object>();
+                    for (var arg : children) args.put(arg.text(), eval(arg.children().getFirst(), scope));
+                    checkCancelled();
+                    if (BUILTINS.contains(node.text())) yield builtin(node.text(), args);
+                    var function = functions.get(node.text());
+                    if (function != null) {
+                        if (callDepth == MAX_CALL_DEPTH) throw new Stop(Status.LIMIT, "Function call depth limit");
+                        var local = new Scope(null); // No caller/global capture or closures.
+                        local.values.putAll(args);
+                        callDepth++;
+                        try {
+                            eval(function.children().getLast(), local);
+                        } finally {
+                            callDepth--;
+                        }
+                        yield null;
+                    }
+                    if (calls == budget.calls()) throw new Stop(Status.LIMIT, "Call limit");
+                    calls++;
+                    if (node.text().equals("observe")) yield sink.observe(Collections.unmodifiableMap(args), this::isCancelled);
+                    Object failurePolicy = args.remove("on_failure");
+                    if (failurePolicy != null && !Set.of("stop", "continue").contains(failurePolicy))
+                        throw new Stop(Status.INVALID, "Invalid on_failure policy");
+                    Outcome outcome;
+                    try {
+                        outcome = sink.execute(new Command(node.text(), args), this::isCancelled);
+                    } catch (RuntimeException failure) {
+                        checkCancelled();
+                        throw new Stop(Status.FAILED, "Command sink threw");
+                    }
+                    if (outcome == Outcome.SUCCESS) completed++;
+                    checkCancelled();
+                    if (outcome == Outcome.CANCELLED) throw new Stop(Status.CANCELLED, "Command cancelled");
+                    if (outcome != Outcome.SUCCESS && !("continue".equals(failurePolicy) && sink.mayContinueAfterFailure()))
+                        throw new Stop(Status.FAILED, "Command failed");
+                    var response = new LinkedHashMap<String, Object>(sink.result());
+                    response.put("success", outcome == Outcome.SUCCESS);
+                    yield Collections.unmodifiableMap(response);
+                }
+                case "unary" -> {
+                    Object value = eval(children.getFirst(), scope);
+                    yield switch (node.text()) {
+                        case "!" -> !bool(value);
+                        case "-" -> finite(-number(value));
+                        default -> number(value);
+                    };
+                }
+                case "binary" -> {
+                    Object left = eval(children.getFirst(), scope);
+                    if (node.text().equals("&&")) yield bool(left) && bool(eval(children.get(1), scope));
+                    if (node.text().equals("||")) yield bool(left) || bool(eval(children.get(1), scope));
+                    Object right = eval(children.get(1), scope);
+                    yield switch (node.text()) {
+                        case "==" -> equal(left, right);
+                        case "!=" -> !equal(left, right);
+                        case "<" -> number(left) < number(right);
+                        case "<=" -> number(left) <= number(right);
+                        case ">" -> number(left) > number(right);
+                        case ">=" -> number(left) >= number(right);
+                        case "+" -> finite(number(left) + number(right));
+                        case "-" -> finite(number(left) - number(right));
+                        case "*" -> finite(number(left) * number(right));
+                        case "/" -> finite(number(left) / number(right));
+                        case "%" -> finite(number(left) % number(right));
+                        default -> throw new AssertionError(node.text());
+                    };
+                }
+                default -> throw new AssertionError(node.kind());
+            };
+        }
+
+        private Object builtin(String name, Map<String, Object> args) {
+            String key = name.startsWith("read_") ? "name" : "value";
+            if (!args.keySet().equals(Set.of(key))) throw new Stop(Status.INVALID, "Invalid data function arguments");
+            Object value = args.get(key);
+            return switch (name) {
+                case "report" -> {
+                    if (reports.size() == 32) throw new Stop(Status.LIMIT, "Report count limit");
+                    Object copy = copyReport(value, 0);
+                    int bytes = new com.google.gson.GsonBuilder().serializeNulls().create().toJson(copy)
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+                    if (reportBytes + bytes + 1 > 16_384) throw new Stop(Status.LIMIT, "Report byte limit");
+                    reportBytes += bytes + 1;
+                    reports.add(copy);
+                    yield null;
+                }
+                case "read_json", "read_csv" -> {
+                    if (!(value instanceof String resourceName)) throw new Stop(Status.INVALID, "Resource name required");
+                    var resource = resources.get(resourceName);
+                    if (resource == null || !name.equals("read_" + resource.format())) throw new Stop(Status.INVALID, "Registered resource unavailable");
+                    yield resource.value();
+                }
+                case "length" -> {
+                    if (value instanceof java.util.List<?> list) yield (double) list.size();
+                    if (value instanceof Map<?, ?> map) yield (double) map.size();
+                    if (value instanceof String text) yield (double) text.length();
+                    throw new Stop(Status.INVALID, "Collection or string required");
+                }
+                case "number" -> {
+                    if (value instanceof Number n) yield finite(n.doubleValue());
+                    if (!(value instanceof String text) || text.length() > 128) throw new Stop(Status.INVALID, "Numeric data required");
+                    try { yield finite(Double.parseDouble(text)); }
+                    catch (NumberFormatException failure) { throw new Stop(Status.INVALID, "Invalid numeric data"); }
+                }
+                default -> throw new AssertionError(name);
+            };
+        }
+
+        private Object copyReport(Object value, int depth) {
+            step();
+            if (++reportNodes > 512 || depth > 16) throw new Stop(Status.LIMIT, "Report structure limit");
+            if (value == null || value instanceof Boolean) return value;
+            if (value instanceof Number number) return finite(number.doubleValue());
+            if (value instanceof String text) {
+                reportCharacters += text.length();
+                if (reportCharacters > 16_384) throw new Stop(Status.LIMIT, "Report text limit");
+                return text;
+            }
+            if (value instanceof java.util.List<?> list) {
+                var copy = new ArrayList<>();
+                for (Object element : list) copy.add(copyReport(element, depth + 1));
+                return Collections.unmodifiableList(copy);
+            }
+            if (value instanceof Map<?, ?> map) {
+                var copy = new LinkedHashMap<String, Object>();
+                for (var entry : map.entrySet()) {
+                    if (!(entry.getKey() instanceof String key)) throw new Stop(Status.INVALID, "Report key must be text");
+                    copy.put((String) copyReport(key, depth + 1), copyReport(entry.getValue(), depth + 1));
+                }
+                return Collections.unmodifiableMap(copy);
+            }
+            throw new Stop(Status.INVALID, "Report requires data values");
+        }
+    }
+
+    private static boolean bool(Object value) {
+        if (value instanceof Boolean b) return b;
+        throw new Stop(Status.INVALID, "Boolean required");
+    }
+    private static boolean equal(Object left, Object right) {
+        // Do not recursively traverse shared collection graphs (which can expand exponentially).
+        if (left instanceof java.util.List<?> || left instanceof Map<?, ?>
+                || right instanceof java.util.List<?> || right instanceof Map<?, ?>)
+            throw new Stop(Status.INVALID, "Equality requires scalar values");
+        if (left instanceof Number a && right instanceof Number b) return a.doubleValue() == b.doubleValue();
+        return Objects.equals(left, right);
+    }
+    private static double number(Object value) {
+        if (value instanceof Number n) return finite(n.doubleValue());
+        throw new Stop(Status.INVALID, "Number required");
+    }
+    static double finite(double value) {
+        if (!Double.isFinite(value)) throw new Stop(Status.INVALID, "Nonfinite number");
+        return value;
+    }
+}

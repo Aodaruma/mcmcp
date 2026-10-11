@@ -66,6 +66,14 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
     public MinecraftFloorExtensionAttempt(Minecraft minecraft, WorldSessionTracker.Snapshot session,
             KnownPillarUpRequest source, Direction direction, MinecraftObservationService observations,
             MinecraftApplyBlockPlanPort placementPort, ClientReconciliationSignals reconciliations) {
+        this(minecraft, session, source, direction, observations, placementPort, reconciliations, false);
+    }
+
+    /** V2 may first center on the same witnessed full support; the legacy entry stays stationary. */
+    public MinecraftFloorExtensionAttempt(Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            KnownPillarUpRequest source, Direction direction, MinecraftObservationService observations,
+            MinecraftApplyBlockPlanPort placementPort, ClientReconciliationSignals reconciliations,
+            boolean centerOnSupport) {
         this.minecraft = Objects.requireNonNull(minecraft);
         this.player = Objects.requireNonNull(minecraft.player);
         this.level = Objects.requireNonNull(minecraft.level);
@@ -83,16 +91,22 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
         this.health = player.getHealth();
         requireOrdinaryFloorPhysics(SafeConstructionBlockPolicy.requireExpectedState(source.sourceState()));
         expectedYaw = player.getYRot(); expectedPitch = player.getXRot();
+        boolean centered = Math.abs(player.getX() - support.getX() - 0.5) <= 0.15
+                && Math.abs(player.getZ() - support.getZ() - 0.5) <= 0.15;
+        if (centerOnSupport && !centered) phase = Phase.CENTER_ORIENT;
         requireSafety(session);
-        if (Math.abs(player.getX() - support.getX() - 0.5) > 0.15
-                || Math.abs(player.getZ() - support.getZ() - 0.5) > 0.15
+        if (!centerOnSupport && !centered
                 || !level.getBlockState(target).isAir() || !settled())
             throw new IllegalStateException("floor extension requires centered stationary support and empty target");
         // Preflight resources before moving; the placement adapter still stages and rechecks its slot.
         if (player.getInventory().getNonEquipmentItems().stream().noneMatch(stack ->
                 !stack.isEmpty() && source.item().equals(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString())
                         && stack.getComponentsPatch().isEmpty()))
-            throw new IllegalStateException("floor extension material unavailable");
+            throw new MaterialUnavailableException();
+    }
+
+    public static final class MaterialUnavailableException extends IllegalStateException {
+        private MaterialUnavailableException() { super("floor extension material unavailable"); }
     }
 
     public Result tick(WorldSessionTracker.Snapshot session) {
@@ -114,6 +128,16 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
             }
             keys(false);
             switch (phase) {
+                case CENTER_ORIENT -> {
+                    Vec3 delta = Vec3.atBottomCenterOf(support.above()).subtract(player.position());
+                    float yaw = (float) (Math.toDegrees(Math.atan2(delta.z, delta.x)) - 90);
+                    if (turn(yaw, 80) && player.isShiftKeyDown()) phase = Phase.CENTER_MOVE;
+                }
+                case CENTER_MOVE -> {
+                    if (player.position().distanceToSqr(Vec3.atBottomCenterOf(support.above())) > 0.01)
+                        movement.setDesired(owner, Set.of(MovementInputLease.MovementKey.CROUCH, MovementInputLease.MovementKey.FORWARD));
+                    else if (settled()) phase = Phase.ORIENT;
+                }
                 case ORIENT -> { if (turn(outwardYaw() + 180, 80)) phase = Phase.LEAN; }
                 case LEAN -> {
                     // Release before the edge goal: ordinary crouch input retains braking inertia.
@@ -142,11 +166,12 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
                 case PLACE -> {
                     var result = construction.tick(session.clientTick());
                     effects.addAll(result.effects()); placedDelta += result.placedDelta();
+                    if (result.confirmedEntries() == 1 || construction.serverConfirmed(new BlockTarget(
+                            source.support().dimension(), target.getX(), target.getY(), target.getZ()))) confirmed = true;
                     // The ordinary construction adapter temporarily owns/restores camera and slot.
                     expectedYaw = player.getYRot(); expectedPitch = player.getXRot();
                     if (result.status() == KnownConstructionAttempt.Status.FAILED) return failed(result.evidence());
                     if (result.status() == KnownConstructionAttempt.Status.SUCCEEDED) {
-                        confirmed = result.confirmedEntries() == 1;
                         if (!confirmed) return failed("floor_extension_requires_new_confirmed_placement");
                         construction = null; phase = Phase.ADVANCE_ORIENT;
                     }
@@ -186,7 +211,8 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
                 || player.getAttributeValue(Attributes.MOVEMENT_SPEED) > 0.10001
                 || player.getAttributeValue(Attributes.SNEAKING_SPEED) > 0.30001
                 || Math.abs(player.getY() - support.getY() - 1) > 0.015
-                || !withinCorridor(progress(), lateral(), confirmed)
+                || !(centering() ? centeredSupportOverlap(player.getX() - support.getX() - 0.5,
+                        player.getZ() - support.getZ() - 0.5) : withinCorridor(progress(), lateral(), confirmed))
                 || reconciliations.bindAndSnapshot(level, sessionId).positionCorrectionRevision() != correctionRevision)
             throw new IllegalStateException("floor extension safety boundary changed");
         for (BlockPos cell : List.of(support, target, support.above(), support.above(2), target.above(), target.above(2))) {
@@ -201,7 +227,11 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
                 || !Block.isShapeFullBlock(liveSupport.getCollisionShape(level, support))
                 || !liveSupport.isFaceSturdy(level, support, Direction.UP))
             throw new IllegalStateException("floor extension support changed");
-        if ((phase == Phase.ORIENT || phase == Phase.LEAN || phase == Phase.AIM)
+        var body = player.getBoundingBox();
+        if (!confirmed && (Math.min(body.maxX, support.getX() + 1) - Math.max(body.minX, support.getX()) < 0.06999
+                || Math.min(body.maxZ, support.getZ() + 1) - Math.max(body.minZ, support.getZ()) < 0.06999))
+            throw new IllegalStateException("floor extension body left its support");
+        if ((centering() || phase == Phase.ORIENT || phase == Phase.LEAN || phase == Phase.AIM)
                 && !level.getBlockState(target).isAir())
             throw new IllegalStateException("floor extension air target changed");
         if (confirmed) {
@@ -215,7 +245,9 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
         }
         // Only the two-cell swept body volume is inspected; it is never returned as world knowledge.
         for (BlockPos air : List.of(support.above(), support.above(2), target.above(), target.above(2))) {
-            if (!level.getBlockState(air).isAir()) throw new IllegalStateException("floor extension corridor obstructed");
+            if (!corridorPassable(level.getBlockState(air), level, air)
+                    || level.getBlockEntity(air) != null)
+                throw new IllegalStateException("floor extension corridor obstructed");
         }
         if (!level.noCollision(player, player.getBoundingBox())
                 || level.getEntities(player, player.getBoundingBox().inflate(8),
@@ -232,6 +264,32 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
         return Double.isFinite(progress) && Double.isFinite(lateral)
                 && Math.abs(lateral) <= 0.18 && progress >= -0.16
                 && progress <= (floorConfirmed ? 1.12 : 0.73);
+    }
+
+    /** At least 0.07 blocks of the standard-width body remain over this one full support. */
+    public static boolean centeredSupportOverlap(double offsetX, double offsetZ) {
+        return Double.isFinite(offsetX) && Double.isFinite(offsetZ)
+                && Math.abs(offsetX) <= 0.73 && Math.abs(offsetZ) <= 0.73;
+    }
+
+    private boolean centering() { return phase == Phase.CENTER_ORIENT || phase == Phase.CENTER_MOVE; }
+
+    public boolean currentPositionSafe(WorldSessionTracker.Snapshot session) {
+        if (closed) return false;
+        try { requireSafety(session); return true; }
+        catch (RuntimeException | LinkageError rejected) { return false; }
+    }
+
+    public boolean placementConfirmed() { return confirmed; }
+
+    static boolean corridorPassable(BlockState state, net.minecraft.world.level.BlockGetter level, BlockPos position) {
+        // Torches, dust and rails are safe to walk through; shape alone does not exclude contact hazards.
+        return state.getCollisionShape(level, position).isEmpty()
+                && !state.hasBlockEntity() && !MinecraftSemanticActionPort.isNavigationHazard(state)
+                && !state.is(net.minecraft.world.level.block.Blocks.COBWEB)
+                && !state.is(net.minecraft.tags.BlockTags.CLIMBABLE)
+                && Math.abs(state.getBlock().getSpeedFactor() - 1.0F) <= 0.0001F
+                && Math.abs(state.getBlock().getJumpFactor() - 1.0F) <= 0.0001F;
     }
 
     private static void requireOrdinaryFloorPhysics(BlockState state) {
@@ -251,9 +309,13 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
     }
     private boolean settled() { return player.getDeltaMovement().horizontalDistanceSqr() < 0.000025; }
     private float outwardYaw() { return switch (direction) { case NORTH -> 180; case SOUTH -> 0; case EAST -> -90; case WEST -> 90; default -> throw new AssertionError(); }; }
+    public static float cameraStepDegrees(int configuredDegreesPerSecond) {
+        return Math.min(8.0F, configuredDegreesPerSecond / 20.0F);
+    }
     private boolean turn(float yaw, float pitch) {
         float dy = Mth.wrapDegrees(yaw - player.getYRot()), dp = pitch - player.getXRot();
-        player.turn(Mth.clamp(dy, -8, 8) / 0.15D, Mth.clamp(dp, -8, 8) / 0.15D);
+        float step = cameraStepDegrees(dev.aod.mcmcp.client.McmcpClientConfig.maxCameraDegreesPerSecond());
+        player.turn(Mth.clamp(dy, -step, step) / 0.15D, Mth.clamp(dp, -step, step) / 0.15D);
         expectedYaw = player.getYRot(); expectedPitch = player.getXRot();
         return Math.abs(Mth.wrapDegrees(yaw - expectedYaw)) < 0.2 && Math.abs(pitch - expectedPitch) < 0.2;
     }
@@ -305,7 +367,7 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
         finally { if (movement != null) movement.close(); }
         closed = true;
     }
-    private enum Phase { ORIENT, LEAN, AIM, PLACE, ADVANCE_ORIENT, ADVANCE }
+    private enum Phase { CENTER_ORIENT, CENTER_MOVE, ORIENT, LEAN, AIM, PLACE, ADVANCE_ORIENT, ADVANCE }
     public enum Status { RUNNING, SUCCEEDED, FAILED }
     public record Result(Status status, String evidence, List<String> diagnostics) {
         public Result(Status status, String evidence) { this(status, evidence, List.of()); }

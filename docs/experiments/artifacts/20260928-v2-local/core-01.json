@@ -1,0 +1,243 @@
+{
+  "status": "failed",
+  "phase": "Core",
+  "failure": "Job failed: agent_inventory / inventory_not_confirmed",
+  "active_action_id": null,
+  "final_control": {
+    "schema_version": 2,
+    "control_mode": "ready",
+    "game_paused": false,
+    "ready_expires_at": null,
+    "world_session_id": "3e6ea263-ef83-4c51-8570-2f1d7efb9684",
+    "latest_frame_id": "obs-c812b067a7ad62eb",
+    "running_action_id": null
+  },
+  "events": [
+    {
+      "initial_state": {
+        "schema_version": 2,
+        "player": {
+          "status_effects": [],
+          "dimension": "minecraft:overworld",
+          "absorption": 0.0,
+          "max_air": 300,
+          "health": 20.0,
+          "hunger": 20,
+          "submerged": false,
+          "on_fire": false,
+          "yaw": 0.0,
+          "pitch": 9.0,
+          "position": {
+            "x": 200.5,
+            "y": 201.0,
+            "z": 200.5
+          },
+          "air": 300
+        },
+        "hotbar": {
+          "slots": [
+            {
+              "slot": 0,
+              "selected": true,
+              "item": "minecraft:bucket",
+              "count": 1
+            },
+            {
+              "slot": 1,
+              "selected": false,
+              "item": "minecraft:netherite_pickaxe",
+              "count": 1
+            },
+            {
+              "slot": 2,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 3,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 4,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 5,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 6,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 7,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 8,
+              "selected": false,
+              "item": null,
+              "count": 0
+            }
+          ],
+          "selected_slot": 0
+        }
+      },
+      "compact_records": 64
+    },
+    {
+      "receipt": {
+        "action_id": "dd492e7e-9a3c-480a-a7ba-d9f593f3413c",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "operation": "inspect"
+      },
+      "tool": "agent_inventory"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "dd492e7e-9a3c-480a-a7ba-d9f593f3413c",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 1,
+          "max_operations": 1
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "matching_count": 34,
+          "slots": [
+            {
+              "item": "minecraft:bucket",
+              "slot": 0,
+              "count": 1
+            },
+            {
+              "item": "minecraft:netherite_pickaxe",
+              "slot": 1,
+              "count": 1
+            },
+            {
+              "item": "minecraft:black_wool",
+              "slot": 9,
+              "count": 16
+            },
+            {
+              "item": "minecraft:snow_block",
+              "slot": 10,
+              "count": 16
+            }
+          ],
+          "slot_count": 43,
+          "operation": "inspect",
+          "empty_slots": 39,
+          "selected_slot": 0
+        }
+      }
+    },
+    {
+      "receipt": {
+        "action_id": "daa8ac98-cdcf-4a66-b7bb-f7b1a62d092f",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "operation": "swap",
+        "item": "minecraft:black_wool",
+        "hotbar_slot": 4,
+        "source_slot": 9
+      },
+      "tool": "agent_inventory"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "daa8ac98-cdcf-4a66-b7bb-f7b1a62d092f",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 2,
+          "max_operations": 100
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "source_before": {
+            "item": "minecraft:black_wool",
+            "count": 16
+          },
+          "source_slot": 9,
+          "hotbar_after": {
+            "item": "minecraft:black_wool",
+            "count": 16
+          },
+          "item": "minecraft:black_wool",
+          "operation": "swap",
+          "hotbar_before": {
+            "item": "minecraft:air",
+            "count": 0
+          },
+          "hotbar_slot": 4,
+          "source_after": {
+            "item": "minecraft:air",
+            "count": 0
+          },
+          "confirmed": true
+        }
+      }
+    },
+    {
+      "receipt": {
+        "action_id": "da897db8-1684-46d6-ba56-223aa654b107",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "operation": "drop",
+        "slot": 4,
+        "count": 2,
+        "item": "minecraft:black_wool"
+      },
+      "tool": "agent_inventory"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "da897db8-1684-46d6-ba56-223aa654b107",
+        "kind": "inventory",
+        "state": "failed",
+        "progress": {
+          "completed_operations": 82,
+          "max_operations": 600
+        },
+        "cancel_requested": false,
+        "failure": "inventory_not_confirmed",
+        "result": {
+          "failure": "drop_ack_timeout",
+          "requested_count": 2,
+          "confirmed_count": 0,
+          "selected_slot": 4,
+          "item": "minecraft:black_wool",
+          "source_slot": 4,
+          "unconfirmed_count": 1,
+          "operation": "drop"
+        }
+      }
+    }
+  ]
+}

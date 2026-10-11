@@ -1,0 +1,100 @@
+{
+  "status": "passed",
+  "phase": "ItemEntity",
+  "failure": null,
+  "active_action_id": null,
+  "final_control": {
+    "schema_version": 2,
+    "control_mode": "ready",
+    "game_paused": false,
+    "ready_expires_at": null,
+    "world_session_id": "f4b2d604-2959-4982-b37f-8e7c6f96df69",
+    "latest_frame_id": "obs-a09d4f7ca7204adc",
+    "running_action_id": null
+  },
+  "events": [
+    {
+      "tool": "agent_interact",
+      "arguments": {
+        "result_item": "minecraft:milk_bucket",
+        "target": "entity",
+        "entity_ref": "S8p_FuQl6XTUbg9s00S-Y85M",
+        "item": "minecraft:bucket",
+        "entity_type": "minecraft:cow"
+      },
+      "receipt": {
+        "action_id": "6975308e-3b56-4f59-ab05-54547ae3f98e",
+        "state": "queued",
+        "schema_version": 2
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "6975308e-3b56-4f59-ab05-54547ae3f98e",
+        "kind": "interact",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 4,
+          "max_operations": 200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "inventory_layout_may_have_changed": false,
+          "target": "entity",
+          "client_consumed": true,
+          "slot": 0,
+          "dispatched": true,
+          "effect_confirmed": true,
+          "confirmation": "server_held_item",
+          "held_after": {
+            "item": "minecraft:milk_bucket",
+            "count": 1
+          },
+          "entity_ref": "S8p_FuQl6XTUbg9s00S-Y85M"
+        }
+      }
+    },
+    {
+      "tool": "agent_interact",
+      "arguments": {
+        "target": "item",
+        "item": "minecraft:milk_bucket",
+        "result_item": "minecraft:bucket"
+      },
+      "receipt": {
+        "action_id": "0d47870e-147f-4c6d-a103-58828ffb9494",
+        "state": "queued",
+        "schema_version": 2
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "0d47870e-147f-4c6d-a103-58828ffb9494",
+        "kind": "interact",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 34,
+          "max_operations": 200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "dispatched": true,
+          "inventory_layout_may_have_changed": false,
+          "client_consumed": true,
+          "slot": 0,
+          "target": "item",
+          "server_processed": true,
+          "effect_confirmed": true,
+          "held_after": {
+            "item": "minecraft:bucket",
+            "count": 1
+          }
+        }
+      }
+    }
+  ]
+}

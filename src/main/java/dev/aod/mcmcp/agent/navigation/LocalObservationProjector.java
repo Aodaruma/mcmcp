@@ -270,7 +270,8 @@ public final class LocalObservationProjector {
             List<dev.aod.mcmcp.agent.observation.ObservationRecord> records) {
         HazardType type;
         HazardSeverity severity;
-        if (source.fluid() == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.WATER) {
+        if (source.fluid() == dev.aod.mcmcp.agent.safety.ObservationRecord.Fluid.WATER
+                && source.hazard() == dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.NONE) {
             type = HazardType.WATER;
             severity = HazardSeverity.CAUTION;
         } else {

@@ -20,6 +20,63 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ClientCommandInboxTest {
     @Test
+    void retainedCleanupAllowsFreshDiagnosticsAndCancelButRejectsStartsAndOldRequests() {
+        var inbox = new ClientCommandInbox(8, new InputReleaseController(), new LocalArmingState());
+        var oldRead = inbox.submit("agent_get_state", 1, Long.MAX_VALUE, () -> "old");
+        var oldCancel = inbox.submitControl("agent_cancel_action", 1, Long.MAX_VALUE, () -> "old");
+        var stopped = inbox.requestEmergencyStop("menu_cleanup_pending");
+        var state = inbox.submit("agent_get_state", 1, Long.MAX_VALUE, () -> "state");
+        var status = inbox.submit("agent_get_mcp_status", 1, Long.MAX_VALUE, () -> "status");
+        var cancel = inbox.submitControl("agent_cancel_action", 1, Long.MAX_VALUE, () -> "cancelled");
+        var start = inbox.submitControl("agent_inventory", 1, Long.MAX_VALUE, () -> "must not run");
+
+        assertThat(inbox.failPendingForStop()).isEqualTo(1);
+        assertThat(inbox.failPendingForStop()).isZero();
+        inbox.drainControls(1, 10);
+        inbox.drainNormal(1, 10);
+        inbox.drainNormal(1, 11);
+
+        assertThat(oldRead).isCompletedExceptionally();
+        assertThat(oldCancel).isCompletedExceptionally();
+        assertThat(start).isCompletedExceptionally();
+        assertThat(state.join()).isEqualTo("state");
+        assertThat(status.join()).isEqualTo("status");
+        assertThat(cancel.join()).isEqualTo("cancelled");
+        assertThat(stopped).isNotDone();
+    }
+
+    @Test
+    void cleanupDiagnosticsStillRespectWorldDeadlineAndNewStopFences() {
+        for (int boundary = 0; boundary < 3; boundary++) {
+            var now = new AtomicLong(10);
+            var inbox = new ClientCommandInbox(8, new InputReleaseController(), new LocalArmingState(),
+                    (reason, session) -> ClientCommandInbox.StopProgress.PENDING, now::get);
+            inbox.requestEmergencyStop("menu_cleanup_pending");
+            var read = inbox.submit("agent_get_state", 1, 20, () -> "must not run");
+            if (boundary == 2) inbox.requestLocalDisable();
+            inbox.failPendingForStop();
+            inbox.drainNormal(boundary == 0 ? 2 : 1, boundary == 1 ? 20 : 10);
+            assertThat(read).isCompletedExceptionally();
+        }
+    }
+
+    @Test
+    void dimensionRearmingIsAtomicWithExplicitOffAndStopAdmission() {
+        for (int boundary = 0; boundary < 3; boundary++) {
+            var arming = new LocalArmingState();
+            var inbox = new ClientCommandInbox(4, new InputReleaseController(), arming);
+            arming.lock("level_or_dimension_change");
+            long controlEpoch = arming.peek().controlEpoch();
+            long safetyEpoch = inbox.safetyEpoch();
+            if (boundary == 1) inbox.requestLocalDisable();
+            if (boundary == 2) inbox.requestEmergencyStop("operator_stop");
+            assertThat(inbox.armAfterWorldTransition(UUID.randomUUID(), Set.of("movement"),
+                    safetyEpoch, controlEpoch)).isEqualTo(boundary == 0);
+            assertThat(arming.peek().locked()).isEqualTo(boundary != 0);
+        }
+    }
+
+    @Test
     void deferredPreflightRunsOncePerDrainAndPreservesItsOriginalDeadline() {
         var now = new AtomicLong(10);
         var inbox = new ClientCommandInbox(8, new InputReleaseController(), new LocalArmingState(),

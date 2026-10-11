@@ -30,7 +30,7 @@ public final class NavigationViewLease {
         expectedSlot = originalSlot;
     }
 
-    static NavigationViewLease acquire(LocalPlayer player, UUID ownerId) {
+    public static NavigationViewLease acquire(LocalPlayer player, UUID ownerId) {
         return acquire(new VanillaViewControl(player), ownerId);
     }
 
@@ -38,7 +38,7 @@ public final class NavigationViewLease {
         return new NavigationViewLease(control, ownerId);
     }
 
-    boolean matches(UUID owner) {
+    public boolean matches(UUID owner) {
         requireOwner(owner);
         return !closed
                 && Math.abs(Mth.wrapDegrees(control.yaw() - expectedYaw))
@@ -47,7 +47,7 @@ public final class NavigationViewLease {
                 && control.selectedSlot() == expectedSlot;
     }
 
-    void turnToward(UUID owner, float desiredYaw, float desiredPitch) {
+    public void turnToward(UUID owner, float desiredYaw, float desiredPitch) {
         requireOwner(owner);
         if (!matches(owner)) {
             throw new IllegalStateException("owned navigation view changed externally");
@@ -81,7 +81,7 @@ public final class NavigationViewLease {
         return matches(owner) && control.selectedSlot() == slot;
     }
 
-    void close(UUID owner) {
+    public void close(UUID owner) {
         requireOwner(owner);
         if (closed) {
             return;

@@ -15,6 +15,273 @@ class ExactInventoryTransferTest {
     private static final UUID SESSION = UUID.randomUUID();
 
     @Test
+    void storageBoundaryUsesWholeStackDestinationsWithinTheSameClickBudget() {
+        var initial = boundarySlots();
+        var plan = ExactInventoryTransfer.plan(initial, List.of(0, 1, 2, 3, 4, 5, 6), List.of(7, 8),
+                ITEM, 77, true, 448, 7, 64, boundaryCapacities(2048), 64).orElseThrow();
+        assertThat(plan.clickCount()).isEqualTo(14);
+        var current = snapshot(initial, EMPTY, 1);
+        for (var click : plan.clicks()) {
+            assertThat(plan.beginClick(current, current.packetLedgerRevision())).isTrue();
+            assertThat(click.slots().stream().mapToInt(StackFingerprint::count).sum() + click.cursor().count()).isEqualTo(2264);
+            current = snapshot(click.slots(), click.cursor(), current.packetLedgerRevision() + 1);
+            assertThat(plan.confirm(current, current.packetLedgerRevision())).isTrue();
+        }
+        assertThat(current.slots().subList(0, 7)).containsOnly(EMPTY);
+        assertThat(current.slots().subList(7, 9)).containsExactly(stack(2008), stack(256));
+        assertThat(current.carried()).isEqualTo(EMPTY);
+        assertThat(plan.confirmedCount()).isEqualTo(448);
+        assertThat(plan.reconcileReadback(current)).isTrue();
+        assertThat(initial.get(7)).isEqualTo(stack(1816));
+    }
+
+    @Test
+    void fittingBoundaryTransferStillFillsTheExistingStackFirst() {
+        var plan = ExactInventoryTransfer.plan(boundarySlots(), List.of(0, 1, 2, 3, 4, 5, 6), List.of(7, 8),
+                ITEM, 77, true, 232, 7, 64, boundaryCapacities(2048), 64).orElseThrow();
+        assertThat(plan.clickCount()).isLessThanOrEqualTo(14);
+        assertThat(plan.clicks().getLast().slots().subList(7, 9)).containsExactly(stack(2048), EMPTY);
+    }
+
+    @Test
+    void nearbyCapacityBoundariesKeepQuantityAndBothDestinationLimits() {
+        for (int count : new int[]{1791, 1792, 1793, 1816, 1984, 1985, 2047, 2048}) {
+            var slots = new java.util.ArrayList<>(boundarySlots());
+            slots.set(7, stack(count));
+            var plan = ExactInventoryTransfer.plan(slots, List.of(0, 1, 2, 3, 4, 5, 6), List.of(7, 8),
+                    ITEM, 77, true, 448, 7, 64, boundaryCapacities(2048), 64).orElseThrow();
+            assertThat(plan.clickCount()).isLessThanOrEqualTo(14);
+            var last = plan.clicks().getLast();
+            assertThat(last.slots().subList(0, 7)).containsOnly(EMPTY);
+            assertThat(last.slots().subList(7, 9)).allSatisfy(stack -> assertThat(stack.count()).isBetween(0, 2048));
+            assertThat(last.slots().stream().mapToInt(StackFingerprint::count).sum()).isEqualTo(count + 448);
+            assertThat(last.cursor()).isEqualTo(EMPTY);
+        }
+    }
+
+    @Test
+    void boundaryFallbackDoesNotRelaxTotalCapacityOrTheClickLimit() {
+        for (int secondCapacity : new int[]{0, 215, 216}) {
+            assertThat(ExactInventoryTransfer.plan(boundarySlots(), List.of(0, 1, 2, 3, 4, 5, 6), List.of(7, 8),
+                    ITEM, 77, true, 448, 7, 64, boundaryCapacities(secondCapacity), 64)).isEmpty();
+        }
+    }
+
+    @Test
+    void cancellationOfBoundaryFallbackReturnsOnlyOwnedCursorAndCountsOnlyProvenMoves() {
+        var initial = boundarySlots();
+        var plan = ExactInventoryTransfer.plan(initial, List.of(0, 1, 2, 3, 4, 5, 6), List.of(7, 8),
+                ITEM, 77, true, 448, 7, 64, boundaryCapacities(2048), 64).orElseThrow();
+        var current = snapshot(initial, EMPTY, 1);
+        for (int index = 0; index < 7; index++) {
+            assertThat(plan.beginClick(current, current.packetLedgerRevision())).isTrue();
+            var click = plan.next();
+            current = snapshot(click.slots(), click.cursor(), current.packetLedgerRevision() + 1);
+            assertThat(plan.confirm(current, current.packetLedgerRevision())).isTrue();
+        }
+        assertThat(plan.confirmedCount()).isEqualTo(192);
+        assertThat(current.carried().count()).isEqualTo(64);
+        var recovery = plan.cursorReturn(current).orElseThrow();
+        assertThat(recovery.slot()).isEqualTo(3);
+        assertThat(plan.confirmRelease(snapshot(recovery.slots(), EMPTY, 9))).isTrue();
+        assertThat(plan.confirmedCount()).isEqualTo(192);
+        assertThat(recovery.slots().subList(7, 9)).containsExactly(stack(2008), EMPTY);
+        assertThat(plan.exhausted()).isTrue();
+    }
+
+    private static List<StackFingerprint> boundarySlots() {
+        return List.of(stack(64), stack(64), stack(64), stack(64), stack(64), stack(64), stack(64), stack(1816), EMPTY);
+    }
+
+    private static List<Integer> boundaryCapacities(int last) {
+        return List.of(64, 64, 64, 64, 64, 64, 64, 2048, last);
+    }
+
+    @Test
+    void cleanupReturnsOnlyFreshExpectedCursorWithoutConfirmingConcurrentSourceChanges() {
+        var initial = List.of(stack(668), EMPTY);
+        var plan = ExactInventoryTransfer.plan(initial, List.of(0), List.of(1),
+                ITEM, 77, true, 2, 1, 64, List.of(2048, 64), 64).orElseThrow();
+        assertThat(plan.beginClick(snapshot(initial, EMPTY, 1), 1)).isTrue();
+        var expected = plan.next();
+        var changed = new java.util.ArrayList<>(expected.slots());
+        changed.set(0, changed.get(0).withCount(changed.get(0).count() - 1));
+        var server = snapshot(changed, expected.cursor(), 2);
+        assertThat(plan.confirm(server, 2)).isFalse();
+        assertThat(plan.cursorReturnForRelease(server, 1)).isEmpty();
+        var cleanup = plan.cursorReturnForRelease(server, 2).orElseThrow();
+        assertThat(cleanup.slot()).isZero();
+        assertThat(cleanup.slots().getFirst().count()).isEqualTo(667);
+        assertThat(plan.confirmedCount()).isZero();
+        assertThat(plan.awaitingAcknowledgement()).isTrue();
+        assertThat(plan.cursorReturnForRelease(snapshot(changed, expected.cursor().withCount(1), 3), 3)).isEmpty();
+        assertThat(plan.cursorReturnForRelease(snapshot(List.of(stack(2048), EMPTY), expected.cursor(), 3), 3)).isEmpty();
+        assertThat(plan.cursorReturnForRelease(snapshot(List.of(new StackFingerprint("minecraft:stone", 1, 99), EMPTY),
+                expected.cursor(), 3), 3)).isEmpty();
+    }
+
+    @Test
+    void fullInventorySwapNeedsNoSpareSlotAndCanRecoverTheSecondCursor() {
+        var other = new StackFingerprint("minecraft:stone", 32, 99);
+        var initial = List.of(stack(64), other);
+        var plan = ExactInventoryTransfer.swap(initial, 0, 1, List.of(64,64)).orElseThrow();
+        assertThat(plan.clicks()).hasSize(3);
+        var state = snapshot(initial, EMPTY, 1);
+        for(int i=0;i<2;i++) {
+            assertThat(plan.beginClick(state,10+i)).isTrue();
+            var click=plan.next();
+            state=snapshot(click.slots(),click.cursor(),2+i);
+            assertThat(plan.confirm(state,2+i)).isTrue();
+        }
+        var recovery=plan.cursorReturn(state).orElseThrow();
+        assertThat(recovery.slot()).isZero();
+        assertThat(plan.confirmRelease(snapshot(recovery.slots(),EMPTY,4))).isTrue();
+        assertThat(recovery.slots()).containsExactly(other,stack(64));
+    }
+
+    @Test
+    void identicalIntegerHashesDoNotMergeDifferentComponentsOrAcknowledgeWrongPayloads() {
+        var type=net.minecraft.core.component.DataComponentType.<String>builder().persistent(com.mojang.serialization.Codec.STRING).build();
+        var a=new StackFingerprint(ITEM,1,77,java.util.Map.of(type,"variant-a"));
+        var b=new StackFingerprint(ITEM,1,77,java.util.Map.of(type,"variant-b"));
+        assertThat(ExactInventoryTransfer.plan(List.of(a,b),List.of(0),List.of(1),ITEM,77,true,1,1,64)).isEmpty();
+        var plan=ExactInventoryTransfer.swap(List.of(a,b),0,1,List.of(64,64)).orElseThrow();
+        assertThat(plan.beginClick(snapshot(List.of(a,b),EMPTY,1),1)).isTrue();
+        assertThat(plan.confirm(snapshot(List.of(EMPTY,b),b,2),2)).isFalse();
+        assertThat(plan.confirm(snapshot(List.of(EMPTY,b),a,3),3)).isTrue();
+    }
+
+    @Test
+    void cancellationAfterPartialDepositCountsUnitsAfterTheCursorReturns() {
+        var initial = List.of(stack(64), EMPTY);
+        var plan = plan(initial, List.of(0), List.of(1), 1, 1);
+        var before = snapshot(initial, EMPTY, 1);
+        for (int step = 0; step < 2; step++) {
+            assertThat(plan.beginClick(before, 10 + step)).isTrue();
+            var click = plan.next();
+            before = snapshot(click.slots(), click.cursor(), 2 + step);
+            assertThat(plan.confirm(before, 2 + step)).isTrue();
+        }
+        assertThat(plan.confirmedCount()).isZero();
+        var recovery = plan.cursorReturn(before).orElseThrow();
+        assertThat(plan.confirmRelease(snapshot(List.of(stack(64), EMPTY), EMPTY, 4))).isFalse();
+        var after = snapshot(recovery.slots(), EMPTY, 4);
+        assertThat(plan.confirmRelease(after)).isTrue();
+        assertThat(plan.confirmedCount()).isEqualTo(1);
+        assertThat(plan.pending()).isFalse();
+        assertThat(plan.exhausted()).isTrue();
+        assertThat(plan.beginClick(after, 20)).isFalse();
+    }
+
+    @Test
+    void expandedStorageUsesActualPickupCountsAndExactQuantitiesInBothDirections() {
+        for (int quantity : new int[]{1, 2, 9, 32, 63, 64}) {
+            var take = ExactInventoryTransfer.plan(List.of(stack(2560), EMPTY), List.of(0), List.of(1),
+                    ITEM, 77, true, quantity, 1, 64, List.of(4096, 64)).orElseThrow();
+            assertThat(take.clicks().getLast().slots()).containsExactly(stack(2560 - quantity), stack(quantity));
+            assertThat(take.clicks()).allSatisfy(click -> assertThat(
+                    click.slots().stream().mapToInt(StackFingerprint::count).sum() + click.cursor().count())
+                    .isEqualTo(2560));
+            var store = ExactInventoryTransfer.plan(List.of(stack(64), stack(2560)), List.of(0), List.of(1),
+                    ITEM, 77, true, quantity, 1, 64, List.of(64, 4096)).orElseThrow();
+            assertThat(store.clicks().getLast().slots()).containsExactly(
+                    quantity == 64 ? EMPTY : stack(64 - quantity), stack(2560 + quantity));
+        }
+    }
+
+    @Test
+    void oversizedSourcePickupUsesTheWholeStackAndRejectsAnUnplannableCount() {
+        var one = ExactInventoryTransfer.plan(List.of(stack(2560), EMPTY), List.of(0), List.of(1),
+                ITEM, 77, true, 1, 1, 64, List.of(4096, 64)).orElseThrow();
+        // Vanilla Menu PICKUP takes the entire slot on a primary click, then puts one
+        // into the player slot and returns the rest to the expanded storage slot.
+        assertThat(one.clicks()).hasSize(3);
+        assertThat(one.clicks().getFirst().slots()).containsExactly(EMPTY, EMPTY);
+        assertThat(one.clicks().getFirst().cursor()).isEqualTo(stack(2560));
+        assertThat(one.clicks().get(1).slots()).containsExactly(EMPTY, stack(1));
+        assertThat(one.clicks().get(1).cursor()).isEqualTo(stack(2559));
+        assertThat(one.clicks().getLast().slots()).containsExactly(stack(2559), stack(1));
+        assertThat(one.clicks().getLast().cursor()).isEqualTo(EMPTY);
+        assertThat(ExactInventoryTransfer.plan(List.of(stack(2560), EMPTY), List.of(0), List.of(1),
+                ITEM, 77, true, 24, 1, 64, List.of(4096, 64))).isEmpty();
+    }
+
+    @Test
+    void backpackPickupCapsBeforeSplittingAndKeepsUpgradeSlotsUntouched() {
+        var upgrade = new StackFingerprint("test:upgrade", 1, 98);
+        for (int quantity : new int[]{1, 24, 32, 63, 64}) {
+            var initial = List.of(stack(2048), EMPTY, upgrade);
+            var plan = ExactInventoryTransfer.plan(initial, List.of(0), List.of(1),
+                    ITEM, 77, true, quantity, 1, 64, List.of(2048, 64, 0), 64).orElseThrow();
+            assertThat(plan.clicks()).allSatisfy(click -> {
+                assertThat(click.cursor().count()).isBetween(0, 64);
+                assertThat(click.slots().get(2)).isEqualTo(upgrade);
+            });
+            assertThat(plan.clicks().getLast().slots()).containsExactly(stack(2048 - quantity), stack(quantity), upgrade);
+        }
+        var whole = ExactInventoryTransfer.plan(List.of(stack(2048), EMPTY), List.of(0), List.of(1),
+                ITEM, 77, true, 64, 1, 64, List.of(2048, 64), 64).orElseThrow();
+        assertThat(whole.clicks()).hasSize(2);
+        assertThat(whole.next().cursor()).isEqualTo(stack(64));
+        assertThat(whole.next().slots()).containsExactly(stack(1984), EMPTY);
+        var half = ExactInventoryTransfer.plan(List.of(stack(2048), EMPTY), List.of(0), List.of(1),
+                ITEM, 77, true, 32, 1, 64, List.of(2048, 64), 64).orElseThrow();
+        assertThat(half.next().button()).isEqualTo(1);
+        assertThat(half.next().cursor()).isEqualTo(stack(32));
+        assertThat(half.next().slots()).containsExactly(stack(2016), EMPTY);
+    }
+
+    @Test
+    void backpackCancellationReturnsOnlyThePacketProvenLimitedCursor() {
+        var initial = List.of(stack(2048), EMPTY);
+        var plan = ExactInventoryTransfer.plan(initial, List.of(0), List.of(1),
+                ITEM, 77, true, 64, 1, 64, List.of(2048, 64), 64).orElseThrow();
+        assertThat(plan.beginClick(snapshot(initial, EMPTY, 1), 10)).isTrue();
+        assertThat(plan.confirm(snapshot(List.of(EMPTY, EMPTY), stack(2048), 2), 2)).isFalse();
+        var held = snapshot(List.of(stack(1984), EMPTY), stack(64), 3);
+        assertThat(plan.confirm(held, 3)).isTrue();
+        var cleanup = plan.cursorReturn(held).orElseThrow();
+        assertThat(cleanup.slots()).containsExactly(stack(2048), EMPTY);
+        assertThat(plan.confirmRelease(snapshot(cleanup.slots(), EMPTY, 4))).isTrue();
+        assertThat(plan.confirmedCount()).isZero();
+        assertThat(plan.pending()).isFalse();
+    }
+
+    @Test
+    void expandedTransferRejectsProtectedSlotsAndUnboundedSearch() {
+        assertThat(ExactInventoryTransfer.plan(List.of(stack(2560), EMPTY), List.of(0), List.of(1),
+                ITEM, 77, true, 24, 1, 64, List.of(4096, 0))).isEmpty();
+        assertThat(ExactInventoryTransfer.plan(List.of(stack(2560), stack(2048)), List.of(0), List.of(1),
+                ITEM, 77, true, 24, 1, 64, List.of(4096, 4096))).isEmpty();
+        assertThat(ExactInventoryTransfer.plan(List.of(stack(2560), EMPTY), List.of(2), List.of(1),
+                ITEM, 77, true, 24, 1, 64, List.of(4096, 64))).isEmpty();
+    }
+
+    @Test
+    void expandedTransferUsesExplicitRolesAndWaitsForFreshCursorAtEveryStep() {
+        var protectedStack = new StackFingerprint("test:upgrade", 1, 98);
+        var initial = List.of(protectedStack, EMPTY, stack(2560), protectedStack);
+        var plan = ExactInventoryTransfer.plan(initial, List.of(2), List.of(1),
+                ITEM, 77, true, 23, 1, 64, List.of(0, 64, 4096, 0)).orElseThrow();
+        var current = snapshot(initial, EMPTY, 1);
+        long tick = 10;
+        while (!plan.exhausted()) {
+            assertThat(plan.beginClick(current, tick++)).isTrue();
+            var click = plan.next();
+            var next = snapshot(click.slots(), click.cursor(), current.packetLedgerRevision() + 1);
+            assertThat(plan.confirm(next, current.packetLedgerRevision())).isFalse();
+            assertThat(plan.confirm(next, next.packetLedgerRevision())).isTrue();
+            assertThat(next.slots().get(0)).isEqualTo(protectedStack);
+            assertThat(next.slots().get(3)).isEqualTo(protectedStack);
+            current = next;
+        }
+        assertThat(plan.confirmedCount()).isEqualTo(23);
+        assertThat(plan.pending()).isFalse();
+        assertThat(plan.reconcileReadback(current)).isTrue();
+        assertThat(plan.reconcileReadback(snapshot(List.of(protectedStack, stack(24), stack(2560), protectedStack), EMPTY, 100))).isFalse();
+    }
+
+    @Test
     void ordinaryDyesCanSplitButBundlePickupOverridesCannotBePlanned() {
         assertThat(KnownMenuTransfers.ordinaryPickupItem(net.minecraft.world.item.DyeItem.class)).isTrue();
         assertThat(KnownMenuTransfers.ordinaryPickupItem(net.minecraft.world.item.BundleItem.class)).isFalse();
@@ -171,6 +438,35 @@ class ExactInventoryTransferTest {
         assertThat(plan.ackTimedOut(69)).isFalse();
         assertThat(plan.ackTimedOut(70)).isTrue();
         assertThat(plan.confirmedCount()).isZero();
+    }
+
+    @Test
+    void cursorReturnWaitsForTheSentClickAndPreservesPartialTransfers() {
+        var initial = List.of(stack(2560), EMPTY);
+        var plan = ExactInventoryTransfer.plan(initial, List.of(0), List.of(1),
+                ITEM, 77, true, 1, 1, 64, List.of(4096, 64)).orElseThrow();
+        var before = snapshot(initial, EMPTY, 1);
+        var pickup = plan.next();
+        assertThat(plan.beginClick(before, 10)).isTrue();
+        assertThat(plan.cursorReturn(before)).isEmpty();
+        var held = snapshot(pickup.slots(), pickup.cursor(), 2);
+        assertThat(plan.confirm(held, 1)).isFalse();
+        assertThat(plan.cursorReturn(held)).isEmpty();
+        assertThat(plan.confirm(held, 2)).isTrue();
+        var restoreAll = plan.cursorReturn(held).orElseThrow();
+        assertThat(restoreAll.slot()).isZero();
+        assertThat(restoreAll.slots()).containsExactly(stack(2560), EMPTY);
+        var deposit = plan.next();
+        assertThat(plan.beginClick(held, 11)).isTrue();
+        var partial = snapshot(deposit.slots(), deposit.cursor(), 3);
+        assertThat(plan.confirm(partial, 3)).isTrue();
+        var restoreRemainder = plan.cursorReturn(partial).orElseThrow();
+        assertThat(restoreRemainder.slots()).containsExactly(stack(2559), stack(1));
+        assertThat(restoreRemainder.confirmed(snapshot(restoreRemainder.slots(), EMPTY, 4))).isTrue();
+        assertThat(restoreRemainder.confirmed(snapshot(restoreRemainder.slots(), stack(1), 4))).isFalse();
+        assertThat(plan.cursorReturn(snapshot(List.of(EMPTY, stack(2)), stack(2559), 4))).isEmpty();
+        assertThat(plan.confirmedCount()).isZero();
+        assertThat(plan.pending()).isTrue(); // The partial group remains an explicit uncertain effect.
     }
 
     private static ExactInventoryTransfer plan(List<StackFingerprint> initial,

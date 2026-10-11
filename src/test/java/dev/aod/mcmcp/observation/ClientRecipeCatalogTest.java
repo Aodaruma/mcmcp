@@ -24,6 +24,27 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ClientRecipeCatalogTest {
     @Test
+    void shapedHolesArePreservedAndChangeTheReferenceFingerprint() {
+        var catalog=new ClientRecipeCatalog();
+        var session=UUID.randomUUID();
+        String previous=null;
+        for(int hole : new int[]{0,1}) {
+            var layout=new java.util.ArrayList<SlotDisplay>(List.of(new SlotDisplay.ItemSlotDisplay(Items.OAK_PLANKS), new SlotDisplay.ItemSlotDisplay(Items.OAK_PLANKS)));
+            layout.set(hole,SlotDisplay.Empty.INSTANCE);
+            var display=new net.minecraft.world.item.crafting.display.ShapedCraftingRecipeDisplay(2,1,layout,
+                    new SlotDisplay.ItemSlotDisplay(Items.STICK),new SlotDisplay.ItemSlotDisplay(Items.CRAFTING_TABLE));
+            catalog.refresh(session,hole+1,List.of(new RecipeDisplayEntry(new RecipeDisplayId(1),display,OptionalInt.empty(),
+                    RecipeBookCategories.CRAFTING_MISC,Optional.of(List.of(Ingredient.of(Items.OAK_PLANKS))))));
+            var view=catalog.query(session,new ClientRecipeCatalog.Query(ClientRecipeCatalog.QueryKind.RESULT_ITEM,"minecraft:stick"),64).recipes().getFirst();
+            assertThat(view.v2CraftSupported()).isTrue();
+            var resolved=catalog.resolve(session,view.recipeRef(),view.fingerprint()).orElseThrow();
+            assertThat(resolved.layout().get(hole)).isEmpty();
+            if(previous!=null) assertThat(view.fingerprint()).isNotEqualTo(previous);
+            previous=view.fingerprint();
+        }
+    }
+
+    @Test
     void exposesOnlyKnownClientDisplaysWithOpaqueSessionScopedReferences() {
         var catalog = new ClientRecipeCatalog();
         UUID session = UUID.randomUUID();
@@ -108,7 +129,7 @@ class ClientRecipeCatalogTest {
     }
 
     @Test
-    void craftingRemaindersAreVisibleButNeverAdvertisedAsExecutable() {
+    void craftingRemaindersRemainUnsupportedForLegacyButRetainV2Ingredients() {
         var catalog = new ClientRecipeCatalog();
         UUID session = UUID.randomUUID();
         catalog.refresh(session, 1, List.of(shapeless(9, Items.MILK_BUCKET, Items.STONE, 1)));
@@ -120,7 +141,8 @@ class ClientRecipeCatalogTest {
 
         assertThat(recipe.supported()).isFalse();
         assertThat(recipe.unsupportedReason()).isEqualTo("crafting_remainder");
-        assertThat(recipe.ingredients()).isEmpty();
+        assertThat(recipe.ingredients()).hasSize(1);
+        assertThat(recipe.v2CraftSupported()).isTrue();
     }
 
     @Test

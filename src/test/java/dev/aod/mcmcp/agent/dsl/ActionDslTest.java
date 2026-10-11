@@ -127,7 +127,7 @@ class ActionDslTest {
     }
 
     @Test
-    void parsesEveryNormativeCatalogExample() throws IOException {
+    void parsesEveryLegacyExecutorExample() throws IOException {
         JsonArray examples = startActionSchema().getAsJsonArray("examples");
 
         assertThat(examples).hasSize(20);
@@ -1691,17 +1691,7 @@ class ActionDslTest {
     }
 
     private static JsonObject startActionSchema() throws IOException {
-        Path catalogPath = Path.of(
-                System.getProperty("mcmcp.projectDir"), "docs", "MCMCP_MCP_Tool_Catalog.json");
-        JsonArray tools = JsonParser.parseString(Files.readString(catalogPath))
-                .getAsJsonObject().getAsJsonArray("tools");
-        for (var tool : tools) {
-            JsonObject object = tool.getAsJsonObject();
-            if ("agent_start_action".equals(object.get("name").getAsString())) {
-                return object.getAsJsonObject("inputSchema");
-            }
-        }
-        throw new AssertionError("agent_start_action catalog entry not found");
+        return dev.aod.mcmcp.mcp.LegacyActionSchema.inputSchema();
     }
 
     private static JsonObject exampleNamed(String name) throws IOException {

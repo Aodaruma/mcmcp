@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-29",
+  "request": {
+    "operation": "inspect",
+    "target": "storage",
+    "storage_slot": 8,
+    "storage_item": "sophisticatedbackpacks:netherite_backpack",
+    "max_ticks": 400
+  },
+  "world_session": "dd09bf38-fa1a-4679-b0dd-7440293cf02d",
+  "jar_sha256": "f787171893dff9ea3027fb9139c28ad28f8dad0b05ffcc375b8fa304bc9b2e7b",
+  "powder_used": 0,
+  "gui_recovery": [
+    "foreground Minecraft",
+    "Escape showed player inventory",
+    "clicked MCP OFF",
+    "Escape closed player inventory"
+  ],
+  "action_snapshots": {
+    "normal-bag-start": {
+      "action_id": "0a770cb5-f51d-4f10-89d6-e38d5d66d37e",
+      "schema_version": 2,
+      "state": "queued"
+    },
+    "normal-bag-result": {
+      "schema_version": 2,
+      "action_id": "0a770cb5-f51d-4f10-89d6-e38d5d66d37e",
+      "kind": "inventory",
+      "state": "running",
+      "progress": {
+        "completed_operations": 400,
+        "max_operations": 400,
+        "elapsed_seconds": 38.2986282,
+        "remaining_seconds": 81.7004443,
+        "max_duration_seconds": 119.9990725
+      },
+      "stop_reason": null,
+      "cancel_requested": false,
+      "failure": null,
+      "result": {
+        "storage_item": "sophisticatedbackpacks:netherite_backpack",
+        "target": "storage",
+        "operation": "inspect",
+        "storage_slot": 8,
+        "complete": false
+      }
+    },
+    "normal-bag-check-1": {
+      "schema_version": 2,
+      "action_id": "0a770cb5-f51d-4f10-89d6-e38d5d66d37e",
+      "kind": "inventory",
+      "state": "running",
+      "progress": {
+        "completed_operations": 400,
+        "max_operations": 400,
+        "elapsed_seconds": 59.936943,
+        "remaining_seconds": 60.0621295,
+        "max_duration_seconds": 119.9990725
+      },
+      "stop_reason": null,
+      "cancel_requested": false,
+      "failure": null,
+      "result": {
+        "storage_item": "sophisticatedbackpacks:netherite_backpack",
+        "target": "storage",
+        "operation": "inspect",
+        "storage_slot": 8,
+        "complete": false
+      }
+    },
+    "normal-bag-cancel": {
+      "action_id": "0a770cb5-f51d-4f10-89d6-e38d5d66d37e",
+      "state_at_request": "running",
+      "schema_version": 2,
+      "cancel_requested": true
+    },
+    "normal-bag-after-cancel": {
+      "schema_version": 2,
+      "action_id": "0a770cb5-f51d-4f10-89d6-e38d5d66d37e",
+      "kind": "inventory",
+      "state": "running",
+      "progress": {
+        "completed_operations": 400,
+        "max_operations": 400,
+        "elapsed_seconds": 78.0268893,
+        "remaining_seconds": 41.9721832,
+        "max_duration_seconds": 119.9990725
+      },
+      "stop_reason": null,
+      "cancel_requested": true,
+      "failure": null,
+      "result": {
+        "storage_item": "sophisticatedbackpacks:netherite_backpack",
+        "target": "storage",
+        "operation": "inspect",
+        "storage_slot": 8,
+        "complete": false
+      }
+    },
+    "normal-bag-focused": {
+      "schema_version": 2,
+      "action_id": "0a770cb5-f51d-4f10-89d6-e38d5d66d37e",
+      "kind": "inventory",
+      "state": "running",
+      "progress": {
+        "completed_operations": 400,
+        "max_operations": 400,
+        "elapsed_seconds": 154.9754896,
+        "remaining_seconds": 0,
+        "max_duration_seconds": 119.9990725
+      },
+      "stop_reason": null,
+      "cancel_requested": true,
+      "failure": null,
+      "result": {
+        "storage_item": "sophisticatedbackpacks:netherite_backpack",
+        "target": "storage",
+        "operation": "inspect",
+        "storage_slot": 8,
+        "complete": false
+      }
+    },
+    "normal-bag-after-esc": {
+      "schema_version": 2,
+      "action_id": "0a770cb5-f51d-4f10-89d6-e38d5d66d37e",
+      "kind": "inventory",
+      "state": "running",
+      "progress": {
+        "completed_operations": 400,
+        "max_operations": 400,
+        "elapsed_seconds": 174.0703727,
+        "remaining_seconds": 0,
+        "max_duration_seconds": 119.9990725
+      },
+      "stop_reason": null,
+      "cancel_requested": true,
+      "failure": null,
+      "result": {
+        "storage_item": "sophisticatedbackpacks:netherite_backpack",
+        "target": "storage",
+        "operation": "inspect",
+        "storage_slot": 8,
+        "complete": false
+      }
+    },
+    "normal-bag-after-off": {
+      "schema_version": 2,
+      "action_id": "0a770cb5-f51d-4f10-89d6-e38d5d66d37e",
+      "kind": "inventory",
+      "state": "running",
+      "progress": {
+        "completed_operations": 400,
+        "max_operations": 400,
+        "elapsed_seconds": 188.9721227,
+        "remaining_seconds": 0,
+        "max_duration_seconds": 119.9990725
+      },
+      "stop_reason": null,
+      "cancel_requested": true,
+      "failure": null,
+      "result": {
+        "storage_item": "sophisticatedbackpacks:netherite_backpack",
+        "target": "storage",
+        "operation": "inspect",
+        "storage_slot": 8,
+        "complete": false
+      }
+    },
+    "normal-bag-after-close": {
+      "schema_version": 2,
+      "action_id": "0a770cb5-f51d-4f10-89d6-e38d5d66d37e",
+      "kind": "inventory",
+      "state": "running",
+      "progress": {
+        "completed_operations": 400,
+        "max_operations": 400,
+        "elapsed_seconds": 205.6195638,
+        "remaining_seconds": 0,
+        "max_duration_seconds": 119.9990725
+      },
+      "stop_reason": null,
+      "cancel_requested": true,
+      "failure": null,
+      "result": {
+        "storage_item": "sophisticatedbackpacks:netherite_backpack",
+        "target": "storage",
+        "operation": "inspect",
+        "storage_slot": 8,
+        "complete": false
+      }
+    }
+  }
+}

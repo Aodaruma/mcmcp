@@ -11,18 +11,20 @@ public final class RuntimeCallContext {
     private final long deadlineNanos;
     private final EvaluationLeaseExpectation evaluationLeaseExpectation;
     private final ElicitationInput elicitationInput;
+    private final boolean scriptChild;
     private final AtomicBoolean cancelled = new AtomicBoolean();
 
     private RuntimeCallContext(
             String requestId,
             long deadlineNanos,
             EvaluationLeaseExpectation evaluationLeaseExpectation,
-            ElicitationInput elicitationInput) {
+            ElicitationInput elicitationInput, boolean scriptChild) {
         this.requestId = requestId;
         this.deadlineNanos = deadlineNanos;
         this.evaluationLeaseExpectation = Objects.requireNonNull(
                 evaluationLeaseExpectation, "evaluationLeaseExpectation");
         this.elicitationInput = Objects.requireNonNull(elicitationInput, "elicitationInput");
+        this.scriptChild = scriptChild;
     }
 
     public static RuntimeCallContext withTimeout(Duration timeout) {
@@ -56,7 +58,19 @@ public final class RuntimeCallContext {
         long deadline = deadlineAfter(now, timeoutNanos);
         return new RuntimeCallContext(
                 UUID.randomUUID().toString(), deadline, evaluationLeaseExpectation,
-                elicitationInput);
+                elicitationInput, false);
+    }
+
+    /** Trusted runtime-only dispatch for one command owned by an already admitted script. */
+    public static RuntimeCallContext forScriptChild(
+            Duration timeout, EvaluationLeaseExpectation expectation) {
+        var ordinary = withTimeout(timeout, expectation);
+        return new RuntimeCallContext(ordinary.requestId, ordinary.deadlineNanos,
+                expectation, ElicitationInput.unsupported(), true);
+    }
+
+    public boolean scriptChild() {
+        return scriptChild;
     }
 
     public String requestId() {

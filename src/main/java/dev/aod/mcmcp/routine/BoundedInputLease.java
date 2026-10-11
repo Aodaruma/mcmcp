@@ -126,7 +126,7 @@ public final class BoundedInputLease implements AutoCloseable {
         }
     }
 
-    public enum Input { FORWARD, BACK, LEFT, RIGHT, JUMP, SNEAK, ATTACK, USE }
+    public enum Input { FORWARD, BACK, LEFT, RIGHT, JUMP, SNEAK, ATTACK, USE, PICK }
 
     public interface Control {
         void publish(Set<Input> inputs, long validUntilNanos);
@@ -156,6 +156,7 @@ public final class BoundedInputLease implements AutoCloseable {
             }
             if (set.contains(Input.ATTACK)) state.publishAttack(validUntilNanos);
             if (set.contains(Input.USE)) state.publishUse(validUntilNanos);
+            if (set.contains(Input.PICK)) state.publishPick(validUntilNanos);
         }
 
         @Override
@@ -163,6 +164,7 @@ public final class BoundedInputLease implements AutoCloseable {
             if (hasMovement(inputs)) state.releaseMovement();
             if (inputs.contains(Input.ATTACK)) state.releaseAttack();
             if (inputs.contains(Input.USE)) state.releaseUse();
+            if (inputs.contains(Input.PICK)) state.releasePick();
         }
 
         @Override

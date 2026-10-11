@@ -2085,6 +2085,10 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
                     verified.put("screen_release_confirmed", screenReleaseConfirmed);
                     verified.put("server_cursor_empty", serverCursorReleaseConfirmed);
                     verified.put("view_slot_release_confirmed", true);
+                    var consumed = new LinkedHashMap<String, Integer>();
+                    consumed.put(ingredientKey.itemId(), smelt.maxSmelts());
+                    consumed.merge(fuelKey.itemId(), fuelConsumedCount, Math::addExact);
+                    verified.put("consumed", Map.copyOf(consumed));
                     result = new PhaseFiveResult(
                             smelt.maxSmelts(), true, verified, List.of());
                 }

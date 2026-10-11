@@ -11,6 +11,7 @@ public record StationaryBreakRequest(
         int attackLeaseTicks,
         int regenerationWaitTicks) {
     public static final int MAX_ATTACK_LEASE_TICKS = 40;
+    public static final int MAX_V2_ATTACK_LEASE_TICKS = 600;
     public static final int MAX_DURATION_TICKS = 6_000;
 
     public StationaryBreakRequest {
@@ -20,8 +21,8 @@ public record StationaryBreakRequest(
         if (hardDeadlineClientTick < 1) {
             throw new IllegalArgumentException("hard deadline must be positive");
         }
-        if (attackLeaseTicks < 1 || attackLeaseTicks > MAX_ATTACK_LEASE_TICKS) {
-            throw new IllegalArgumentException("attack lease must be in 1..40 ticks");
+        if (attackLeaseTicks < 1 || attackLeaseTicks > MAX_V2_ATTACK_LEASE_TICKS) {
+            throw new IllegalArgumentException("attack lease must be in 1..600 ticks");
         }
         if (regenerationWaitTicks < 1 || regenerationWaitTicks > 200) {
             throw new IllegalArgumentException("regeneration wait must be in 1..200 ticks");

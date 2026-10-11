@@ -24,6 +24,38 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class KnownMenuProfileSupportTest {
     @Test
+    void openingOwnershipDoesNotRequireReadableContents() {
+        var session = UUID.randomUUID();
+        var menu = menu(MenuType.GENERIC_9x3, 7);
+        var openingOnly = new ContainerSyncSignals.Snapshot(session, 8,
+                new ContainerSyncSignals.OpenScreenEvidence(session, 7, "minecraft:generic_9x3", 8, 20),
+                null, Map.of(), null);
+        assertThat(KnownMenuProfileSupport.freshOpenedMenuMatches(openingOnly, session, menu, 7)).isTrue();
+        assertThat(KnownMenuProfileSupport.synchronizedMenuMatches(openingOnly, session, menu)).isFalse();
+
+        // Content mismatch must still reject gameplay, but must not prevent closing our screen.
+        var staleContents = synchronizedLedger(session, 7, "minecraft:generic_9x3");
+        menu.incrementStateId();
+        assertThat(KnownMenuProfileSupport.freshOpenedMenuMatches(staleContents, session, menu, 0)).isTrue();
+        assertThat(KnownMenuProfileSupport.synchronizedMenuMatches(staleContents, session, menu)).isFalse();
+    }
+
+    @Test
+    void openingOwnershipRejectsStaleOrDifferentSessionContainerAndType() {
+        var session = UUID.randomUUID();
+        var ledger = synchronizedLedger(session, 7, "minecraft:generic_9x3");
+        var menu = menu(MenuType.GENERIC_9x3, 7);
+        assertThat(KnownMenuProfileSupport.freshOpenedMenuMatches(ledger, session, menu, 1)).isFalse();
+        assertThat(KnownMenuProfileSupport.freshOpenedMenuMatches(ledger, UUID.randomUUID(), menu, 0)).isFalse();
+        assertThat(KnownMenuProfileSupport.freshOpenedMenuMatches(
+                ledger, session, menu(MenuType.GENERIC_9x3, 8), 0)).isFalse();
+        assertThat(KnownMenuProfileSupport.freshOpenedMenuMatches(
+                ledger, session, menu(MenuType.GENERIC_9x6, 7), 0)).isFalse();
+        assertThat(KnownMenuProfileSupport.freshOpenedMenuMatches(ledger, session, menu(null, 7), 0)).isFalse();
+        assertThat(KnownMenuProfileSupport.freshOpenedMenuMatches(null, session, menu, 0)).isFalse();
+    }
+
+    @Test
     void inventoryMenuAfterStorageDoesNotBreakStateObservation() {
         var session = UUID.randomUUID();
         var ledger = synchronizedLedger(session, 7, "minecraft:generic_9x3");

@@ -1,0 +1,43 @@
+{
+  "correction_date": "2026-09-29",
+  "original_receipt": "installation.json",
+  "original_native_installation_claim_valid": false,
+  "cause": "Codex AppData virtualization redirected the apparent Roaming path to LocalCache/Roaming.",
+  "source": "Allowlisted summary of replacement operator records; no new game operations performed by this documentation correction.",
+  "native_installation": {
+    "checked_at": "2026-09-29T04:05:24.5692177+09:00",
+    "profile": "くらふとぶ！-v01.2",
+    "physical_path_verified": true,
+    "previous_sha256": "f4b6b782d99cfb94e6aef8143211c08de02045be51e26f81b2fc09ea4a4ee1bc",
+    "installed_sha256": "03c7943f7fcd78f06021db2224a5df5b47fd77a2bc98bd99c32c5a930fadece1",
+    "product_jar_count": 1,
+    "old_jar_backed_up_as_reported_by_operator": true
+  },
+  "after_restart_api": {
+    "checked_at": "2026-09-29T04:07:34.6883925+09:00",
+    "prism_gui_restart_as_reported_by_operator": true,
+    "tool_count": 13,
+    "tool_names": [
+      "agent_get_state",
+      "agent_get_mcp_status",
+      "agent_get_observation",
+      "agent_move",
+      "agent_break_block",
+      "agent_place_block",
+      "agent_interact",
+      "agent_inventory",
+      "agent_click",
+      "agent_input_sequence",
+      "agent_run_script",
+      "agent_get_action",
+      "agent_cancel_action"
+    ],
+    "status_schema_version": 2,
+    "state_schema_version": 2
+  },
+  "limitations": [
+    "Historical verification, not current game state or new operation permission.",
+    "Concrete-powder placement and a 24-hour continuous run were not tested.",
+    "Full mod compatibility was not exhaustively tested."
+  ]
+}

@@ -24,6 +24,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class LocalObservationMixinContractTest {
     @Test
+    void flightHooksCoverVanillaVerticalInputDragAndTheNoClipEarlyReturn() throws Exception {
+        var local = classNode(net.minecraft.client.player.LocalPlayer.class);
+        assertThat(invocations(method(local, "aiStep"))).filteredOn(c -> c.endsWith("#setDeltaMovement"))
+                .containsExactly("net/minecraft/client/player/LocalPlayer#setDeltaMovement");
+        var flight = method(classNode("/dev/aod/mcmcp/mixin/client/LocalPlayerMovementTickMixin.class"),
+                "mcmcp$trackAgentFlightInput");
+        assertThat(invocations(flight)).contains("dev/aod/mcmcp/client/AgentInputState#addAgentMoveContribution");
+        var drag = method(classNode("/dev/aod/mcmcp/mixin/client/PlayerFlightMovementMixin.class"), "mcmcp$afterFlight");
+        assertThat(invocations(drag)).contains("dev/aod/mcmcp/client/AgentInputState#replaceAgentMoveContribution");
+        var guard = method(classNode("/dev/aod/mcmcp/mixin/client/EntityAgentCollisionMixin.class"),
+                "mcmcp$guardNoClipMovement");
+        var injection = annotation(guard, "Lorg/spongepowered/asm/mixin/injection/ModifyVariable;");
+        assertThat(at(injection).values.toString()).contains("HEAD");
+        assertThat(invocations(guard)).contains(
+                "dev/aod/mcmcp/client/AgentInputState#movementBoundary",
+                "dev/aod/mcmcp/runtime/ClientReconciliationSignals#currentSnapshot",
+                "dev/aod/mcmcp/agent/safety/LocalObservationVolume#verifiesNavigationResolvedMovement",
+                "dev/aod/mcmcp/client/AgentInputState#acceptGoalMovement",
+                "dev/aod/mcmcp/client/AgentInputState#rejectGoalMovement");
+    }
+
+    @Test
     void waterDragGravityAndSinkHooksMatchThePinnedVanillaCallSites() throws Exception {
         var living = classNode(net.minecraft.world.entity.LivingEntity.class);
         var water = method(living, "travelInWater");
