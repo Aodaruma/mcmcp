@@ -18,7 +18,7 @@ META = {'io.modelcontextprotocol/serverInfo': {'name': 'mcmcp', 'version': '0.1.
 START = {'x': 4, 'y': 65, 'z': 8}
 V2_START_TOOLS = {'agent_move', 'agent_look', 'agent_break_block', 'agent_place_block',
                   'agent_interact', 'agent_inventory', 'agent_craft', 'agent_click',
-                  'agent_input_sequence', 'agent_run_script'}
+                  'agent_input_sequence', 'agent_run_script', 'agent_build'}
 
 
 def tool_result(data=None, error=False):
@@ -113,7 +113,10 @@ class TransportTests(unittest.TestCase):
                 ['agent_get_state', 'agent_get_mcp_status', 'agent_get_observation',
                  'agent_move', 'agent_look', 'agent_break_block', 'agent_place_block', 'agent_interact',
                  'agent_inventory', 'agent_craft', 'agent_click', 'agent_input_sequence', 'agent_run_script',
-                 'agent_get_action', 'agent_cancel_action', 'agent_chat']])
+                 'agent_get_action', 'agent_cancel_action', 'agent_chat', 'agent_build']])
+        if (request['params']['name'] == 'agent_build' and
+                request['params']['arguments'].get('operation', 'preview') == 'preview'):
+            return tool_result(dict(schema_version=2, operation='preview', blueprint={'total_entries': 8}))
         if request['params']['name'] == 'agent_chat':
             if request['params']['arguments']['operation'] == 'send':
                 return tool_result(dict(schema_version=2, action_id=ACTION, state='queued'))
@@ -193,6 +196,22 @@ class TransportTests(unittest.TestCase):
         reply = self.invoke('-Tool', 'agent_chat', '-WaitSeconds', '10', arguments={'operation': 'read'})
         self.assertEqual(reply['diagnostic_code'], 'wait_requires_start_tool')
         self.assertEqual(self.requests, [])
+
+    def test_blueprint_preview_is_read_only_and_execute_polls_without_replay(self):
+        arguments = {'blueprint_file': 'art.json', 'dimension': 'minecraft:overworld'}
+        reply = self.invoke('-Tool', 'agent_build', arguments=arguments)
+        self.assertTrue(reply['ok'], reply)
+        self.assertEqual(reply['result']['blueprint']['total_entries'], 8)
+        self.requests.clear()
+        reply = self.invoke('-Tool', 'agent_build', '-WaitSeconds', '10', arguments=arguments)
+        self.assertEqual(reply['diagnostic_code'], 'wait_requires_start_tool')
+        self.assertEqual(self.requests, [])
+        arguments.update(operation='execute', plan_sha256='a' * 64, world_session_id=ACTION)
+        reply = self.invoke('-Tool', 'agent_build', '-WaitSeconds', '10', arguments=arguments)
+        self.assertTrue(reply['ok'], reply)
+        calls = [r[0]['params'] for r in self.requests if r[0]['method'] == 'tools/call']
+        self.assertEqual([c['name'] for c in calls], ['agent_build', 'agent_get_action'])
+        self.assertEqual(calls[0]['arguments'], arguments)
 
     def test_error_or_missing_id_never_polls_or_replays(self):
         for mode, diagnostic in [('rpc', 'jsonrpc_error'), ('rpc_secret', 'secret_blocked'), ('tool', 'tool_rejected'),

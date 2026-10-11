@@ -6,7 +6,7 @@ param(
     [ValidateSet('agent_get_state', 'agent_get_mcp_status', 'agent_get_observation',
         'agent_move', 'agent_look', 'agent_break_block', 'agent_place_block',
         'agent_interact', 'agent_inventory', 'agent_craft', 'agent_click',
-        'agent_input_sequence', 'agent_run_script',
+        'agent_input_sequence', 'agent_run_script', 'agent_build',
         'agent_get_action', 'agent_cancel_action', 'agent_chat')][string]$Tool = 'agent_get_state',
     [string]$ArgumentsPath,
     [switch]$Check,
