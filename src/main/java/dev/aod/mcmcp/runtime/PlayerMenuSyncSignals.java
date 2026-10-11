@@ -16,6 +16,8 @@ public final class PlayerMenuSyncSignals {
     private final ContainerSyncSignals.SessionChannel channel = new ContainerSyncSignals.SessionChannel();
     private ClientLevel level;
     private LocalPlayer player;
+    private int lastFullPacketSlots = -1;
+    private long lastFullPacketTick = -1;
 
     public static PlayerMenuSyncSignals global() { return INSTANCE; }
 
@@ -25,6 +27,8 @@ public final class PlayerMenuSyncSignals {
             level = minecraft.level;
             player = minecraft.player;
             channel.bindAndSnapshot(UUID.randomUUID());
+            lastFullPacketSlots = -1;
+            lastFullPacketTick = -1;
         }
         return true;
     }
@@ -41,6 +45,8 @@ public final class PlayerMenuSyncSignals {
             }
             return;
         }
+        lastFullPacketSlots = packet.items().size();
+        lastFullPacketTick = tick();
         if (packet.items().size() != player.inventoryMenu.slots.size()) return;
         channel.fullContent(0, "mcmcp:player_inventory", packet.stateId(),
                 packet.items().stream().map(ContainerSyncSignals.StackFingerprint::fromServerPacket).toList(),
@@ -84,6 +90,19 @@ public final class PlayerMenuSyncSignals {
     }
 
     long cursorProofRevision(Minecraft minecraft) { return bind(minecraft) ? channel.cursorProofRevision() : -1; }
+
+    java.util.Map<String, Object> diagnostic(Minecraft minecraft) {
+        if (!bind(minecraft)) return java.util.Map.of("reason", "player_unavailable");
+        var menu = player.inventoryMenu;
+        var result = InventorySyncDiagnostic.compare(menu.containerId,
+                menu.slots.stream().map(slot -> ContainerSyncSignals.StackFingerprint.fromServerPacket(slot.getItem())).toList(),
+                ContainerSyncSignals.StackFingerprint.fromServerPacket(menu.getCarried()), channel.snapshot().container());
+        result.put("active_menu_is_player", player.containerMenu == menu);
+        result.put("last_full_packet_slots", lastFullPacketSlots);
+        result.put("last_full_packet_tick", lastFullPacketTick);
+        result.put("cursor_proof_revision", channel.cursorProofRevision());
+        return java.util.Map.copyOf(result);
+    }
 
     public void clear() { level = null; player = null; }
     private static long tick() { return ScreenOwnershipSignals.global().currentTick(); }

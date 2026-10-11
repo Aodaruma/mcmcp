@@ -1,5 +1,7 @@
 # 公開API v2：進捗と再開メモ（2026-09-28）
 
+2026-10-11 追加開発：nav-r14で再接続後もクラフト・数量移送が `inventory_server_snapshot_required` で拒否される報告に対し、記録欠落・枠数・cursor・slot不一致を区別する `inventory_sync` を追加。stateのinventory sectionと失敗時resultから取得する。安全判定と入力は変更していない。自動1,854件・build成功、隔離実機確認は準備中。同期復旧の修正完了ではない。[診断契約と検証記録](experiments/20261011_v2_inventory_sync.md)。
+
 2026-10-11 14:44 JST：aod-mimoid担当の完了報告・最終receipt検証出力を取得。足場column/top/corner/stairの4件は各1回成功・体力20。元66ファイルのhash一致復元、container/Docker停止、lease解放は10:12 JST台までに完了していた。stepは復元後の追加依頼のため未実施。下記の復元「未確認」は解消したが、現場の移動停止原因は未確定。[更新した検証記録](experiments/20261011_v2_scaffold_stall.md)。
 
 2026-10-11 追加確認：収納調査で報告された照準失敗と既存GUIの公開APIをnav-r14のコード・catalogで確認。`known_menu`は最大16件の移送用参照であり、既存画面の全内容取得・終了の公開operationは未対応。閉じた画面からは`inspect_storage`、または`target=menu, clicks=[]`の一括処理が利用できる。現場は端へのlook後のinspectで調査を完了したとの報告。製品・通常ゲーム・JARは変更していない。[確認結果と開発課題](experiments/20261011_v2_open_storage_api_review.md)。

@@ -25,6 +25,7 @@ final class MinecraftV2InventoryMoveDriver implements V2OperationJobExecution.Dr
     private ExactInventoryTransfer.CursorReturn cursorReturn;
     private long returnRevision;
     private String failure;
+    private Map<String, Object> inventorySync;
     private final boolean exchange;
 
     MinecraftV2InventoryMoveDriver(Minecraft minecraft, V2InventoryMoveArguments request) {
@@ -42,7 +43,11 @@ final class MinecraftV2InventoryMoveDriver implements V2OperationJobExecution.Dr
         level = minecraft.level;
         var snapshot = signals.snapshot(minecraft);
         if (player.containerMenu != player.inventoryMenu || !V2CraftWork.matchesLive(player.inventoryMenu, snapshot)
-                || !snapshot.carried().empty()) { failure = "inventory_server_snapshot_required"; return; }
+                || !snapshot.carried().empty()) {
+            inventorySync = signals.diagnostic(minecraft);
+            failure = "inventory_server_snapshot_required";
+            return;
+        }
         int source = menuSlot(request.source());
         int destination = menuSlot(request.destination());
         var stack = player.inventoryMenu.getSlot(source).getItem();
@@ -136,6 +141,7 @@ final class MinecraftV2InventoryMoveDriver implements V2OperationJobExecution.Dr
     public Map<String, Object> result() {
         var result = new LinkedHashMap<String, Object>();
         result.put("operation", "move");
+        if (inventorySync != null) result.put("inventory_sync", inventorySync);
         result.put("source_slot", request.source());
         result.put("destination_slot", request.destination());
         result.put("requested_count", request.count());

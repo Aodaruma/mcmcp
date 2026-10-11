@@ -3223,6 +3223,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 : Map.of();
         var result = new LinkedHashMap<>(ActionWireMapper.lightweightStatePayload(
                 playerPayload, hotbarPayload, details, sections));
+        if (sections.contains("inventory")) {
+            result.put("inventory_sync", PlayerMenuSyncSignals.global().diagnostic(minecraft));
+        }
         if (sections.contains("entity_attack_consent")) {
             result.put("entity_attack_consent",
                     ActionWireMapper.entityAttackConsentPayload(entityAttackConsentSnapshot(session, lock)));

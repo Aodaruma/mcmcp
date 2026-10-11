@@ -26,6 +26,7 @@ final class MinecraftV2CraftDriver implements V2OperationJobExecution.Driver {
     private V2CraftWork work;
     private MinecraftV2MenuDriver menu;
     private String failure;
+    private Map<String, Object> inventorySync;
     private boolean closeSent;
     private long closeRevision;
     private net.minecraft.world.phys.Vec3 lastPosition;
@@ -59,6 +60,7 @@ final class MinecraftV2CraftDriver implements V2OperationJobExecution.Driver {
         }
         var snapshot = PlayerMenuSyncSignals.global().snapshot(minecraft);
         if (!V2CraftWork.matchesLive(player.inventoryMenu, snapshot)) {
+            inventorySync = PlayerMenuSyncSignals.global().diagnostic(minecraft);
             failure = "inventory_server_snapshot_required";
             return;
         }
@@ -127,6 +129,7 @@ final class MinecraftV2CraftDriver implements V2OperationJobExecution.Driver {
         }
         var snapshot = PlayerMenuSyncSignals.global().snapshot(minecraft);
         if (snapshot == null) {
+            inventorySync = PlayerMenuSyncSignals.global().diagnostic(minecraft);
             failure = "inventory_server_snapshot_required";
             return V2OperationJobExecution.Step.FAILED;
         }
@@ -142,6 +145,7 @@ final class MinecraftV2CraftDriver implements V2OperationJobExecution.Driver {
     public Map<String, Object> result() {
         var result = new LinkedHashMap<String, Object>();
         result.put("operation", request.plan() ? "plan" : "execute");
+        if (inventorySync != null) result.put("inventory_sync", inventorySync);
         result.put("station", request.inventory() ? "inventory_2x2" : "crafting_table");
         result.put("requested_count", request.count());
         if (handPrepared) result.put("empty_hand_prepared", true);

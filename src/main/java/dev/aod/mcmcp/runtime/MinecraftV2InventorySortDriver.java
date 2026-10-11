@@ -14,6 +14,7 @@ final class MinecraftV2InventorySortDriver implements V2OperationJobExecution.Dr
     private List<ContainerSyncSignals.StackFingerprint> expected;
     private int confirmed;
     private String failure;
+    private Map<String, Object> inventorySync;
 
     MinecraftV2InventorySortDriver(Minecraft minecraft, V2InventorySortArguments request) {
         this.minecraft = minecraft;
@@ -24,6 +25,7 @@ final class MinecraftV2InventorySortDriver implements V2OperationJobExecution.Dr
         if (minecraft.player.containerMenu != minecraft.player.inventoryMenu
                 || !V2CraftWork.matchesLive(minecraft.player.inventoryMenu, snapshot) || !snapshot.carried().empty()) {
             failure = "inventory_server_snapshot_required";
+            inventorySync = PlayerMenuSyncSignals.global().diagnostic(minecraft);
         } else expected = snapshot.slots();
     }
     public V2OperationJobExecution.Step tick(long tick, BooleanSupplier allowed) {
@@ -90,6 +92,7 @@ final class MinecraftV2InventorySortDriver implements V2OperationJobExecution.Dr
     public Map<String, Object> result() {
         var result = new java.util.LinkedHashMap<String, Object>();
         result.put("operation", request.consolidateOnly() ? "consolidate" : "sort");
+        if (inventorySync != null) result.put("inventory_sync", inventorySync);
         result.put("slots", request.slots());
         result.put("confirmed_transfers", confirmed);
         if (active != null) result.put("current_transfer", active.result());

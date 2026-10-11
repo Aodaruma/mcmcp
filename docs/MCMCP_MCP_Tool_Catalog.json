@@ -12,7 +12,7 @@
     {
       "name": "agent_get_state",
       "title": "Get MCMCP State",
-      "description": "Returns lightweight policy-filtered player essentials and all nine hotbar slots without opening inventory. Detailed v1-compatible sections are returned only when named in sections. known_menu exposes a single-use operation_ref for a current synchronized menu; never infer raw slots. merchant_offers is present only for the current merchant screen and returns typed facts, never raw slots, components, NBT, lore, or display text. query plus max_results adds a bounded client-known recipe result. It never scans hidden world data. player.experience (also in requested world) exposes synchronized level/progress and current points reconstructed with the vanilla XP curve, plus points_to_next_level. This is not lifetime totalExperience; points_source identifies the calculation. Invalid HUD data yields experience=null; out-of-range totals yield points=null. Modded XP curves may differ; use received Waystones available_xp_points for its current payment balance.",
+      "description": "Returns lightweight policy-filtered player essentials and all nine hotbar slots without opening inventory. Detailed v1-compatible sections are returned only when named in sections. inventory also returns inventory_sync: read-only player-menu server-snapshot diagnostics, with missing/layout/cursor/slot mismatch reasons and at most eight mismatched menu slots. It does not refresh server state or authorize an inventory action. known_menu exposes a single-use operation_ref for a current synchronized menu; never infer raw slots. merchant_offers is present only for the current merchant screen and returns typed facts, never raw slots, components, NBT, lore, or display text. query plus max_results adds a bounded client-known recipe result. It never scans hidden world data. player.experience (also in requested world) exposes synchronized level/progress and current points reconstructed with the vanilla XP curve, plus points_to_next_level. This is not lifetime totalExperience; points_source identifies the calculation. Invalid HUD data yields experience=null; out-of-range totals yield points=null. Modded XP curves may differ; use received Waystones available_xp_points for its current payment balance.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -214,6 +214,42 @@
               "count": {"type": "integer", "minimum": 0, "maximum": 2147483647}
             },
             "required": ["item", "count"]
+          },
+          "inventory_sync": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "reason": {"enum": ["player_unavailable", "snapshot_missing", "menu_identity_mismatch", "slot_count_mismatch", "cursor_mismatch", "slot_mismatch", "matched"]},
+              "active_menu_is_player": {"type": "boolean"},
+              "live_slot_count": {"type": "integer", "minimum": 0},
+              "snapshot_slot_count": {"type": "integer", "minimum": 0},
+              "live_cursor_empty": {"type": "boolean"},
+              "server_cursor_empty": {"type": "boolean"},
+              "cursor_matches": {"type": "boolean"},
+              "last_full_packet_slots": {"type": "integer", "minimum": -1},
+              "last_full_packet_tick": {"type": "integer", "minimum": -1},
+              "cursor_proof_revision": {"type": "integer", "minimum": -1},
+              "snapshot_tick": {"type": "integer", "minimum": 0},
+              "snapshot_revision": {"type": "integer", "minimum": 0},
+              "mismatch_count": {"type": "integer", "minimum": 0},
+              "mismatches_truncated": {"type": "boolean"},
+              "mismatches": {
+                "type": "array", "maxItems": 8,
+                "items": {
+                  "type": "object", "additionalProperties": false,
+                  "properties": {
+                    "menu_slot": {"type": "integer", "minimum": 0},
+                    "live_item": {"type": "string"},
+                    "live_count": {"type": "integer", "minimum": 0},
+                    "server_item": {"type": "string"},
+                    "server_count": {"type": "integer", "minimum": 0},
+                    "item_and_components_match": {"type": "boolean"}
+                  },
+                  "required": ["menu_slot", "live_item", "live_count", "server_item", "server_count", "item_and_components_match"]
+                }
+              }
+            },
+            "required": ["reason"]
           },
           "known_menu": {
             "type": "object",
@@ -645,6 +681,7 @@
             },
             "required": ["world_session_id", "container_id", "signal_revision", "open_packet_revision", "received_tick", "offers"]
           },
+          "inventory_sync": {"$ref": "#/$defs/inventory_sync"},
           "known_menu": {"$ref": "#/$defs/known_menu"},
           "recipe_query": {
             "oneOf": [
