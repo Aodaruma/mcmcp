@@ -166,7 +166,8 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
                 case PLACE -> {
                     var result = construction.tick(session.clientTick());
                     effects.addAll(result.effects()); placedDelta += result.placedDelta();
-                    if (result.confirmedEntries() == 1) confirmed = true;
+                    if (result.confirmedEntries() == 1 || construction.serverConfirmed(new BlockTarget(
+                            source.support().dimension(), target.getX(), target.getY(), target.getZ()))) confirmed = true;
                     // The ordinary construction adapter temporarily owns/restores camera and slot.
                     expectedYaw = player.getYRot(); expectedPitch = player.getXRot();
                     if (result.status() == KnownConstructionAttempt.Status.FAILED) return failed(result.evidence());
@@ -244,7 +245,9 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
         }
         // Only the two-cell swept body volume is inspected; it is never returned as world knowledge.
         for (BlockPos air : List.of(support.above(), support.above(2), target.above(), target.above(2))) {
-            if (!level.getBlockState(air).isAir()) throw new IllegalStateException("floor extension corridor obstructed");
+            if (!corridorPassable(level.getBlockState(air), level, air)
+                    || level.getBlockEntity(air) != null)
+                throw new IllegalStateException("floor extension corridor obstructed");
         }
         if (!level.noCollision(player, player.getBoundingBox())
                 || level.getEntities(player, player.getBoundingBox().inflate(8),
@@ -278,6 +281,16 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
     }
 
     public boolean placementConfirmed() { return confirmed; }
+
+    static boolean corridorPassable(BlockState state, net.minecraft.world.level.BlockGetter level, BlockPos position) {
+        // Torches, dust and rails are safe to walk through; shape alone does not exclude contact hazards.
+        return state.getCollisionShape(level, position).isEmpty()
+                && !state.hasBlockEntity() && !MinecraftSemanticActionPort.isNavigationHazard(state)
+                && !state.is(net.minecraft.world.level.block.Blocks.COBWEB)
+                && !state.is(net.minecraft.tags.BlockTags.CLIMBABLE)
+                && Math.abs(state.getBlock().getSpeedFactor() - 1.0F) <= 0.0001F
+                && Math.abs(state.getBlock().getJumpFactor() - 1.0F) <= 0.0001F;
+    }
 
     private static void requireOrdinaryFloorPhysics(BlockState state) {
         // Edge braking distances assume ordinary floor friction, not ice or slow/bouncy surfaces.

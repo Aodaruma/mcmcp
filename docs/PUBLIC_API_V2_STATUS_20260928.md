@@ -1,5 +1,9 @@
 # 公開API v2：進捗と再開メモ（2026-09-28）
 
+2026-10-11 17:40 JST：専用agent_buildと追加修正候補は自動1874件・build成功、隔離実機待ち。通常R4で支持床上の松明がnative入口を拒否し、自動補充で材料数が減らないと設置後確認待ちになる条件を確認した。候補は無衝突・非危険の配置物を通行可能にし、server設置確認＋当該枠の新しい受信payload一致で補充を受理する。world確認済みの床は途中停止時にも部分結果へ保持。通常現場は有限の代替手順を使用後、安全床で待機している。[追加検証](experiments/20261011_v2_floor_edge_approach.md)。
+
+2026-10-11 17:21 JST：起動経路を既存Windows ExplorerのUIへ変更し、通常「くらふとぶ！-v01.2」の起動・接続・MCP ONまで完了。新JVMが開いたJARの実体はnative Roaming側R4 `f01b1b0d...a0a8c2`、公開16ツール全定義・入出力schema一致、HP20・経験値表示復帰を確認。操作権は現場担当へ返却済み。旧LocalCacheコピーは変更していない。以下の起動是正中という記述は履歴。専用agent_buildは別候補のまま、通常R4へ未導入。
+
 2026-10-11 17:17 JST：優先1・2の床/script R4は通常profileの物理JARへ配置済み（`f01b1b0d...a0a8c2`）。その後Codex経由で開いたPrismから起動したJVMが、LocalCache側の旧JARを実際に開いていたとOSハンドルで確認。配置は正常だが起動経路の是正・live確認を進行中。専用`agent_build`（17番目）は別候補として実装し、自動1871件・build成功。設計図preview、hash/session照合、有限batch、明示break/place、部分結果と再開indexに対応。隔離実機確認はこれからで、通常R4には含めない。[専用tool仕様](PUBLIC_API_V2_BLUEPRINT_TOOL.md)。
 
 2026-10-11 16:56 JST：placeのadvance床延長・中心調整、scriptへの共通適用、子命令ごとの設置／破壊累計、設計図の区間script生成を実装。自動1862件とbuild/harness隔離・CIが成功。隔離実機はR3の4方向・位置ずれ・色替え・外部JSON・停止条件11件が成功。材料切れ時の後退を直した最終R4（source `e36dfc35`）で、その場停止・外部script成功・失敗scriptの累計保持の3件も成功。元環境復元と通常profileへの引継ぎを進行中。専用の自動施工toolは1・2の導入後に着手する。[利用方法](PUBLIC_API_V2_BUILDING.md)、[検証記録](experiments/20261011_v2_floor_edge_approach.md)。

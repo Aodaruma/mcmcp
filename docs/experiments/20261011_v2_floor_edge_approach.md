@@ -72,3 +72,17 @@ script停止caseのactionは`870e4732-79db-498d-bcfb-7165ceba375f`。commands_st
 復元は2026-10-11 16:59:03 JSTまでに完了。元66ファイル／world 61ファイルのhash一致、fixture削除、追加したscript/data 2ファイルの回収、container停止、Docker process 0／engine接続不可、docker-desktop WSL Stopped、lease解放を確認。45分leaseの期限17:07:21を延長していない。
 
 距離停止caseはmax_distance=0.25で設置0・safety_interruptedになったが、実測水平変位は約0.385だった。tickで停止を判定するため、指定距離以内への厳密な位置停止はこの試験では確認していない。通常profileの施工には試験fixtureを使用しない。
+
+## 通常profileへの導入と起動経路の是正
+
+17:01 JSTにnativeの「くらふとぶ！-v01.2」へR4を配置し、同一ハンドルの実体path/hash、旧版backup、製品JAR1個、他MOD・設定不変を確認。その後、Codexから起動したPrismの子JVMがLocalCache側の旧JARを読んでいたとOSの開いたファイルハンドルから確定した。13ツール・経験値欄なしという応答は旧版由来で、R4の実機回帰ではない。
+
+利用者の追加指示を受け、該当ゲームとPrismを終了。既存Windows ExplorerのUIからPrismを開き、指定profileをGUI起動・接続・MCP ON。17:21:50 JSTに新JVMが実際に開いたJARのnative実体、R4 SHA256、公開16ツールの全定義・schema一致を確認。体力20と元位置を維持し、経験値表示も復帰した。JAR再交換や仮想ファイルの削除・同期は行っていない。現場担当へ操作権を返却し、施工短区間は担当側で別途確認する。
+
+## 通常施工で判明した追加条件
+
+R4の支持床に松明があると、上部2段をairに限定した入口判定がnative床延長を拒否する。修正候補では無衝突形状・流体なし・既存navigation hazard除外・速度/ジャンプ属性・登攀/BlockEntity除外を確認する。松明・レール・dustを許容し、火・水・感圧板・tripwire等は拒否する。
+
+松明を撤去した単発273と、連続単発275〜278の4個目278で、実際の床は設置されたが約15秒のduration_limit・confirmed0を再現。公開observeで床と体力20を確認し、担当が台帳を照合した。支持中心から約0.65〜0.68進んだ停止点は設置確認待ちにも該当し、landing失敗とはまだ断定しない。現場ではSophisticated Backpacksの自動補充が有効で、灰コンクリの手持ちは設置前後64を維持していた。
+
+既存adapterはblockのserver状態・ACKに加えinventory合計exact-1を待つ。候補ではexact-1を維持しつつ、server設置確認済みで、dispatch後に当該hotbar枠へ届いたpayloadが保持中の枠と完全一致する場合に補充後の同期を受理する。古いpayload、ローカル予測のみ、別item/components、過剰消費は受理しない。またworld確認済みの床は、inventory確認やadvanceが未完了でも停止時の部分結果に残す。入力再送・取消時の巻戻しは行わない。候補の隔離実機・自動補充条件の確認はこれから。

@@ -13,6 +13,7 @@ import dev.aod.mcmcp.runtime.ClientPredictionSignals;
 import dev.aod.mcmcp.runtime.ClientReconciliationSignals;
 import dev.aod.mcmcp.runtime.WorldSessionTracker;
 import dev.aod.mcmcp.runtime.InventorySwapSignals;
+import dev.aod.mcmcp.runtime.HotbarPayloadSyncSignals;
 import dev.aod.mcmcp.runtime.ContainerSyncSignals.StackFingerprint;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.minecraft.network.HashedStack;
@@ -689,7 +690,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 || refreshInventorySynchronization(active.plan,
                         reconciliations.bindAndSnapshot(
                                 Objects.requireNonNull(minecraft.level), session.worldSessionId()),
-                        Objects.requireNonNull(minecraft.player));
+                        Objects.requireNonNull(minecraft.player), serverStateExact && acknowledged);
         if (active.child.stage() == ApplyBlockPlanChildStage.PLACE
                 && active.plan.inventoryMismatch) {
             active.failure = failure("INVENTORY_POSTCONDITION_MISMATCH",
@@ -868,6 +869,8 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
                 active.reconciliationAtDispatch.selectedSlotInventoryRevision(),
                 required, active.inventoryCountBefore,
                 player.getInventory().getSelectedSlot());
+        active.plan.hotbarPayloadRevisionBefore = HotbarPayloadSyncSignals.global()
+                .bindAndSnapshot(level, active.plan.sessionId).revision();
         var prediction = predictions.begin(
                 level, context.getClickedPos(), requireSession().clientTick());
         int before = prediction.sequenceBeforePrediction();
@@ -1240,6 +1243,12 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             PlanState plan,
             ClientReconciliationSignals.Snapshot recon,
             LocalPlayer player) {
+        return refreshInventorySynchronization(plan, recon, player, false);
+    }
+
+    private boolean refreshInventorySynchronization(
+            PlanState plan, ClientReconciliationSignals.Snapshot recon,
+            LocalPlayer player, boolean serverBlockConfirmed) {
         if (!plan.inventoryPending) {
             return true;
         }
@@ -1255,9 +1264,8 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         ItemStack selected = inventory.getItem(plan.inventoryOwnedSlot);
         boolean selectedStackCurrent = selected.isEmpty()
                 || plan.inventoryItemId.equals(registryItemId(selected));
-        InventoryConsumption consumption = inventoryConsumption(
-                plan.inventoryCountBefore,
-                eligibleInventoryCount(player, plan.inventoryItemId));
+        int countAfter = eligibleInventoryCount(player, plan.inventoryItemId);
+        InventoryConsumption consumption = inventoryConsumption(plan.inventoryCountBefore, countAfter);
         // selectedSlotInventoryRevision is incremented only by an inbound packet which the
         // packet mixin mapped to the then-selected player slot. Read back that still-owned slot
         // instead of lastInventorySync, which later unrelated packets are allowed to overwrite.
@@ -1266,10 +1274,18 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
             plan.inventoryPending = false;
             return true;
         }
-        if (ownedSlotHeld && selectedStackCurrent
-                && consumption == InventoryConsumption.PENDING) {
-            // A delayed SWAP/container response may advance the same selected-slot revision
-            // before the placement consumption response. Keep waiting for the exact -1 total.
+        if (ownedSlotHeld && selectedStackCurrent && countAfter >= plan.inventoryCountBefore) {
+            var payload = HotbarPayloadSyncSignals.global()
+                    .bindAndSnapshot(Objects.requireNonNull(requireMinecraft().level), plan.sessionId)
+                    .slots().get(plan.inventoryOwnedSlot);
+            // Auto-refill can hide the -1 total. Only a confirmed block and a newer exact
+            // server payload for the still-owned slot can confirm replenished inventory.
+            if (replenishmentSynchronized(serverBlockConfirmed, plan.inventoryCountBefore, countAfter,
+                    plan.inventoryItemId, StackFingerprint.fromServerPacket(selected), payload,
+                    plan.hotbarPayloadRevisionBefore)) {
+                plan.inventoryPending = false;
+                return true;
+            }
             return false;
         }
         plan.inventoryMismatch = true;
@@ -1870,6 +1886,15 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         return inventoryConsumption(before, after) == InventoryConsumption.CONFIRMED;
     }
 
+    static boolean replenishmentSynchronized(boolean serverBlockConfirmed, int before, int after,
+            String item, StackFingerprint selected, HotbarPayloadSyncSignals.SlotEvidence payload,
+            long revisionBefore) {
+        return serverBlockConfirmed && before > 0 && after >= before
+                && selected.count() > 0 && item.equals(selected.itemId())
+                && payload != null && payload.revision() > revisionBefore
+                && selected.equals(payload.stack());
+    }
+
     static InventoryConsumption inventoryConsumption(int before, int after) {
         if (before < 0 || after < 0) {
             throw new IllegalArgumentException("inventory counts must be non-negative");
@@ -2187,6 +2212,7 @@ public final class MinecraftApplyBlockPlanPort implements ApplyBlockPlanPort {
         private boolean inventoryPending;
         private boolean inventoryMismatch;
         private long inventoryRevisionBefore;
+        private long hotbarPayloadRevisionBefore;
         private String inventoryItemId;
         private int inventoryCountBefore;
         private int inventoryOwnedSlot;

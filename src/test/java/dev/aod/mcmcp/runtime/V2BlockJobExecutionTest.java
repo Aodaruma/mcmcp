@@ -297,7 +297,8 @@ class V2BlockJobExecutionTest {
 
     @Test
     void recordsPlacementBeforeFailedAdvanceAndDoesNotRepeatItDuringRelease() {
-        for (boolean cancel : List.of(false, true)) {
+        for (String stop : List.of("failed", "cancel", "timeout")) {
+            boolean cancel = stop.equals("cancel");
             var store = new AgentJobStore();
             var id = store.reserve(AgentJobStore.Kind.PLACE_BLOCK, SESSION, 100, 100);
             var request = V2PlaceArguments.parse(Map.of("x", 1, "y", 64, "z", 0,
@@ -310,7 +311,7 @@ class V2BlockJobExecutionTest {
                         java.util.function.BooleanSupplier allowed) { return V2BlockJobExecution.BeginResult.STARTED; }
                 public V2BlockJobExecution.StepResult tick(long tick, java.util.function.BooleanSupplier allowed) {
                     confirmed.set(true);
-                    return cancel ? V2BlockJobExecution.StepResult.RUNNING : V2BlockJobExecution.StepResult.FAILED;
+                    return stop.equals("failed") ? V2BlockJobExecution.StepResult.FAILED : V2BlockJobExecution.StepResult.RUNNING;
                 }
                 public V2BlockJobExecution.ConfirmedChange confirmedChange() {
                     return confirmed.get() ? new V2BlockJobExecution.ConfirmedChange(
@@ -326,6 +327,7 @@ class V2BlockJobExecutionTest {
             store.confirm(id, 1);
             job.tick(SESSION, 1, 1, true, () -> true);
             if (cancel) job.cancel();
+            if (stop.equals("timeout")) job.tick(SESSION, 2, java.time.Duration.ofHours(24).toNanos(), true, () -> true);
             assertThat(store.get(id).completedBlocks()).isEqualTo(1);
             assertThat(store.get(id).result()).containsEntry("confirmed_count", 1);
             released.set(true);
@@ -333,7 +335,8 @@ class V2BlockJobExecutionTest {
             assertThat(result.completedBlocks()).isEqualTo(1);
             assertThat(result.state()).isEqualTo(cancel ? AgentJobStore.State.CANCELLED : AgentJobStore.State.FAILED);
             assertThat((List<?>) result.result().get("confirmed_cells")).hasSize(1);
-            assertThat(result.failure()).isEqualTo(cancel ? "client_request" : "floor_extension_safety_changed");
+            assertThat(result.failure()).isEqualTo(cancel ? "client_request"
+                    : stop.equals("timeout") ? "duration_limit" : "floor_extension_safety_changed");
         }
     }
 
