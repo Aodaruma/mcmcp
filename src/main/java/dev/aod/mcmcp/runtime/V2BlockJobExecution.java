@@ -128,7 +128,8 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
                         return jobs.get(actionId);
                     }
                     case FAILED -> {
-                        retainTerminal(AgentJobStore.State.FAILED, "block_target_unavailable");
+                        retainTerminal(AgentJobStore.State.FAILED,
+                                driver.failureReason() == null ? "block_target_unavailable" : driver.failureReason());
                         return publishAfterRelease();
                     }
                 }

@@ -190,6 +190,10 @@ final class MinecraftV2PlaceDriver
                 floorExtension = attempt;
                 stage = Stage.FLOOR_EXTENSION;
                 return V2BlockJobExecution.BeginResult.STARTED;
+            } catch (MinecraftFloorExtensionAttempt.MaterialUnavailableException unavailable) {
+                // Resource exhaustion on a valid floor must stop here, not plan a return route.
+                failure = "floor_extension_material_unavailable";
+                return V2BlockJobExecution.BeginResult.FAILED;
             } catch (IllegalArgumentException | IllegalStateException unsupported) {
                 // Only the audited full-floor geometry uses edge movement. Ordinary placement
                 // and approach keep their existing behavior for all other blocks and poses.
@@ -484,6 +488,7 @@ final class MinecraftV2PlaceDriver
         }
         var floor = beginFloorExtension(target, request);
         if (floor != null) {
+            if (floor == V2BlockJobExecution.BeginResult.FAILED) return V2BlockJobExecution.StepResult.FAILED;
             if (floor == V2BlockJobExecution.BeginResult.STARTED) {
                 navigation.close();
                 navigation = null;

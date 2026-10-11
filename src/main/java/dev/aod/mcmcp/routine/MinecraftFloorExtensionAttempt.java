@@ -102,7 +102,11 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
         if (player.getInventory().getNonEquipmentItems().stream().noneMatch(stack ->
                 !stack.isEmpty() && source.item().equals(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString())
                         && stack.getComponentsPatch().isEmpty()))
-            throw new IllegalStateException("floor extension material unavailable");
+            throw new MaterialUnavailableException();
+    }
+
+    public static final class MaterialUnavailableException extends IllegalStateException {
+        private MaterialUnavailableException() { super("floor extension material unavailable"); }
     }
 
     public Result tick(WorldSessionTracker.Snapshot session) {

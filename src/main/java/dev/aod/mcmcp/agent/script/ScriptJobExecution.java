@@ -99,7 +99,15 @@ public final class ScriptJobExecution implements Runnable {
                 }
                 activeCommand = Map.of("index", ++commandsStarted, "command", command.name());
                 jobs.recordResult(actionId, progressDetails());
-                var outcome = runner.execute(command.name(), command.arguments(), cancelled);
+                final Outcome outcome;
+                try {
+                    outcome = runner.execute(command.name(), command.arguments(), cancelled);
+                } catch (RuntimeException | LinkageError failure) {
+                    lastCommand = ScriptChildDiagnostic.capture(command.name(), Outcome.FAILURE, Map.of());
+                    activeCommand = Map.of();
+                    jobs.recordResult(actionId, progressDetails());
+                    throw failure;
+                }
                 var child = runner.result();
                 lastCommand = ScriptChildDiagnostic.capture(command.name(), outcome, child);
                 retainBlockProgress(command.name(), child);
@@ -168,18 +176,20 @@ public final class ScriptJobExecution implements Runnable {
                 };
             }
         }
-        if (result != null && job.state() == AgentJobStore.State.RUNNING) {
+        if (job.state() == AgentJobStore.State.RUNNING) {
             var details = progressDetails();
-            details.put("script_status", result.status().name().toLowerCase(java.util.Locale.ROOT));
-            details.put("work", result.work());
-            details.put("iterations", result.iterations());
-            details.put("calls", result.calls());
-            details.put("completed_commands", job.completedOperations());
-            details.put("reports", result.reports());
-            if (!lastCommand.isEmpty()) details.put("last_command", lastCommand);
+            details.remove("active_command");
+            details.put("script_status", result == null ? "failed"
+                    : result.status().name().toLowerCase(java.util.Locale.ROOT));
+            if (result != null) {
+                details.put("work", result.work());
+                details.put("iterations", result.iterations());
+                details.put("calls", result.calls());
+                details.put("reports", result.reports());
+                if (!result.detail().isEmpty()) details.put("detail", result.detail());
+            }
             details.put("resources", resources.entrySet().stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
                     Map.Entry::getKey, entry -> Map.of("format", entry.getValue().format(), "sha256", entry.getValue().sha256()))));
-            if (!result.detail().isEmpty()) details.put("detail", result.detail());
             jobs.recordResult(actionId, details);
         }
         try {

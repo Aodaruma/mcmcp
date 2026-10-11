@@ -337,6 +337,40 @@ class V2BlockJobExecutionTest {
         }
     }
 
+    @Test
+    void exhaustedMaterialStopsBeforeAnotherTickAndRetainsConfirmedFloorsThroughRelease() {
+        var store = new AgentJobStore();
+        var id = store.reserve(AgentJobStore.Kind.PLACE_BLOCK, SESSION, 100, 100);
+        var request = V2PlaceArguments.parse(Map.of("x", 1, "y", 64, "z", 0,
+                "dx", 3, "block", "minecraft:stone", "advance", true), "minecraft:overworld");
+        var released = new AtomicBoolean(false);
+        var driver = new V2BlockJobExecution.Driver<V2PlaceArguments>() {
+            int ticks;
+            public String dimension() { return "minecraft:overworld"; }
+            public V2BlockJobExecution.BeginResult begin(NavCell cell, V2PlaceArguments r,
+                    BooleanSupplier allowed) {
+                return ticks < 2 ? V2BlockJobExecution.BeginResult.STARTED : V2BlockJobExecution.BeginResult.FAILED;
+            }
+            public V2BlockJobExecution.StepResult tick(long tick, BooleanSupplier allowed) {
+                assertThat(++ticks).isLessThanOrEqualTo(2);
+                return V2BlockJobExecution.StepResult.CONFIRMED;
+            }
+            public String failureReason() { return "floor_extension_material_unavailable"; }
+            public void close() { }
+        };
+        var job = new V2BlockJobExecution<>(store, id, SESSION, AgentJobStore.Kind.PLACE_BLOCK,
+                request, driver, released::get);
+        store.confirm(id, 1);
+        for (int tick = 1; tick <= 4; tick++) job.tick(SESSION, tick, tick, true, () -> true);
+        assertThat(store.get(id).state()).isEqualTo(AgentJobStore.State.RUNNING);
+        released.set(true);
+        var result = job.tick(SESSION, 5, 5, true, () -> true);
+        assertThat(result.state()).isEqualTo(AgentJobStore.State.FAILED);
+        assertThat(result.failure()).isEqualTo("floor_extension_material_unavailable");
+        assertThat(result.result()).containsEntry("confirmed_count", 2);
+        assertThat((List<?>) result.result().get("confirmed_cells")).hasSize(2);
+    }
+
     private static final class FakeDriver
             implements V2BlockJobExecution.Driver<V2BreakArguments> {
         final ArrayDeque<V2BlockJobExecution.BeginResult> begins = new ArrayDeque<>();

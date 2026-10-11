@@ -294,6 +294,32 @@ class ScriptJobExecutionTest {
         assertThat(done.result().size()).isLessThanOrEqualTo(16);
     }
 
+    @Test
+    void thrownChildDoesNotKeepThePreviousChildAsItsFailureOrRemainActive() {
+        for (boolean linkage : new boolean[]{false, true}) {
+            var jobs = new AgentJobStore(); var world = UUID.randomUUID(); var id = confirmed(jobs, world, 3);
+            var execution = new ScriptJobExecution(jobs, id, world, "place(); move(); place();", Set.of("place", "move"),
+                    1000, 10, 3, new ScriptJobExecution.CommandRunner() {
+                        public ScriptJobExecution.Outcome execute(String name, Map<String,Object> args, BooleanSupplier cancel) {
+                            if (name.equals("place")) return ScriptJobExecution.Outcome.SUCCESS;
+                            if (linkage) throw new LinkageError("private");
+                            throw new IllegalStateException("private");
+                        }
+                        public Map<String,Object> result() { return Map.of("kind", "place_block", "result", Map.of("confirmed_count", 8)); }
+                        public void cancelActive() { }
+                    }, () -> true, Long.MAX_VALUE);
+            execution.run();
+            assertThat(execution.finishIfReleased(false).state()).isEqualTo(AgentJobStore.State.RUNNING);
+            var done = execution.finishIfReleased(true);
+            assertThat(done.state()).isEqualTo(AgentJobStore.State.FAILED);
+            assertThat(done.result()).containsEntry("script_status", "failed").containsEntry("placed_blocks", 8L)
+                    .doesNotContainKey("active_command");
+            var last = (Map<?,?>) done.result().get("last_command");
+            assertThat(last.get("command")).isEqualTo("move");
+            assertThat(last.get("action")).isEqualTo(Map.of());
+        }
+    }
+
     private static ScriptJobExecution execution(AgentJobStore jobs, UUID id, UUID world,
             String source, ScriptJobExecution.CommandRunner runner) {
         return new ScriptJobExecution(jobs, id, world, source,
