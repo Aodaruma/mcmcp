@@ -45,3 +45,30 @@ source `d864f7a3a61db176a309191f645c98ba423892c9`、CI 38120704139、製品SHA25
 コードでは、1床終了時のしゃがみ解除で目線が変化し、次の支持床のcurrent-eye UP witnessがまだ無い場合に通常plannerへ切り替わる経路があった。合法な隣接床の幾何条件を先に確認し、fresh witnessを入力なしで最大80ticks待つよう修正。通常approach中もこの床延長入口を先に確認する。実機で同じ8床を再検証する。
 
 併せて旧処理の固定8度/tickを設定済み視点速度の上限以下に抑えた。source `c5d9db014a6715ed312a371c945763db0506fae7`の速度修正だけのR2はCI 38121450568成功だが、実機試験を省き上記修正を含む次候補へ進む。全自動1860件が成功。
+
+## R3の隔離結果と材料切れ停止
+
+source `5e3f9b546957fd7053f0c8d837e7392ca6f30c68`、CI 38121696310、製品SHA256 `2585254cabda93a3a078940a69484b408c277a56a28ae04125a6215ed0f57d56`。公開16ツール全定義一致。
+
+- east8は8床すべて成功、約15.5秒、終点X=318.523。15回の公開位置サンプルでは後退0。west/north/south各2床、開始中心からずれたoffset2も成功。
+- inlineの黒4→灰4→松明は3命令・累計9個、外部 `.mcs`＋JSONは2命令・累計4個で成功。灰色はhotbar外からのstagingを含み、終了後inventory同期も一致。
+- advance=falseは設置0・無移動。ゼロ件ではresult自体が省略される現契約に合わせ、検証側のみ公開progressと変更なしの記録で判定を補正（再送なし）。距離制限は設置0、取消は設置1を保持、障害物は設置0・無移動で有限停止。全ケース体力20、終端Actionなし、停止後位置安定。
+- shortage4は2床確定後に開始側X=310.560へ戻り、160秒でduration_limit。不合格。隔離ログにmoved wrongly/too quicklyや位置補正の該当行なし。材料不足の例外が通常approachへのfallbackに分類されるコードと整合する。
+
+R4 `e36dfc35ab88baca7225bcb3bd86327ba2380abe` は材料不足を専用例外として区別し、`floor_extension_material_unavailable`でその場停止。begin時の失敗理由も共通job結果へ伝える。scriptの子例外時に過去の成功を失敗診断へ残さず、終端resultのactive_commandを除去する。全自動1862件とbuild/harness分離成功。最終JARで材料不足とscriptを再確認してから通常profileへ引き継ぐ。
+
+## 最終R4の確認
+
+CI [38122700669](https://github.com/Aodaruma/mcmcp/actions/runs/38122700669)成功。製品SHA256 `f01b1b0dd70003f70c865354bf711d706890796f0afe902bd3be3ca9aea0a8c2`、catalog SHA256 `62a4ba38e78a8ec04996e4abc9a3218cc4a38b97ffac30c583f54cbccb2e764a`。隔離起動後に公開16ツールの全定義一致を確認。
+
+- shortage4: action `ff45043b-5b52-490f-9082-d352f729b0e9`。2床確定、約4.44秒で`floor_extension_material_unavailable`停止。X=312.490の新床上で静止し、開始側への後退なし。
+- external-sections: action `b62e6268-97d5-467f-a7d6-111b2bd2f809`。共有`.mcs`とJSON、2命令・4床が約8.35秒で成功。inventory_syncはmatched。
+- 材料不足script: 累計2床と2命令目の失敗を保持し、3命令目は開始しない。終端でactive_commandを残さない。
+
+3件とも体力20、実行中Actionなし、終端位置安定。R3から幾何・入力処理は変更せず、材料不足の分類と失敗診断だけを変更した。128×128×9の全量施工は自動試験の分割・模擬実行のみで、ゲーム内の全量完了ではない。隔離の元環境復元・停止確認後に通常profileへ引き継ぐ。
+
+script停止caseのactionは`870e4732-79db-498d-bcfb-7165ceba375f`。commands_started=2、completed_commands=1、placed_blocks=2。2命令目の部分確定1個を累計へ含め、active_commandなし、3命令目の灰色64個は未使用。入力解放の実機根拠は公開Action不在と静止位置、および最終MCP OFFである。
+
+復元は2026-10-11 16:59:03 JSTまでに完了。元66ファイル／world 61ファイルのhash一致、fixture削除、追加したscript/data 2ファイルの回収、container停止、Docker process 0／engine接続不可、docker-desktop WSL Stopped、lease解放を確認。45分leaseの期限17:07:21を延長していない。
+
+距離停止caseはmax_distance=0.25で設置0・safety_interruptedになったが、実測水平変位は約0.385だった。tickで停止を判定するため、指定距離以内への厳密な位置停止はこの試験では確認していない。通常profileの施工には試験fixtureを使用しない。
