@@ -1,5 +1,13 @@
 # 公開API v2：進捗と再開メモ（2026-09-28）
 
+2026-10-11 導入後の設計図確認：通常R2で149,040 entries・約9.09 MBの実設計図をpreviewし、16-entry（床15＋松明1）を29.960秒で施工成功。next_index=332、batch_complete=true、終端後の体力20・READY・Actionなし。全量施工は現場担当が継続する。[実機記録](experiments/20261011_v2_blueprint_tool.md)。
+
+2026-10-11 導入後：通常R2で現場担当のnative `agent_run_script`が6床連続成功。松明のある支持床から出発し、自動補充ONのまま13.5259秒で6床を確定、各新床へ前進した。親action `f0f6861d-7bf2-4970-ab76-9e766bd0389f`。通常ゲームの操作権は現場担当が保持し、全量施工の完了とは区別する。[詳細](experiments/20261011_v2_blueprint_tool.md)。
+
+2026-10-11 18:22 JST：通常「くらふとぶ！-v01.2」を設計図R2へ更新し、Prismのnative Explorer起動・既存server接続・MCP ONまで完了。実JVMが開いた製品JARのSHA256は`8ccd97f9…936ee`、公開17ツール全定義・入出力schema一致、体力20・位置・経験値2582を維持。旧R4はbackup済み、他MOD・設定不変。18:23に現場担当へ所有を返却した。149,040 entriesの実設計図データも登録rootへ配置済みだが、配置担当はpreview・施工を実行していない。隔離は14ケース・27 actions成功、元66/world61ファイルのhash一致復元、Docker/WSL停止・lease解放済み。[施工仕様](PUBLIC_API_V2_BUILDING.md)、[agent_build仕様](PUBLIC_API_V2_BLUEPRINT_TOOL.md)、[検証・導入記録](experiments/20261011_v2_blueprint_tool.md)。以下は各時点の履歴。
+
+2026-10-11 18:14 JST：候補`8ccd97f9…936ee`（公開17ツール）は隔離14ケース成功。旧R4の自動補充中の6回目停止を再現し、候補は同条件8回成功。torch支持床、script実行器を使う設計図の色替え・CSV・palette・batch再開・break→place・材料不足の部分結果・取消も確認した。元環境の復元と通常profileへの差し替えを担当間で進行中。現時点で通常はR4のまま。[実機記録](experiments/20261011_v2_blueprint_tool.md)。
+
 2026-10-11 17:40 JST：専用agent_buildと追加修正候補は自動1874件・build成功、隔離実機待ち。通常R4で支持床上の松明がnative入口を拒否し、自動補充で材料数が減らないと設置後確認待ちになる条件を確認した。候補は無衝突・非危険の配置物を通行可能にし、server設置確認＋当該枠の新しい受信payload一致で補充を受理する。world確認済みの床は途中停止時にも部分結果へ保持。通常現場は有限の代替手順を使用後、安全床で待機している。[追加検証](experiments/20261011_v2_floor_edge_approach.md)。
 
 2026-10-11 17:21 JST：起動経路を既存Windows ExplorerのUIへ変更し、通常「くらふとぶ！-v01.2」の起動・接続・MCP ONまで完了。新JVMが開いたJARの実体はnative Roaming側R4 `f01b1b0d...a0a8c2`、公開16ツール全定義・入出力schema一致、HP20・経験値表示復帰を確認。操作権は現場担当へ返却済み。旧LocalCacheコピーは変更していない。以下の起動是正中という記述は履歴。専用agent_buildは別候補のまま、通常R4へ未導入。

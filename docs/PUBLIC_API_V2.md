@@ -1,6 +1,6 @@
 # MCMCP公開API v2：改訂案
 
-2026-10-11の開発版は公開16ツール。ゲーム内チャットの送受信を1つの `agent_chat` にまとめた。[チャットガイド](PUBLIC_API_V2_CHAT_20261011.md)。`agent_get_observation` は [看板文字と任意のNBT読取り](PUBLIC_API_V2_SIGN_NBT_20261011.md) に対応。設置したチェスト・バッグの確認と数量指定移送を `agent_interact` にまとめ、stateの経験値ポイントを追加した。[設置収納・経験値ガイド](PUBLIC_API_V2_STORAGE_XP_20261011.md)。通常環境への導入済み版とは区別する。
+2026-10-11の開発版は公開17ツール。JSON/CSV設計図をpreview・区間実行する`agent_build`を追加した。[設計図ガイド](PUBLIC_API_V2_BLUEPRINT_TOOL.md)、[床延長とscript施工](PUBLIC_API_V2_BUILDING.md)。ゲーム内チャットの送受信は `agent_chat` にまとめた。[チャットガイド](PUBLIC_API_V2_CHAT_20261011.md)。`agent_get_observation` は [看板文字と任意のNBT読取り](PUBLIC_API_V2_SIGN_NBT_20261011.md) に対応。設置したチェスト・バッグの確認と数量指定移送は `agent_interact` にまとめ、stateの経験値ポイントを追加した。[設置収納・経験値ガイド](PUBLIC_API_V2_STORAGE_XP_20261011.md)。通常環境への導入済み版とは区別する。
 
 > 材料データ、MOD破壊、水中／乗り物、整理、条件・外部ファイルの追加実装は[2026-10-09の追加ガイド](PUBLIC_API_V2_PRIORITIES_20261009.md)を参照。最新の実機結果と導入状況は[試用メモ](PUBLIC_API_V2_TRIAL_20261010.md)を参照。
 
@@ -54,6 +54,7 @@ LLMは行き先、作業範囲、条件、反復の意図を伝える。MODは�
 | `agent_click` | 左／右／中、対象／現在照準、回数、画面文脈 | 必要な入力と効果の確認。中クリックはゲームモード別に意味を扱う |
 | `agent_input_sequence` | 同時・順次のsteps、押下tick、間隔、反復数、停止条件 | 複数入力の単一所有、有限実行と解放 |
 | `agent_run_script` | 下記の制限言語のsourceと総予算 | 関数・変数・分岐・反復で複数の基本行動を組み立てて進める |
+| `agent_build` | 登録rootのJSON/CSV、原点、previewのhash・world session、有限区間 | 設計図を確認し、明示した設置・破壊をscript実行器で進め、部分結果と再開indexを返す |
 
 Draft PRで公開した範囲は、moveの座標／方向、登録MODを含むbreak／Vanillaのplace、block state変更・手持ちitem使用・観測したentityへの通常使用のinteract、プレイヤーinventoryのinspect/swap/drop、座標指定のVanilla収納と対応providerの所持収納のinspect/transfer、world内の有限click、9種類の論理入力、制限付きscriptである。swapはmain inventoryの1 stackとhotbarの指定枠を交換し、両slotのserver更新を確認する。moveの明示許可による局所障害物処理、遠方entityへの接近、基本4種類と複合・player/entityの停止条件、複数cell設置、menuの開封・照合と限定収納のShiftクリック、PC側施工checkpointを追加した。任意MOD収納や任意GUI操作は未対応。v2の`get_action`は進行数と取得できた結果を既定で返す。`include_result:false`で詳細結果を省略できる。block作業では確定セル座標と確認済みの変更前後block stateを直近最大128件、総数・保持開始番号・打切り有無とともに返す。block破壊のdrop・消費item等を含む詳細effectは未実装。実ゲームでの成功・取消・危険停止を確認するまでDraftを維持する。
 
@@ -134,7 +135,7 @@ loop・関数呼出しを事前展開せず、ASTを直接評価する。関数�
 
 `interact(target="menu",...)`は1命令内で開封・照合・閉鎖を完結する。menu type・block・slot/item/count条件を要求し、最大16回の全stack移動を新しいserver snapshotで確認する。クリック対応はVanillaのgeneric chest/dispenser・hopper・shulkerの通常slotに限定する。加工・取引・MOD独自GUIは読むだけでクリックしない。
 
-**未完了:** 命令ごとの失敗詳細、menuを開いたまま複数命令へ引き継ぐ操作、観測量予算。`agent_run_script`は公開catalogへ接続済みで、2反復の移動・inventory合成を実機確認した。script内のすべての行動や停止経路を網羅したわけではなく、Draft PRを維持する。
+命令ごとのID・結果・失敗理由と、部分確定を含む設置／破壊累計は親scriptのresultへ追加済み。[施工結果の契約](PUBLIC_API_V2_BUILDING.md)を参照。**未完了:** menuを開いたまま複数命令へ引き継ぐ操作、観測量予算。script内のすべての行動や停止経路を網羅したわけではなく、Draft PRを維持する。
 
 ## このブランチで実装済みの内部座標ナビゲーション
 

@@ -1,5 +1,7 @@
 # 公開API v2 クイックガイド
 
+2026-10-11追加：開発候補は公開17ツール。床延長と大量のscript施工は[施工ガイド](PUBLIC_API_V2_BUILDING.md)、JSON/CSVの専用施工は[agent_build](PUBLIC_API_V2_BLUEPRINT_TOOL.md)を参照。実機結果と通常profileの版は[最新状態](PUBLIC_API_V2_STATUS_20260928.md)で確認する。以下の過去の候補・制限に関する記載は、記載時点の履歴を含む。
+
 > 材料データ、MOD破壊、水中／乗り物、整理、条件・外部ファイルの追加実装は[2026-10-09の追加ガイド](PUBLIC_API_V2_PRIORITIES_20261009.md)を参照。今回の実機最終検証は準備中。
 
 開発中のv2用。[基本操作](experiments/20260928_public_api_v2_local.md)と[所持収納・使用中停止](experiments/20260929_v2_storage_stop_local.md)の実機smokeを通過しました。未実装機能と追加検証は[進捗メモ](PUBLIC_API_V2_STATUS_20260928.md)を参照し、配布済みv1と区別してください。旧`agent_start_action`／JSON Action DSLは公開しません。
@@ -21,12 +23,14 @@
 | `agent_click` | 左・右・中クリックを有限回実行。意味的な作業成功までは保証しない |
 | `agent_input_sequence` | 論理キー／マウスを同時・順番に入力。時間・間隔・反復・到達停止条件を指定 |
 | `agent_run_script` | 名前付き引数、変数、条件分岐、有限loop、小関数で行動を組み合わせる |
-| `agent_get_action` | 返された`action_id`の進行確認。詳細結果は`include_result:true` |
+| `agent_build` | JSON/CSV設計図のpreview、hash/sessionを確認した区間施工、部分結果と再開位置 |
+| `agent_chat` | ゲーム内チャットの受信・送信。[表示設定と使い方](PUBLIC_API_V2_CHAT_20261011.md) |
+| `agent_get_action` | 返された`action_id`の進行・結果確認。詳細結果は既定で返す |
 | `agent_cancel_action` | 指定した`action_id`へ取消要求。入力と所有menuの終了処理後に停止が確定 |
 
 ## 開始・確認・取消
 
-行動10ツールは共通のjobを返します。開始応答の`state:"queued"`は完了ではありません。同じIDを`agent_get_action`に渡し、terminalまで確認します。`wait_timeout_ms:25000`は最大25秒待ち、時間内に終わらなくても現在の進行を返します。
+行動は共通jobで追跡します。短い操作は既定で最大20秒待ち、進捗・結果を返します。長いscriptや`agent_build`は既定でIDを返します。`state:"queued"`は完了ではありません。同じIDを`agent_get_action`に渡し、terminalまで確認します。`wait_timeout_ms:25000`は最大25秒待ち、時間内に終わらなくても現在の進行を返します。
 
 ```json
 {"x":4,"y":65,"z":8}
@@ -69,7 +73,7 @@ for (let i=0; i<2; i++) {
 move(x=4, y=65, z=8);
 ```
 
-行動関数は前の行動の終了を待ち、失敗・取消で停止します。ファイル、network、Java、module、`async/await`にはアクセスできません。raw入力もscriptも共通の入力所有・実行上限・停止処理を通ります。
+行動関数は前の行動の終了を待ち、失敗・取消で停止します。登録rootから明示したsource・JSON/CSVを開始前に読み込めます。任意ファイル、network、Java、module、`async/await`にはアクセスできません。raw入力もscriptも共通の入力所有・実行上限・停止処理を通ります。
 
 ## 追加機能（2026-09-29）
 

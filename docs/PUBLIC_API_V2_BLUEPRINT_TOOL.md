@@ -1,6 +1,6 @@
 # 設計図からの施工：agent_build
 
-開発中の17番目の公開ツール。通常profileへ導入した床/script R4には含まれない。実機確認と配布状況は[進捗](PUBLIC_API_V2_STATUS_20260928.md)へ記録する。
+17番目の公開ツール。2026-10-11 18:22 JSTに通常「くらふとぶ！-v01.2」へ設計図R2を導入し、実JVMのJARと公開17ツール一致を確認した。実機確認と配布状況は[進捗](PUBLIC_API_V2_STATUS_20260928.md)、[検証記録](experiments/20261011_v2_blueprint_tool.md)を参照。main統合・Release公開はまだ行っていない。
 
 `agent_build`は、登録ディレクトリのJSON/CSVを読み、設置・破壊を区間にまとめて実行する。`agent_run_script`と同じ入力所有、取消、有限時間、server確認を使う。呼出し側が1床ずつmove/look/inputを組み立てる必要はない。
 

@@ -1,8 +1,8 @@
 # v2の床延長とスクリプト施工
 
-この文書は2026-10-11の開発候補の仕様。通常profileへの導入状況と実機結果は[状態記録](PUBLIC_API_V2_STATUS_20260928.md)を参照する。
+この文書は2026-10-11の設計図R2の仕様。18:22 JSTに通常「くらふとぶ！-v01.2」へ導入し、実JVMのJARと公開17ツール一致を確認した。実機結果は[状態記録](PUBLIC_API_V2_STATUS_20260928.md)を参照する。
 
-後続の専用`agent_build`は[設計図tool仕様](PUBLIC_API_V2_BLUEPRINT_TOOL.md)を参照。床/script R4と配布物を分け、隔離確認後に提供する。
+専用`agent_build`も同じJARへ含めた。[設計図tool仕様](PUBLIC_API_V2_BLUEPRINT_TOOL.md)を参照。
 
 ## 床の連続延長
 
@@ -14,6 +14,8 @@
 ```
 
 これはX方向8床の例。`dx:-7`なら逆方向。開始時には先頭床に隣接する既存の安全な支持床が必要。氷・足場・半block・障害物のある通路へ、この床延長手順を一律適用しない。未ロードの設計図全体を観測済みと扱わず、現場で1床ずつ照合する。
+
+支持床上の松明・レール・redstone dustなどは無衝突かつ非危険なら通行する。火・水・感圧板・tripwire等は除外する。バッグの自動補充には、server設置確認と、新たに届いた当該手持ち枠のpayload一致を使う。実機確認状況は[設計図・補充検証](experiments/20261011_v2_blueprint_tool.md)を参照。
 
 返却した`action_id`を`agent_get_action`の`include_result:true`で確認する。`confirmed_count`は今回確定した設置数、`observed_count`は既に一致していた数。設置後の前進で止まった場合にも確定済みの設置は残る。取消は`agent_cancel_action`。
 
