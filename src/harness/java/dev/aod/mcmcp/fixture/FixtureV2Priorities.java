@@ -380,7 +380,7 @@ final class FixtureV2Priorities {
                 "tp @s 305.5 101 305.5 180 0", "setblock 305 101 303 minecraft:crafting_table",
                 "recipe give @s *", "time set noon", "weather clear"));
         switch (kind) {
-            case "scaffold_stair", "scaffold_corner" -> {
+            case "scaffold_stair", "scaffold_corner", "scaffold_step" -> {
                 result.addAll(List.of("fill 300 101 300 320 116 320 minecraft:air",
                         "setblock 305 101 301 minecraft:stone",
                         "fill 306 101 301 306 102 301 minecraft:stone",
@@ -394,6 +394,11 @@ final class FixtureV2Priorities {
                         "setblock 307 103 302 minecraft:scaffolding[distance=2,bottom=true]",
                         kind.equals("scaffold_corner") ? "tp @s 311.82 104 304.42 -90 0"
                                 : "tp @s 301.51 101 304.28 -90 0"));
+                if (kind.equals("scaffold_step")) result.addAll(List.of(
+                        "fill 314 101 304 314 102 304 minecraft:scaffolding[distance=0,bottom=false]",
+                        "setblock 313 102 304 minecraft:scaffolding[distance=1,bottom=true]",
+                        "setblock 312 102 304 minecraft:scaffolding[distance=1,bottom=true]",
+                        "tp @s 314.82 103 304.42 -90 0"));
             }
             case "scaffold_detour", "scaffold_detour_roof" -> {
                 result.addAll(List.of("fill 300 101 300 320 116 320 minecraft:air",
