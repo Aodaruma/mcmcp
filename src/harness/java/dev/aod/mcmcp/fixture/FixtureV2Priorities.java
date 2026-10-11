@@ -372,19 +372,22 @@ final class FixtureV2Priorities {
     }
 
     private static List<String> commands(String kind) {
+        // Preserve previously observed roof edges while returning to the fixed ground start.
+        if (kind.equals("scaffold_detour_start")) return List.of("tp @s 305.5 101 305.5 -90 0");
         var result = new ArrayList<>(List.of("gamemode creative @s", "ride @s dismount",
                 "kill @e[tag=mcmcp_v2_fixture,x=300,y=100,z=300,dx=20,dy=8,dz=20]", "fill 300 100 300 320 100 320 minecraft:stone",
                 "fill 300 101 300 320 108 320 minecraft:air", "clear @s", "effect clear @s",
                 "tp @s 305.5 101 305.5 180 0", "setblock 305 101 303 minecraft:crafting_table",
                 "recipe give @s *", "time set noon", "weather clear"));
         switch (kind) {
-            case "scaffold_detour" -> {
+            case "scaffold_detour", "scaffold_detour_roof" -> {
                 result.addAll(List.of("fill 300 101 300 320 116 320 minecraft:air",
                         "fill 307 101 300 312 103 308 minecraft:stone",
                         "fill 304 101 305 304 103 305 minecraft:scaffolding[distance=0,bottom=false]",
                         "setblock 305 103 305 minecraft:scaffolding[distance=1,bottom=true]",
                         "setblock 306 103 305 minecraft:scaffolding[distance=2,bottom=true]",
-                        "tp @s 305.5 101 305.5 -90 0"));
+                        kind.equals("scaffold_detour_roof") ? "tp @s 307.5 104 305.5 -90 0"
+                                : "tp @s 305.5 101 305.5 -90 0"));
             }
             case "move_exact", "move_exact_slab", "move_exact_creative", "move_exact_spectator" -> {
                 result.addAll(List.of("fill 300 101 300 320 116 320 minecraft:air", "tp @s 305.5 101 305.5 -90 0"));
