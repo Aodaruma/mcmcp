@@ -1,5 +1,7 @@
 # 公開API v2：進捗と再開メモ（2026-09-28）
 
+2026-10-11 17:17 JST：優先1・2の床/script R4は通常profileの物理JARへ配置済み（`f01b1b0d...a0a8c2`）。その後Codex経由で開いたPrismから起動したJVMが、LocalCache側の旧JARを実際に開いていたとOSハンドルで確認。配置は正常だが起動経路の是正・live確認を進行中。専用`agent_build`（17番目）は別候補として実装し、自動1871件・build成功。設計図preview、hash/session照合、有限batch、明示break/place、部分結果と再開indexに対応。隔離実機確認はこれからで、通常R4には含めない。[専用tool仕様](PUBLIC_API_V2_BLUEPRINT_TOOL.md)。
+
 2026-10-11 16:56 JST：placeのadvance床延長・中心調整、scriptへの共通適用、子命令ごとの設置／破壊累計、設計図の区間script生成を実装。自動1862件とbuild/harness隔離・CIが成功。隔離実機はR3の4方向・位置ずれ・色替え・外部JSON・停止条件11件が成功。材料切れ時の後退を直した最終R4（source `e36dfc35`）で、その場停止・外部script成功・失敗scriptの累計保持の3件も成功。元環境復元と通常profileへの引継ぎを進行中。専用の自動施工toolは1・2の導入後に着手する。[利用方法](PUBLIC_API_V2_BUILDING.md)、[検証記録](experiments/20261011_v2_floor_edge_approach.md)。
 
 2026-10-11 15:42 JST以降：同期診断候補の隔離8job・次元往復が成功、全診断matched。不具合は未再現、収納take/store・自動補充後は未検証。元66ファイル一致復元、Docker停止・lease解放まで確認。利用者の後続指示により床延長のv2統合を優先し、現在は実装前の具体案を利用者と検討する段階。[同期検証](experiments/20261011_v2_inventory_sync.md)、[床延長](experiments/20261011_v2_floor_edge_approach.md)。

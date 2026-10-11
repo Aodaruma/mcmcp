@@ -29,7 +29,8 @@ final class McpToolCatalog {
             "agent_run_script",
             "agent_get_action",
             "agent_cancel_action",
-            "agent_chat");
+            "agent_chat",
+            "agent_build");
 
     private final JsonObject listResult;
     private final Map<String, JsonObject> tools;

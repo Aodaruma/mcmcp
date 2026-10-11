@@ -940,6 +940,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || inbox.hasPendingCommand("agent_input_sequence")
                 || inbox.hasPendingCommand("agent_click")
                 || inbox.hasPendingCommand("agent_run_script")
+                || inbox.hasPendingCommand("agent_build")
                 || inbox.hasPendingCommand("agent_move")
                 || inbox.hasPendingCommand("agent_look")
                 || inbox.hasPendingCommand("agent_interact")
@@ -1153,6 +1154,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 && !inbox.hasPendingCommand("agent_input_sequence")
                 && !inbox.hasPendingCommand("agent_click")
                 && !inbox.hasPendingCommand("agent_run_script")
+                && !inbox.hasPendingCommand("agent_build")
                 && !inbox.hasPendingCommand("agent_move")
                 && !inbox.hasPendingCommand("agent_look")
                 && !inbox.hasPendingCommand("agent_interact")
@@ -1206,6 +1208,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         if (command instanceof StartScript script) {
             return submitV2ScriptStart(script, context);
+        }
+        if (command instanceof Build build) {
+            return submitV2Build(build, context);
         }
         if (command instanceof StartMove move) {
             return submitV2MoveStart(move, context);
@@ -1539,9 +1544,41 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 });
     }
 
+    private CompletionStage<RuntimeReply> submitV2Build(Build command, RuntimeCallContext context) {
+        final V2BuildArguments request;
+        try {
+            requireLiveCall(context, command.toolName());
+            request = V2BuildArguments.parse(command.arguments());
+            requireLiveCall(context, command.toolName());
+        } catch (RuntimeException | LinkageError failure) {
+            return CompletableFuture.completedFuture(RuntimeFailures.mapFailure(failure));
+        }
+        if (!request.execute()) return CompletableFuture.completedFuture(RuntimeReply.success(Map.of(
+                "schema_version", 2, "operation", "preview", "blueprint", request.plan().preview())));
+        var fence = publishedSession;
+        return inbox.submitControlMapped(command.toolName(), fence.generation(), context.deadlineNanos(),
+                () -> withEvaluationLeaseFence(context, command.toolName(), () -> {
+                    var session = sessions.snapshot();
+                    if (!request.worldSessionId().equals(session.worldSessionId())
+                            || !request.plan().dimension().equals(session.dimension()))
+                        throw new IllegalArgumentException("blueprint world session or dimension changed");
+                    var result = commitV2Script(Minecraft.getInstance(), session, request.script(), context, request.plan());
+                    return RuntimeReply.success(result, new McpRuntimePort.ActionDeliveryReceipt(
+                            UUID.fromString((String) result.get("action_id"))));
+                }), RuntimeFailures::mapFailure, context::isCancelled,
+                reply -> { if (reply.successful()) rollbackAbandonedV2Script(reply.data()); });
+    }
+
     private Map<String, Object> commitV2Script(
             Minecraft minecraft, WorldSessionTracker.Snapshot session,
             V2ScriptArguments request, RuntimeCallContext context) {
+        return commitV2Script(minecraft, session, request, context, null);
+    }
+
+    private Map<String, Object> commitV2Script(
+            Minecraft minecraft, WorldSessionTracker.Snapshot session,
+            V2ScriptArguments request, RuntimeCallContext context,
+            dev.aod.mcmcp.agent.script.BlueprintPlan blueprint) {
         assertClientThread(minecraft);
         RuntimeFailures.requireReady(session);
         requireV2WorldSafe(minecraft, session, "Script", true);
@@ -1555,7 +1592,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             throw new RuntimeInvocationException(
                     "task_busy", "Another action is already queued or running.", true, Map.of());
         }
-        requireLiveCall(context, "agent_run_script");
+        String toolName = blueprint == null ? "agent_run_script" : "agent_build";
+        requireLiveCall(context, toolName);
         if (arming.snapshot(session.worldSessionId()).mode() != LocalArmingState.Mode.READY) {
             throw new RuntimeInvocationException(
                     "mcp_operation_disabled", "The READY authorization is unavailable.",
@@ -1584,7 +1622,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 && (control.mode() == LocalArmingState.Mode.READY
                                         || control.mode() == LocalArmingState.Mode.AGENT);
                     }, scriptDeadline).withResources(request.resources());
-            requireLiveCall(context, "agent_run_script");
+            if (blueprint != null) scriptExecution.withBlueprint(blueprint);
+            requireLiveCall(context, toolName);
         } catch (RuntimeException | LinkageError failure) {
             scriptJobs.abandon(actionId);
             scriptExecution = null;
@@ -2439,6 +2478,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     throw new AssertionError("agent_click must use delivery-gated admission");
             case StartScript ignored ->
                     throw new AssertionError("agent_run_script must use delivery-gated admission");
+            case Build ignored ->
+                    throw new AssertionError("agent_build must use delivery-gated admission");
             case StartMove ignored ->
                     throw new AssertionError("agent_move must use delivery-gated admission");
             case StartBreakBlock ignored ->

@@ -5881,6 +5881,293 @@
         "idempotentHint": false,
         "openWorldHint": true
       }
+    },
+    {
+      "name": "agent_build",
+      "title": "Build from a Data Blueprint",
+      "description": "Preview or execute a finite batch from a data-only JSON/CSV blueprint under script_resource_root. JSON accepts ordered blocks rows or palette/size; CSV accepts rows. Rows use x/y/z, block, optional item/properties and operation=place|break. Air placement rows are ignored and never authorize breaking. Break rows explicitly name the allowed block ID. Palette traversal is bottom-up snake X; explicit rows retain file order, allowing deliberate break-then-place. Origin is added to the file origin. No fixed spatial-size limit beyond world coordinates; at most 1048576 input entries per file and the configured 32 MiB aggregate resource limit (up to 256 MiB). Preview returns plan_sha256, bounds, counts and bounded material totals, without reading unseen world contents or reserving an action. Execute requires that hash and the current world_session_id; changed contents/origin/dimension or world session are rejected. Each call selects start_index and up to max_blocks entries (default4096, max65536), combines adjacent equal X entries into at most8 per child, and uses ordinary place/break actions including native floor advance. The action uses kind=script, defaults to immediate action_id, and shares a finite wall deadline. Poll/cancel with agent_get_action/agent_cancel_action. Live/terminal result.blueprint.next_index advances only across fully confirmed or visibly already-matching child sections; partial or unknown children remain at the section start for review, never automatic replay. Preserve the result and plan hash to resume explicitly. This does not create access scaffolding, solve arbitrary support dependencies, refill arbitrary storage, or persist a general script execution stack. max_distance is per child; max_duration_ticks covers the whole batch. Failed/cancelled jobs keep confirmed partial changes and release owned inputs.",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "operation": {
+            "enum": [
+              "preview",
+              "execute"
+            ],
+            "default": "preview"
+          },
+          "blueprint_file": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "UTF-8 data-only JSON/CSV under script_resource_root. Relative slash path, no links or traversal."
+          },
+          "format": {
+            "enum": [
+              "json",
+              "csv"
+            ],
+            "default": "json"
+          },
+          "dimension": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[a-z0-9_.-]+:[a-z0-9_./-]+$"
+          },
+          "origin": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "x": {
+                "type": "integer",
+                "minimum": -30000000,
+                "maximum": 30000000
+              },
+              "y": {
+                "type": "integer",
+                "minimum": -30000000,
+                "maximum": 30000000
+              },
+              "z": {
+                "type": "integer",
+                "minimum": -30000000,
+                "maximum": 30000000
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "z"
+            ]
+          },
+          "plan_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "world_session_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "start_index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1048576,
+            "default": 0
+          },
+          "max_blocks": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65536,
+            "default": 4096
+          },
+          "advance": {
+            "type": "boolean",
+            "default": true
+          },
+          "step_max_ticks": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1728000,
+            "default": 3200
+          },
+          "step_max_distance": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 4096,
+            "default": 64
+          },
+          "max_duration_ticks": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1728000,
+            "default": 24000
+          },
+          "wait_timeout_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 25000,
+            "default": 0
+          }
+        },
+        "required": [
+          "blueprint_file",
+          "dimension"
+        ],
+        "oneOf": [
+          {
+            "properties": {
+              "operation": {
+                "const": "preview"
+              }
+            }
+          },
+          {
+            "properties": {
+              "operation": {
+                "const": "execute"
+              }
+            },
+            "required": [
+              "operation",
+              "plan_sha256",
+              "world_session_id"
+            ]
+          }
+        ]
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "schema_version": {
+                "const": 2
+              },
+              "action_id": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "state": {
+                "enum": [
+                  "queued",
+                  "running",
+                  "succeeded",
+                  "failed",
+                  "cancelled",
+                  "unconfirmed"
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "move",
+                  "look",
+                  "break_block",
+                  "place_block",
+                  "interact",
+                  "inventory",
+                  "craft",
+                  "click",
+                  "input_sequence",
+                  "script",
+                  "chat"
+                ]
+              },
+              "progress": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "completed_operations": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1728000
+                  },
+                  "max_operations": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1728000
+                  },
+                  "scanned_cells": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4096
+                  },
+                  "broken_blocks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4096
+                  },
+                  "placed_blocks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4096
+                  },
+                  "interacted_blocks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4096
+                  },
+                  "elapsed_seconds": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "remaining_seconds": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "max_duration_seconds": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "completed_operations",
+                  "max_operations"
+                ]
+              },
+              "cancel_requested": {
+                "type": "boolean"
+              },
+              "failure": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "string",
+                    "maxLength": 128
+                  }
+                ]
+              },
+              "result": {
+                "type": "object",
+                "maxProperties": 32
+              },
+              "stop_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "schema_version",
+              "action_id",
+              "state"
+            ],
+            "$schema": "https://json-schema.org/draft/2020-12/schema"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "schema_version": {
+                "const": 2
+              },
+              "operation": {
+                "const": "preview"
+              },
+              "blueprint": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "schema_version",
+              "operation",
+              "blueprint"
+            ]
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      }
     }
   ]
 }

@@ -21,7 +21,7 @@ public interface McpRuntimePort {
 
     sealed interface RuntimeCommand permits GetState, GetMcpStatus, GetObservation, StartAction,
             StartMove, StartLook, StartBreakBlock, StartPlaceBlock, StartInteract, StartInventory, StartCraft,
-            StartInputSequence, StartClick, StartScript, Chat, GetAction,
+            StartInputSequence, StartClick, StartScript, Build, Chat, GetAction,
             CancelAction, ConfirmActionDelivery, AbandonActionDelivery,
             ConfirmObservationDelivery, AbandonObservationDelivery, GetSnapshot, CompareBlockPlan,
             GetRecipes, ListRoutines, GetRoutine, StartRoutine, CancelRoutine, EmergencyStop {
@@ -31,6 +31,11 @@ public interface McpRuntimePort {
     record Chat(Map<String, Object> arguments) implements RuntimeCommand {
         public Chat { arguments = immutableCopy(arguments); }
         @Override public String toolName() { return "agent_chat"; }
+    }
+
+    record Build(Map<String, Object> arguments) implements RuntimeCommand {
+        public Build { arguments = immutableCopy(arguments); }
+        @Override public String toolName() { return "agent_build"; }
     }
 
     record GetMcpStatus() implements RuntimeCommand {

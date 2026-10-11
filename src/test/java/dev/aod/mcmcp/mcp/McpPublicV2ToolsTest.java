@@ -94,7 +94,7 @@ class McpPublicV2ToolsTest {
         var names = registry.listResult().getAsJsonArray("tools").asList().stream()
                 .map(tool -> tool.getAsJsonObject().get("name").getAsString()).toList();
         assertThat(names).contains("agent_run_script").doesNotContain("agent_start_action");
-        assertThat(names).hasSize(16);
+        assertThat(names).hasSize(17).contains("agent_build");
         assertThatThrownBy(() -> registry.prepareCall("agent_start_action",
                 LegacyActionSchema.inputSchema().getAsJsonArray("examples").get(0).getAsJsonObject()))
                 .isInstanceOf(McmcpToolRegistry.UnknownToolException.class);

@@ -45,6 +45,15 @@ public final class ScriptJobExecution implements Runnable {
     private long brokenBlocks;
     private long matchingBlocks;
     private Map<String, ScriptResources.Resource> resources = Map.of();
+    private BlueprintPlan blueprint;
+    private String blueprintFailure;
+
+    public ScriptJobExecution withBlueprint(BlueprintPlan plan) {
+        if (jobs.get(actionId).state() != AgentJobStore.State.UNCONFIRMED || !source.equals(BlueprintPlan.SOURCE)
+                || plan.commands() != budget.calls()) throw new IllegalStateException("blueprint must match undelivered script");
+        blueprint = Objects.requireNonNull(plan);
+        return this;
+    }
 
     public ScriptJobExecution withResources(Map<String, ScriptResources.Resource> resources) {
         if (jobs.get(actionId).state() != AgentJobStore.State.UNCONFIRMED)
@@ -99,7 +108,7 @@ public final class ScriptJobExecution implements Runnable {
                 }
                 activeCommand = Map.of("index", ++commandsStarted, "command", command.name());
                 jobs.recordResult(actionId, progressDetails());
-                final Outcome outcome;
+                Outcome outcome;
                 try {
                     outcome = runner.execute(command.name(), command.arguments(), cancelled);
                 } catch (RuntimeException | LinkageError failure) {
@@ -109,6 +118,11 @@ public final class ScriptJobExecution implements Runnable {
                     throw failure;
                 }
                 var child = runner.result();
+                if (outcome == Outcome.SUCCESS && blueprint != null
+                        && !blueprint.confirmedStep(commandsStarted - 1, command.name(), child)) {
+                    outcome = Outcome.FAILURE;
+                    blueprintFailure = "blueprint_target_incomplete";
+                }
                 lastCommand = ScriptChildDiagnostic.capture(command.name(), outcome, child);
                 retainBlockProgress(command.name(), child);
                 activeCommand = Map.of();
@@ -211,6 +225,8 @@ public final class ScriptJobExecution implements Runnable {
         details.put("placed_blocks", placedBlocks);
         details.put("broken_blocks", brokenBlocks);
         details.put("already_matching_blocks", matchingBlocks);
+        if (blueprint != null) details.put("blueprint", blueprint.progress(jobs.get(actionId).completedOperations()));
+        if (blueprintFailure != null) details.put("blueprint_failure", blueprintFailure);
         if (!activeCommand.isEmpty()) details.put("active_command", activeCommand);
         if (!lastCommand.isEmpty()) details.put("last_command", lastCommand);
         return details;

@@ -123,7 +123,11 @@ final class MinecraftV2BreakDriver
         if (!player.isWithinBlockInteractionRange(position, 0.0D)) {
             return V2BlockJobExecution.BeginResult.WAITING;
         }
-        if (visiblyAir(position)) return V2BlockJobExecution.BeginResult.SKIPPED;
+        if (visiblyAir(position)) {
+            var air = fingerprint(level.getBlockState(position));
+            confirmedChange = new V2BlockJobExecution.ConfirmedChange(air, air);
+            return V2BlockJobExecution.BeginResult.SKIPPED;
+        }
         var frame = observations.latestInternalFrame();
         if (frame.isEmpty()) return V2BlockJobExecution.BeginResult.WAITING;
         var reconciliation = reconciliationSignals.bindAndSnapshot(level, session.worldSessionId());

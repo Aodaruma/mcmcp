@@ -37,7 +37,7 @@ public final class McmcpToolRegistry {
     private final Semaphore terminalWaitAdmission = new Semaphore(1);
     private static final Set<String> ACTION_TOOLS = Set.of("agent_move", "agent_look", "agent_break_block",
             "agent_place_block", "agent_interact", "agent_chat", "agent_inventory", "agent_craft",
-            "agent_click", "agent_input_sequence", "agent_run_script");
+            "agent_click", "agent_input_sequence", "agent_run_script", "agent_build");
 
     public McmcpToolRegistry(McpRuntimePort runtimePort, Duration runtimeDispatchTimeout) {
         this.runtimePort = Objects.requireNonNull(runtimePort, "runtimePort");
@@ -106,7 +106,7 @@ public final class McmcpToolRegistry {
         if (arguments.has("wait_timeout_ms")) return arguments.get("wait_timeout_ms").getAsInt();
         boolean region = java.util.stream.Stream.of("dx", "dy", "dz")
                 .anyMatch(key -> arguments.has(key) && arguments.get(key).getAsInt() != 0);
-        return name.equals("agent_run_script") || region ? 0 : 20_000;
+        return name.equals("agent_run_script") || name.equals("agent_build") || region ? 0 : 20_000;
     }
 
     JsonObject pollCompletion(PreparedCall started, int waitMillis) {
@@ -344,7 +344,8 @@ public final class McmcpToolRegistry {
                 && !"agent_craft".equals(toolName)
                 && !"agent_click".equals(toolName)
                 && !"agent_input_sequence".equals(toolName)
-                && !"agent_run_script".equals(toolName)) return null;
+                && !"agent_run_script".equals(toolName)
+                && !"agent_build".equals(toolName)) return null;
         Object value = data.get("action_id");
         if (!(value instanceof String actionId)) return null;
         try {
@@ -371,6 +372,7 @@ public final class McmcpToolRegistry {
             case "agent_click" -> new McpRuntimePort.StartClick(values);
             case "agent_input_sequence" -> new McpRuntimePort.StartInputSequence(values);
             case "agent_run_script" -> new McpRuntimePort.StartScript(values);
+            case "agent_build" -> new McpRuntimePort.Build(values);
             case "agent_get_action" -> new McpRuntimePort.GetAction(values);
             case "agent_cancel_action" -> new McpRuntimePort.CancelAction(values);
             default -> throw new AssertionError("Catalog and dispatch table diverged");

@@ -25,6 +25,8 @@ WindowsのAppData表示パスはCodexの仮想化領域へ転送される場合�
 
 実体配置と再起動後APIの両方が確認できるまで、「配置確認」「起動後確認」を分けて報告する。[2026-09-29の誤判定と訂正](experiments/20260929_v2_trial_local.md)を参照。
 
+2026-10-11には、物理JARへのR4配置確認後、Codexの`sky.launch_app`から開いたPrismの子JVMがLocalCache内の旧JARを読んだ。`user.dir`が通常pathでも起動後の実体を証明しない。起動するPrismは利用者の通常ショートカットまたはネイティブExplorer UIを用い、JVMの開いているJARハンドル実体と公開tool全定義で確認する。旧仮想コピーだけを見て正常な物理JARを再交換・削除しない。
+
 ## ラベルとProjects / Labels and Projects
 
 **[MCMCP 開発・保守 / Development](https://github.com/users/Aodaruma/projects/5)**を使います。接続先・Status field IDは[project.json](../.github/project.json)に記録しています。公開Issue/PRだけをこのProjectへ配置します。新規追加とラベルに合わせた状態更新は保守の週次巡回で行い、常時稼働するGitHub側の即時同期とは区別します。<br>

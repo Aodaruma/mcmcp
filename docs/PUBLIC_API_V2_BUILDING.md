@@ -2,6 +2,8 @@
 
 この文書は2026-10-11の開発候補の仕様。通常profileへの導入状況と実機結果は[状態記録](PUBLIC_API_V2_STATUS_20260928.md)を参照する。
 
+後続の専用`agent_build`は[設計図tool仕様](PUBLIC_API_V2_BLUEPRINT_TOOL.md)を参照。床/script R4と配布物を分け、隔離確認後に提供する。
+
 ## 床の連続延長
 
 `agent_place_block`の`advance:true`は、届く支持面までの移動に加え、通常の完全立方体の端へしゃがんで寄り、側面を実際に狙って設置し、server確認後に新しい床へ進める。`advance:false`が既定で、位置を動かさない。
