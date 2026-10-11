@@ -77,6 +77,48 @@ class CoordinateGoalPlannerTest {
     private static NavCell rung(int y) { return new NavCell("overworld", 0, y, 0); }
 
     @Test
+    void partialWaypointAccountsForTheClimbNeededToReachACloserPlatform() {
+        var map = map();
+        var start = cell(0, 0);
+        var goal = cell(12, 0);
+        map.observe(edge(start, cell(0, 1)));
+        for (int x = 0; x < 3; x++) map.observe(edge(cell(x, 1), cell(x + 1, 1)));
+        addClimbingDetour(map, start);
+
+        var route = plan(new CoordinateGoalPlanner(SESSION, goal), map, start).route().orElseThrow();
+        assertThat(route.cells()).containsExactly(start, cell(0, 1), cell(1, 1), cell(2, 1), cell(3, 1));
+    }
+
+    @Test
+    void climbingDetourRemainsAvailableWhenThereIsNoCheaperFloorRoute() {
+        var map = map();
+        var start = cell(0, 0);
+        addClimbingDetour(map, start);
+        var planner = new CoordinateGoalPlanner(SESSION, cell(12, 0));
+        // Each newly observed handoff may extend the only route around the obstacle.
+        var result = plan(planner, map, start);
+        assertThat(result.status()).isEqualTo(PARTIAL_WAYPOINT);
+        assertThat(result.route().orElseThrow().edges()).isNotEmpty();
+        assertThat(plan(new CoordinateGoalPlanner(SESSION, new NavCell("overworld", 4, 67, 0)), map, start)
+                .status()).isEqualTo(KNOWN_GOAL_ROUTE);
+    }
+
+    private static void addClimbingDetour(KnownTraversabilityMap map, NavCell start) {
+        map.observe(edge(start, cell(-1, 0)));
+        for (int y = 64; y < 67; y++) {
+            var from = new NavCell("overworld", -1, y, 0);
+            var to = new NavCell("overworld", -1, y + 1, 0);
+            var source = ladder(from, to);
+            map.observe(new TraversabilityEdge(SESSION, source.key(), source.status(),
+                    y == 66 ? TraversabilityEdge.TargetSupport.CONFIRMED : TraversabilityEdge.TargetSupport.ABSENT,
+                    source.clearance(), source.transition(), source.fluid(), source.hazard(), source.provenance(),
+                    from, 1, 0, dev.aod.mcmcp.agent.safety.Locomotion.SCAFFOLDING));
+        }
+        for (int x = -1; x < 4; x++) map.observe(edge(
+                new NavCell("overworld", x, 67, 0), new NavCell("overworld", x + 1, 67, 0)));
+    }
+
+    @Test
     void aKnownLadderTowardTheTargetFloorPrecedesExploringTheWrongFloor() {
         var map = map();
         for (int y = 80; y > 76; y--) map.observe(ladder(rung(y), rung(y - 1)));

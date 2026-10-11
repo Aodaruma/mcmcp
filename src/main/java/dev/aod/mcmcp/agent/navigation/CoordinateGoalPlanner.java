@@ -93,12 +93,7 @@ public final class CoordinateGoalPlanner {
         var arrivals = new java.util.HashMap<NavCell, Boolean>();
         Predicate<NavCell> arrived = cell -> destinations.contains(cell)
                 && arrivals.computeIfAbsent(cell, arrival::test);
-        var candidates = new TreeSet<NavCell>(Comparator
-                // A known route toward the target floor beats exploring horizontally on the wrong floor.
-                .comparingInt((NavCell cell) -> arrived.test(cell) ? 0 : climbableWaypoint(map, start, cell) ? 1 : 2)
-                .thenComparingDouble(cell -> arrived.test(cell)
-                        ? cell.distanceTo(start) : cell.distanceTo(goal))
-                .thenComparing(Comparator.naturalOrder()));
+        var candidates = new HashSet<NavCell>();
         for (TraversabilityEdge edge : map.edges().values()) {
             if (stopped(cancelled)) return empty(Status.CANCELLED, 0, 0);
             if (!session.equals(edge.worldSessionId())
@@ -149,10 +144,22 @@ public final class CoordinateGoalPlanner {
                 }
             }
         }
+        var ordered = new TreeSet<NavCell>(Comparator
+                // A known route toward the target floor beats exploring horizontally on the wrong floor.
+                .comparingInt((NavCell cell) -> arrived.test(cell) ? 0 : climbableWaypoint(map, start, cell) ? 1 : 2)
+                .thenComparingDouble(cell -> arrived.test(cell) ? cell.distanceTo(start)
+                        : climbableWaypoint(map, start, cell) ? cell.distanceTo(goal)
+                        // A closer platform can require a much longer climb than a floor waypoint.
+                        : cell.distanceTo(goal) * NavigationDistanceBudget.TRAJECTORY_FACTOR
+                                + Math.max(0.0D, connected.getOrDefault(cell, Double.POSITIVE_INFINITY)
+                                        - start.distanceTo(cell) * NavigationDistanceBudget.TRAJECTORY_FACTOR))
+                .thenComparingDouble(cell -> cell.distanceTo(goal))
+                .thenComparing(Comparator.naturalOrder()));
+        ordered.addAll(candidates);
         int attempts = 0;
         int expanded = 0;
         var search = new DeterministicAStar();
-        for (NavCell candidate : candidates) {
+        for (NavCell candidate : ordered) {
             if (stopped(cancelled)) return empty(Status.CANCELLED, attempts, expanded);
             if (candidate.equals(start) || !cellAllowed.test(candidate)
                     || !allowPartial && !arrived.test(candidate)

@@ -378,6 +378,14 @@ final class FixtureV2Priorities {
                 "tp @s 305.5 101 305.5 180 0", "setblock 305 101 303 minecraft:crafting_table",
                 "recipe give @s *", "time set noon", "weather clear"));
         switch (kind) {
+            case "scaffold_detour" -> {
+                result.addAll(List.of("fill 300 101 300 320 116 320 minecraft:air",
+                        "fill 307 101 300 312 103 308 minecraft:stone",
+                        "fill 304 101 305 304 103 305 minecraft:scaffolding[distance=0,bottom=false]",
+                        "setblock 305 103 305 minecraft:scaffolding[distance=1,bottom=true]",
+                        "setblock 306 103 305 minecraft:scaffolding[distance=2,bottom=true]",
+                        "tp @s 305.5 101 305.5 -90 0"));
+            }
             case "move_exact", "move_exact_slab", "move_exact_creative", "move_exact_spectator" -> {
                 result.addAll(List.of("fill 300 101 300 320 116 320 minecraft:air", "tp @s 305.5 101 305.5 -90 0"));
                 if (kind.equals("move_exact_slab")) result.add("fill 306 101 304 308 101 306 minecraft:stone_slab[type=bottom]");
