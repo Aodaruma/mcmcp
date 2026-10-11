@@ -22,3 +22,15 @@ nav-r14で携帯収納の確認・移送・終了は成功する一方、`agent_
 不足・menu/枠数/cursor/数量/components不一致・一致・打切りの単体試験と、公開schemaの件数上限・生components拒否を追加。Java 1,812、harness 14、admin 28、合計1,854件と必須build・harness隔離が成功した。
 
 このPCの専用検証profileは、空き物理メモリ1,199 MiBのためbackup・設定変更・起動の前に準備を中止。通常ゲームには入力していない。利用者が継続許可したaod-mimoidの隔離Dockerで、起動直後・fixture設定後・クラフト／移送／バッグ開閉／次元移動後の公開診断を確認する。実機結果は追記する。通常worldやprivate logを試験資料へ流用しない。
+
+## 隔離検証の結果（15:42 JST完了）
+
+製品source `a60cc2d0af1904006717f75f614e00489c91b180`、CI 38118062236のJAR SHA256 `c0656cb4b72b6ea64d57f28861185556726a7cc47bb54f3182d99efd66068fea` をaod-mimoidで検証。公開16ツールの全定義がJAR内catalogと一致した。
+
+- fixture前の初期診断はmatched、full packetは46枠・tick42、不一致0。
+- 名前付き材料の2x2（板8個）・3x3（かまど1個）のplan/execute、原木3個の数量move、ケーキ2個のplan/executeとバケツ6個の返却、120枠バッグinspectの計8jobが成功。各終了後はmatched、cursor空、解放済み、体力20。
+- End移動後は新sessionでfull packet tick3925、Overworld復帰後はtick4139。両方matched。次元移動は隔離fixtureによるもので、今回Portal操作を再検証したものではない。
+- 収納はinspectによる開閉まで。take/store・バッグ自動補充後の同期は未検証。通常現場の不具合は再現せず、修正完了とはしない。
+- 元66ファイル（world61）を全hash一致で復元し、fixtureを撤去。15:42 JSTまでにcontainer/Docker/WSL停止とlease解放、16:10の期限内完了を確認。
+
+証跡はaod-mimoidの `F:/mcmcp-testlab/20260902-hard-building-v1/eval-artifacts/20261011-v2-inventory-sync`。ローカルの `artifacts/v2-inventory-sync-20261011/remote-verification.json` に公開job要約と最終receipt検証出力を回収した。診断候補は通常profileに未導入。利用者の後続指示で床延長のv2統合を優先し、同期調査はこの状態を保存する。

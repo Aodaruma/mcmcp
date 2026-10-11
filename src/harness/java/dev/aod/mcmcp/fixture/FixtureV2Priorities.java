@@ -18,6 +18,7 @@ final class FixtureV2Priorities {
     private int storageDriftDeadline;
     private boolean storageDriftApplied;
     private boolean storageCursorDrift;
+    private boolean floorFixture;
 
     static void install() {
         if (Boolean.getBoolean("mcmcp.fixture.v2Priorities")) {
@@ -106,6 +107,7 @@ final class FixtureV2Priorities {
                             if (entity.entityTags().contains("mcmcp_v2_fixture")) entity.getOffers().getFirst().addToSpecialPriceDiff(1);
                         }
                     } else if (!kind.equals("report")) {
+                        floorFixture = kind.startsWith("floor_");
                         if (!inputIdle()) throw new IllegalStateException("input owned");
                         // Fixed arena preparation must work even when the owner starts far away.
                         for (int x = 300 >> 4; x <= 320 >> 4; x++) {
@@ -185,6 +187,16 @@ final class FixtureV2Priorities {
                     report.put("position", List.of(player.getX(), player.getY(), player.getZ()));
                     report.put("air", player.getAirSupply());
                     report.put("health", player.getHealth());
+                    if (floorFixture) {
+                        var floor = new ArrayList<Object>();
+                        for (int x = 300; x <= 320; x++) for (int z = 300; z <= 320; z++) {
+                            var pos = new net.minecraft.core.BlockPos(x, 105, z);
+                            var state = player.level().getBlockState(pos);
+                            if (!state.isAir()) floor.add(Map.of("x", x, "y", 105, "z", z,
+                                    "block", BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString()));
+                        }
+                        report.put("floor_blocks", floor);
+                    }
                     report.put("xp_levels", player.experienceLevel);
                     report.put("xp_points", player.totalExperience);
                     report.put("xp_progress", player.experienceProgress);
@@ -380,6 +392,16 @@ final class FixtureV2Priorities {
                 "tp @s 305.5 101 305.5 180 0", "setblock 305 101 303 minecraft:crafting_table",
                 "recipe give @s *", "time set noon", "weather clear"));
         switch (kind) {
+            case "floor_east", "floor_west", "floor_north", "floor_south", "floor_offset", "floor_shortage", "floor_obstructed" -> {
+                result.addAll(List.of("fill 300 101 300 320 116 320 minecraft:air",
+                        "setblock 310 105 310 minecraft:stone",
+                        "item replace entity @s hotbar.0 with minecraft:black_concrete " + (kind.equals("floor_shortage") ? 2 : 64),
+                        "item replace entity @s inventory.0 with minecraft:gray_concrete 64",
+                        "item replace entity @s inventory.1 with minecraft:torch 32",
+                        "item replace entity @s hotbar.2 with minecraft:netherite_pickaxe",
+                        kind.equals("floor_offset") ? "tp @s 310.80 106 310.70 180 80" : "tp @s 310.5 106 310.5 180 80"));
+                if (kind.equals("floor_obstructed")) result.add("setblock 311 107 310 minecraft:stone");
+            }
             case "scaffold_stair", "scaffold_corner", "scaffold_step" -> {
                 result.addAll(List.of("fill 300 101 300 320 116 320 minecraft:air",
                         "setblock 305 101 301 minecraft:stone",

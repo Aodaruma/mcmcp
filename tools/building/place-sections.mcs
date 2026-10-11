@@ -1,0 +1,7 @@
+let plan = read_json(name="blueprint");
+for (let i = 0; i < length(value=plan.sections); i++) {
+    let s = plan.sections[i];
+    place(x=s.x, y=s.y, z=s.z, dx=s.dx, block=s.block, item=s.item,
+          properties=s.properties, max_blocks=s.count, advance=true,
+          max_ticks=3200, max_distance=64);
+}

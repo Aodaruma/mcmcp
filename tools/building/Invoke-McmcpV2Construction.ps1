@@ -117,7 +117,7 @@ function Invoke-V2ConstructionRun {
                 $checkpoint.pending=@{index=$checkpoint.next;action_id=$null;terminal=$null}
                 $checkpoint.status='dispatching'
                 Save-BuildingCheckpoint $fullCheckpoint $checkpoint
-                $receipt=Invoke-V2ConstructionTool 'agent_place_block' $plan.steps[$checkpoint.next]
+                $receipt=Invoke-V2ConstructionTool 'agent_place_block' ($plan.steps[$checkpoint.next]+@{wait_timeout_ms=0})
                 if($receipt.action_id -cnotmatch '^[0-9a-f-]{36}$' -or $receipt.state -cne 'queued'){throw 'invalid_action_receipt'}
                 $checkpoint.pending.action_id=$receipt.action_id
                 $checkpoint.status='running'

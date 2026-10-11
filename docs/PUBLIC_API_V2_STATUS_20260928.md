@@ -1,5 +1,11 @@
 # 公開API v2：進捗と再開メモ（2026-09-28）
 
+2026-10-11 追加実装：利用者の承認順に、placeのadvance床延長・中心調整、scriptへの共通適用、子命令ごとの設置／破壊累計、設計図の区間script生成を実装。Java 1817・harness 14・admin 28、合計1859件とbuild/harness隔離が成功。4方向・連続施工・色替え・取消などの隔離実機確認をこれから行う。通常profileはnav-r14のまま。専用の自動施工toolは1・2の導入後に着手する。[利用方法](PUBLIC_API_V2_BUILDING.md)、[検証記録](experiments/20261011_v2_floor_edge_approach.md)。
+
+2026-10-11 15:42 JST以降：同期診断候補の隔離8job・次元往復が成功、全診断matched。不具合は未再現、収納take/store・自動補充後は未検証。元66ファイル一致復元、Docker停止・lease解放まで確認。利用者の後続指示により床延長のv2統合を優先し、現在は実装前の具体案を利用者と検討する段階。[同期検証](experiments/20261011_v2_inventory_sync.md)、[床延長](experiments/20261011_v2_floor_edge_approach.md)。
+
+2026-10-11 追加課題：水平な床の延長で、支持block側面を露出する「しゃがんで端へ寄る」動作がplace/bridgeに統合されていないことを確認。現場は有限の公開入力とplaceの組合せで1個成功・体力20。クラフト同期を優先し、この端寄り統合は後続対応とする。[コード確認と検証条件](experiments/20261011_v2_floor_edge_approach.md)。
+
 2026-10-11 追加開発：nav-r14で再接続後もクラフト・数量移送が `inventory_server_snapshot_required` で拒否される報告に対し、記録欠落・枠数・cursor・slot不一致を区別する `inventory_sync` を追加。stateのinventory sectionと失敗時resultから取得する。安全判定と入力は変更していない。自動1,854件・build成功、隔離実機確認は準備中。同期復旧の修正完了ではない。[診断契約と検証記録](experiments/20261011_v2_inventory_sync.md)。
 
 2026-10-11 14:44 JST：aod-mimoid担当の完了報告・最終receipt検証出力を取得。足場column/top/corner/stairの4件は各1回成功・体力20。元66ファイルのhash一致復元、container/Docker停止、lease解放は10:12 JST台までに完了していた。stepは復元後の追加依頼のため未実施。下記の復元「未確認」は解消したが、現場の移動停止原因は未確定。[更新した検証記録](experiments/20261011_v2_scaffold_stall.md)。

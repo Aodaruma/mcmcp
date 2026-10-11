@@ -26,6 +26,24 @@ class ActionScriptTest {
     }
 
     @Test
+    void distributedSectionScriptRunsExternalPlanWithinItsGeneratedBudget() throws java.io.IOException {
+        String source = java.nio.file.Files.readString(java.nio.file.Path.of(
+                System.getProperty("mcmcp.projectDir"), "tools/building/place-sections.mcs"));
+        var sections = new ArrayList<Object>();
+        for (int i = 0; i < 512; i++) sections.add(Map.of("x", i * 8, "y", 64, "z", 0,
+                "dx", 7, "count", 8, "block", "minecraft:stone", "item", "minecraft:stone", "properties", Map.of()));
+        var resource = new ScriptResources.Resource("json", Map.of("sections", sections), "a".repeat(64));
+        var result = ActionScript.run(source, COMMANDS, sink, () -> false,
+                new Budget(1000 + sections.size() * 100, sections.size(), sections.size()), Map.of("blueprint", resource));
+        assertThat(result.status()).isEqualTo(Status.SUCCESS);
+        assertThat(sent).hasSize(512).allSatisfy(command -> {
+            assertThat(command.name()).isEqualTo("place");
+            assertThat(command.arguments()).containsEntry("advance", true).containsEntry("max_blocks", 8)
+                    .containsEntry("dx", 7).containsEntry("properties", Map.of());
+        });
+    }
+
+    @Test
     void reportsSnapshotObservedDataAndRemainAvailableAfterALaterFailure() {
         var observation = new java.util.LinkedHashMap<String, Object>();
         observation.put("known", true);

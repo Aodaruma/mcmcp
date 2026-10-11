@@ -3,10 +3,40 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from compile_v2_blueprint import compile_blocks, load, write_project
+from compile_v2_blueprint import compile_blocks, load, write_project, sections
 
 
 class BlueprintTests(unittest.TestCase):
+    def test_script_sections_preserve_gaps_colors_properties_and_signed_order(self):
+        data = {"blocks": [dict(x=x, y=64, z=z, block="minecraft:stone")
+                            for z in (0, 1) for x in range(11) if x != 9]}
+        data["blocks"].append(dict(x=9, y=64, z=0, block="minecraft:oak_log", properties={"axis": "x"}))
+        steps, _ = compile_blocks(data)
+        grouped = sections(steps)
+        expanded = []
+        for section in grouped:
+            self.assertLessEqual(section["count"], 8)
+            for i in range(section["count"]):
+                direction = -1 if section["dx"] < 0 else 1
+                expanded.append((section["x"] + direction*i, section["y"], section["z"], section["block"], section["properties"]))
+        self.assertEqual(expanded, [(s["x"], s["y"], s["z"], s["block"], s.get("properties", {})) for s in steps])
+
+    def test_large_script_project_is_lossless_and_has_bounded_call_requests(self):
+        data = {"size": [128, 9, 128], "palette": ["minecraft:white_concrete"], "blocks": [0] * 147456}
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "script"
+            manifest = write_project(data, output, "a" * 64, execution="script")
+            self.assertEqual(manifest["execution"], "agent_run_script")
+            self.assertEqual(len(manifest["chunks"]), 36)
+            self.assertEqual(sum(c["commands"] for c in manifest["chunks"]), 18432)
+            for index, chunk in enumerate(manifest["chunks"]):
+                plan = json.loads((output / chunk["path"]).read_bytes())
+                request = json.loads((output / f"request-{index:05d}.json").read_bytes())
+                self.assertEqual(sum(s["count"] for s in plan["sections"]), chunk["placements"])
+                self.assertEqual(request["max_calls"], len(plan["sections"]))
+                self.assertEqual(request["data_files"]["blueprint"]["path"], chunk["path"])
+            self.assertEqual(hashlib.sha256((output / "place-sections.mcs").read_bytes()).hexdigest(), manifest["source"]["sha256"])
+
     def test_full_128_by_128_by_9_design_is_lossless_and_bounded(self):
         data = {"size": [128, 9, 128], "palette": ["minecraft:white_concrete", "minecraft:black_concrete"],
                 "blocks": [i % 2 for i in range(128 * 128 * 9)]}

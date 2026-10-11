@@ -38,7 +38,10 @@ try {
         switch($Name) {
             agent_get_mcp_status { return @{world_session_id=$script:mockSession;running_action_id=$null} }
             agent_get_state { return @{player=@{dimension='minecraft:overworld'}} }
-            agent_place_block { $script:mockPlacements++; throw 'simulated_lost_dispatch_response' }
+            agent_place_block {
+                Assert-V2Ledger ($Arguments.wait_timeout_ms -eq 0) 'Ledger dispatch must request an asynchronous receipt'
+                $script:mockPlacements++; throw 'simulated_lost_dispatch_response'
+            }
             default { throw "unexpected_mock_call:$Name" }
         }
     }

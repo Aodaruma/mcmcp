@@ -123,9 +123,31 @@ def encode(data):
     return (json.dumps(data, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
 
 
-def write_project(data, output, source_hash, origin=(0, 0, 0), max_cells=1_048_576, chunk_size=4096):
+def sections(steps):
+    """Merge adjacent same-material x cells, retaining signed snake order and gaps."""
+    result = []
+    for step in steps:
+        block, item, props = step["block"], step.get("item", step["block"]), step.get("properties", {})
+        previous = result[-1] if result else None
+        direction = 1 if step["z"] % 2 == 0 else -1
+        if (previous and previous["count"] < 8 and previous["y"] == step["y"]
+                and previous["z"] == step["z"] and previous["block"] == block
+                and previous["item"] == item and previous["properties"] == props
+                and previous["x"] + previous["dx"] + direction == step["x"]):
+            previous["dx"] += direction
+            previous["count"] += 1
+        else:
+            result.append({k: step[k] for k in ("x", "y", "z")} | {
+                "dx": 0, "count": 1, "block": block, "item": item, "properties": props})
+    return result
+
+
+def write_project(data, output, source_hash, origin=(0, 0, 0), max_cells=1_048_576, chunk_size=4096,
+                  execution="steps"):
     if not 1 <= chunk_size <= 4096:
         raise ValueError("chunk size must be 1..4096")
+    if execution not in ("steps", "script"):
+        raise ValueError("execution must be steps or script")
     dimension = data.get("dimension", "minecraft:overworld")
     if not isinstance(dimension, str) or not ID.fullmatch(dimension):
         raise ValueError("invalid dimension")
@@ -137,7 +159,9 @@ def write_project(data, output, source_hash, origin=(0, 0, 0), max_cells=1_048_5
     while begin < len(steps):
         end = min(begin + chunk_size, len(steps))
         while True:
-            raw = encode({"version": 2, "dimension": dimension, "steps": steps[begin:end]})
+            plan = ({"version": 1, "dimension": dimension, "sections": sections(steps[begin:end])}
+                    if execution == "script" else {"version": 2, "dimension": dimension, "steps": steps[begin:end]})
+            raw = encode(plan)
             if len(raw) <= 2_097_152:
                 break
             end = begin + (end - begin) // 2
@@ -146,11 +170,26 @@ def write_project(data, output, source_hash, origin=(0, 0, 0), max_cells=1_048_5
         name = f"plan-{len(chunks):05d}.json"
         (output / name).write_bytes(raw)
         chunks.append({"path": name, "sha256": hashlib.sha256(raw).hexdigest(), "placements": end - begin})
+        if execution == "script":
+            chunks[-1]["commands"] = len(plan["sections"])
         begin = end
     manifest = {"version": 1, "dimension": dimension, "source_sha256": source_hash,
                 "placements": len(steps), "materials": materials,
                 "bounds": {k: [min(s[k] for s in steps), max(s[k] for s in steps)] for k in ("x", "y", "z")},
                 "chunks": chunks}
+    if execution == "script":
+        script = Path(__file__).with_name("place-sections.mcs").read_bytes()
+        (output / "place-sections.mcs").write_bytes(script)
+        manifest["execution"] = "agent_run_script"
+        manifest["source"] = {"path": "place-sections.mcs", "sha256": hashlib.sha256(script).hexdigest()}
+        # Relative paths are resolved only under the explicitly configured resource root.
+        for index, chunk in enumerate(chunks):
+            request = {"source_file": "place-sections.mcs",
+                       "data_files": {"blueprint": {"path": chunk["path"], "format": "json"}},
+                       "max_calls": chunk["commands"], "max_iterations": chunk["commands"],
+                       "max_work": min(100_000_000, 1000 + chunk["commands"] * 100),
+                       "max_duration_ticks": 1_728_000}
+            (output / f"request-{index:05d}.json").write_bytes(encode(request))
     (output / "manifest.json").write_bytes(encode(manifest))
     return manifest
 
@@ -163,11 +202,12 @@ def main():
     parser.add_argument("--max-mib", type=int, default=256)
     parser.add_argument("--max-cells", type=int, default=1_048_576)
     parser.add_argument("--chunk-size", type=int, default=4096)
+    parser.add_argument("--execution", choices=("steps", "script"), default="steps")
     args = parser.parse_args()
     if not 1 <= args.max_mib <= 1024 or not 1 <= args.max_cells <= 16_777_216:
         parser.error("--max-mib must be 1..1024 and --max-cells 1..16777216")
     data, digest = load(args.input, args.max_mib * 1024 * 1024)
-    manifest = write_project(data, args.output, digest, args.origin, args.max_cells, args.chunk_size)
+    manifest = write_project(data, args.output, digest, args.origin, args.max_cells, args.chunk_size, args.execution)
     print(json.dumps({"placements": manifest["placements"], "chunks": len(manifest["chunks"]),
                       "materials": manifest["materials"]}, ensure_ascii=False))
 

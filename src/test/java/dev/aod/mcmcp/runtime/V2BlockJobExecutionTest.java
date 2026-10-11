@@ -295,6 +295,48 @@ class V2BlockJobExecutionTest {
         assertThat(store.get(id).completedBlocks()).isEqualTo(1);
     }
 
+    @Test
+    void recordsPlacementBeforeFailedAdvanceAndDoesNotRepeatItDuringRelease() {
+        for (boolean cancel : List.of(false, true)) {
+            var store = new AgentJobStore();
+            var id = store.reserve(AgentJobStore.Kind.PLACE_BLOCK, SESSION, 100, 100);
+            var request = V2PlaceArguments.parse(Map.of("x", 1, "y", 64, "z", 0,
+                    "dx", 1, "block", "minecraft:stone", "advance", true), "minecraft:overworld");
+            var confirmed = new AtomicBoolean(false);
+            var released = new AtomicBoolean(false);
+            var driver = new V2BlockJobExecution.Driver<V2PlaceArguments>() {
+                public String dimension() { return "minecraft:overworld"; }
+                public V2BlockJobExecution.BeginResult begin(NavCell cell, V2PlaceArguments r,
+                        java.util.function.BooleanSupplier allowed) { return V2BlockJobExecution.BeginResult.STARTED; }
+                public V2BlockJobExecution.StepResult tick(long tick, java.util.function.BooleanSupplier allowed) {
+                    confirmed.set(true);
+                    return cancel ? V2BlockJobExecution.StepResult.RUNNING : V2BlockJobExecution.StepResult.FAILED;
+                }
+                public V2BlockJobExecution.ConfirmedChange confirmedChange() {
+                    return confirmed.get() ? new V2BlockJobExecution.ConfirmedChange(
+                            new BlockStateFingerprint("minecraft:air", Map.of()),
+                            new BlockStateFingerprint("minecraft:stone", Map.of())) : null;
+                }
+                public String failureReason() { return "floor_extension_safety_changed"; }
+                public V2BlockJobExecution.ConfirmedChange confirmedBeforeCompletion() { return confirmedChange(); }
+                public void close() { confirmed.set(false); }
+            };
+            var job = new V2BlockJobExecution<>(store, id, SESSION, AgentJobStore.Kind.PLACE_BLOCK,
+                    request, driver, released::get);
+            store.confirm(id, 1);
+            job.tick(SESSION, 1, 1, true, () -> true);
+            if (cancel) job.cancel();
+            assertThat(store.get(id).completedBlocks()).isEqualTo(1);
+            assertThat(store.get(id).result()).containsEntry("confirmed_count", 1);
+            released.set(true);
+            var result = job.tick(SESSION, 2, 2, true, () -> true);
+            assertThat(result.completedBlocks()).isEqualTo(1);
+            assertThat(result.state()).isEqualTo(cancel ? AgentJobStore.State.CANCELLED : AgentJobStore.State.FAILED);
+            assertThat((List<?>) result.result().get("confirmed_cells")).hasSize(1);
+            assertThat(result.failure()).isEqualTo(cancel ? "client_request" : "floor_extension_safety_changed");
+        }
+    }
+
     private static final class FakeDriver
             implements V2BlockJobExecution.Driver<V2BreakArguments> {
         final ArrayDeque<V2BlockJobExecution.BeginResult> begins = new ArrayDeque<>();

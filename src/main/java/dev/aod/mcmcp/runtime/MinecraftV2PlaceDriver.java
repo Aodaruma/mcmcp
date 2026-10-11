@@ -12,6 +12,11 @@ import dev.aod.mcmcp.client.McmcpClientConfig;
 import dev.aod.mcmcp.mixin.client.BlockItemPlacementInvoker;
 import dev.aod.mcmcp.routine.BlockStateFingerprint;
 import dev.aod.mcmcp.routine.BoundedInputLease;
+import dev.aod.mcmcp.routine.BlockTarget;
+import dev.aod.mcmcp.routine.KnownPillarUpRequest;
+import dev.aod.mcmcp.routine.MinecraftFloorExtensionAttempt;
+import dev.aod.mcmcp.routine.MinecraftApplyBlockPlanPort;
+import dev.aod.mcmcp.observation.MinecraftObservationService;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -59,6 +64,11 @@ final class MinecraftV2PlaceDriver
     private final ClientReconciliationSignals reconciliationSignals;
     private final ClientPredictionSignals predictions;
     private final DoubleSupplier remainingDistance;
+    private final MinecraftObservationService floorObservations;
+    private final MinecraftApplyBlockPlanPort floorPlacement;
+    private MinecraftFloorExtensionAttempt floorExtension;
+    private BlockStateFingerprint floorAfter;
+    private String failure;
     private MinecraftActionPrimitiveExecutor navigation;
     private CoordinateGoalPlanner planner;
     private Map<TraversabilityEdge.Key, TraversabilityEdge> waitingEvidence;
@@ -88,6 +98,14 @@ final class MinecraftV2PlaceDriver
             AgentObservations observations,
             ClientReconciliationSignals reconciliationSignals,
             ClientPredictionSignals predictions, DoubleSupplier remainingDistance) {
+        this(minecraft, sessions, observations, reconciliationSignals, predictions, remainingDistance, null, null);
+    }
+
+    MinecraftV2PlaceDriver(Minecraft minecraft,
+            Supplier<WorldSessionTracker.Snapshot> sessions, AgentObservations observations,
+            ClientReconciliationSignals reconciliationSignals, ClientPredictionSignals predictions,
+            DoubleSupplier remainingDistance, MinecraftObservationService floorObservations,
+            MinecraftApplyBlockPlanPort floorPlacement) {
         this.minecraft = Objects.requireNonNull(minecraft, "minecraft");
         this.sessions = Objects.requireNonNull(sessions, "sessions");
         this.observations = Objects.requireNonNull(observations, "observations");
@@ -95,6 +113,8 @@ final class MinecraftV2PlaceDriver
                 reconciliationSignals, "reconciliationSignals");
         this.predictions = Objects.requireNonNull(predictions, "predictions");
         this.remainingDistance = Objects.requireNonNull(remainingDistance, "remainingDistance");
+        this.floorObservations = floorObservations;
+        this.floorPlacement = floorPlacement;
     }
 
     @Override
@@ -107,6 +127,7 @@ final class MinecraftV2PlaceDriver
             V2PlaceArguments request, BooleanSupplier outputAllowed) {
         if (stage != Stage.IDLE) throw new IllegalStateException("place driver already active");
         if (!outputAllowed.getAsBoolean()) return V2BlockJobExecution.BeginResult.FAILED;
+        if (beginFloorExtension(next, request)) return V2BlockJobExecution.BeginResult.STARTED;
         var observed = beginObservedTarget(next, request, outputAllowed);
         if (observed != V2BlockJobExecution.BeginResult.WAITING
                 || !request.advance() || request.maxDistance() <= 0.0D) return observed;
@@ -119,6 +140,56 @@ final class MinecraftV2PlaceDriver
                 McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
         stage = Stage.APPROACH;
         return V2BlockJobExecution.BeginResult.STARTED;
+    }
+
+    private boolean beginFloorExtension(NavCell next, V2PlaceArguments requested) {
+        if (!requested.advance() || remainingDistance.getAsDouble() <= 0 || floorPlacement == null) return false;
+        var session = sessions.get();
+        var player = minecraft.player;
+        var level = minecraft.level;
+        if (!session.worldReady() || player == null || level == null || minecraft.gameMode == null
+                || minecraft.gameMode.getPlayerMode() != GameType.SURVIVAL
+                || !next.dimension().equals(session.dimension())
+                || Math.abs(player.getY() - next.y() - 1) > 0.015
+                || !level.isLoaded(blockPos(next)) || !level.getBlockState(blockPos(next)).isAir()
+                || !requested.acceptsTarget(blockId(level.getBlockState(blockPos(next))))) return false;
+        var frame = observations.latestInternalFrame();
+        if (frame.isEmpty()) return false;
+        var desired = new BlockStateFingerprint(requested.blockId(), requested.properties());
+        var block = BuiltInRegistries.BLOCK.get(net.minecraft.resources.Identifier.parse(requested.blockId()));
+        if (block.isEmpty()) return false;
+        var source = block.orElseThrow().value().getStateDefinition().getPossibleStates().stream()
+                .filter(state -> desired.matches(fingerprint(state))).findFirst().orElse(null);
+        if (source == null) return false;
+        var recon = reconciliationSignals.bindAndSnapshot(level, session.worldSessionId());
+        for (Direction direction : Direction.Plane.HORIZONTAL) {
+            var support = blockPos(next).relative(direction.getOpposite());
+            if (!MinecraftFloorExtensionAttempt.centeredSupportOverlap(
+                    player.getX() - support.getX() - 0.5, player.getZ() - support.getZ() - 0.5)
+                    || !level.isLoaded(support)) continue;
+            var supportCell = new NavCell(next.dimension(), support.getX(), support.getY(), support.getZ());
+            var aim = V2BlockAimResolver.resolve(frame.orElseThrow(), supportCell, ObservationRecord.Face.UP,
+                    player.getEyePosition(), session.worldSessionId(), session.clientTick(), recon.worldRevision(),
+                    recon.surfaceBarrierWorldRevision(support.getX(), support.getY(), support.getZ()));
+            if (aim.isEmpty() || !aim.orElseThrow().blockId().equals(blockId(level.getBlockState(support)))) continue;
+            try {
+                var sourceRequest = new KnownPillarUpRequest(new BlockTarget(next.dimension(),
+                        support.getX(), support.getY(), support.getZ()), fingerprint(level.getBlockState(support)),
+                        fingerprint(source), requested.itemId());
+                var attempt = new MinecraftFloorExtensionAttempt(minecraft, session, sourceRequest, direction,
+                        floorObservations, floorPlacement, reconciliationSignals, true);
+                this.target = next;
+                this.request = requested;
+                floorAfter = sourceRequest.sourceState();
+                floorExtension = attempt;
+                stage = Stage.FLOOR_EXTENSION;
+                return true;
+            } catch (IllegalArgumentException | IllegalStateException unsupported) {
+                // Only the audited full-floor geometry uses edge movement. Ordinary placement
+                // and approach keep their existing behavior for all other blocks and poses.
+            }
+        }
+        return false;
     }
 
     private V2BlockJobExecution.BeginResult beginObservedTarget(NavCell next,
@@ -242,6 +313,18 @@ final class MinecraftV2PlaceDriver
         if (!session.worldReady() || !session.dimension().equals(target.dimension())
                 || minecraft.player == null || minecraft.level == null) {
             return V2BlockJobExecution.StepResult.FAILED;
+        }
+        if (stage == Stage.FLOOR_EXTENSION) {
+            var result = floorExtension.tick(session);
+            floorExtension.drainEffects();
+            floorExtension.drainPlacedDelta();
+            if (floorExtension.placementConfirmed()) confirmedChange = new V2BlockJobExecution.ConfirmedChange(
+                    new BlockStateFingerprint("minecraft:air", Map.of()), floorAfter);
+            return switch (result.status()) {
+                case RUNNING -> V2BlockJobExecution.StepResult.RUNNING;
+                case SUCCEEDED -> V2BlockJobExecution.StepResult.CONFIRMED;
+                case FAILED -> { failure = result.evidence(); yield V2BlockJobExecution.StepResult.FAILED; }
+            };
         }
         if (stage == Stage.APPROACH) {
             return tickApproach(session, clientTick, outputAllowed);
@@ -369,6 +452,11 @@ final class MinecraftV2PlaceDriver
         return confirmedChange;
     }
 
+    @Override
+    public V2BlockJobExecution.ConfirmedChange confirmedBeforeCompletion() {
+        return floorExtension != null && floorExtension.placementConfirmed() ? confirmedChange : null;
+    }
+
     private V2BlockJobExecution.StepResult tickApproach(
             WorldSessionTracker.Snapshot session, long clientTick,
             BooleanSupplier outputAllowed) {
@@ -394,6 +482,11 @@ final class MinecraftV2PlaceDriver
             case SKIPPED -> { return V2BlockJobExecution.StepResult.SKIPPED; }
             case FAILED -> { return V2BlockJobExecution.StepResult.FAILED; }
             case WAITING -> { }
+        }
+        if (beginFloorExtension(target, request)) {
+            navigation.close();
+            navigation = null;
+            return V2BlockJobExecution.StepResult.RUNNING;
         }
         if (waitingEvidence != null && waitingEvidence.equals(map.edges())) {
             return ++approachEvidenceWaitTicks <= MAX_APPROACH_EVIDENCE_WAIT_TICKS
@@ -534,6 +627,10 @@ final class MinecraftV2PlaceDriver
     @Override
     public void close() {
         Throwable failure = null;
+        if (floorExtension != null) {
+            try { floorExtension.close(); floorExtension = null; }
+            catch (RuntimeException | LinkageError closeFailure) { failure = closeFailure; }
+        }
         if (companionPrediction != null) {
             try { companionPrediction.close(); companionPrediction = null; }
             catch (RuntimeException | LinkageError closeFailure) { failure = closeFailure; }
@@ -601,12 +698,20 @@ final class MinecraftV2PlaceDriver
         companion = null;
         companionBefore = null;
         confirmedChange = null;
+        floorAfter = null;
+        this.failure = null;
         crosshairWaitTicks = 0;
         dispatchedTick = 0L;
         stage = Stage.IDLE;
         if (failure instanceof RuntimeException runtime) throw runtime;
         if (failure instanceof LinkageError linkage) throw linkage;
     }
+
+    @Override public boolean currentPositionSafe() {
+        return floorExtension != null && floorExtension.currentPositionSafe(sessions.get());
+    }
+
+    @Override public String failureReason() { return failure; }
 
     private static BlockPos blockPos(NavCell cell) {
         return new BlockPos(cell.x(), cell.y(), cell.z());
@@ -626,7 +731,7 @@ final class MinecraftV2PlaceDriver
     private record Candidate(BlockPos support, Direction face,
                              MinecraftActionPrimitiveExecutor.KnownFaceTarget aim) { }
     private enum Stage {
-        IDLE, APPROACH, STAGING, STAGED, FACING, WAIT_SNEAK, FACING_CROUCHED,
+        IDLE, APPROACH, FLOOR_EXTENSION, STAGING, STAGED, FACING, WAIT_SNEAK, FACING_CROUCHED,
         WAIT_CROSSHAIR, CONFIRMING
     }
 }

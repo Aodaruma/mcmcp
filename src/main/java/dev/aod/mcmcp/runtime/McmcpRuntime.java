@@ -2002,7 +2002,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     request.maxTicks(), System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS, context);
             var driver = new MinecraftV2PlaceDriver(minecraft, sessions::snapshot,
                     agentObservations, reconciliationSignals, ClientPredictionSignals.global(),
-                    () -> v2PlaceMaxDistance - v2PlaceTravelled);
+                    () -> v2PlaceMaxDistance - v2PlaceTravelled, observations, applyBlockPlanPort);
             v2PlaceExecution = new V2BlockJobExecution<>(v2Jobs, actionId,
                     session.worldSessionId(), AgentJobStore.Kind.PLACE_BLOCK,
                     request, driver, () -> {
@@ -3615,7 +3615,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (v2PlaceExecution == null) return;
         var session = sessions.snapshot();
         try {
-            boolean safe = v2InputWorldSafe(minecraft, session)
+            boolean safe = v2InputWorldUnsafeReason(minecraft, session, false, false, false,
+                    v2PlaceExecution.currentPositionSafe()) == null
                     && minecraft.player == v2PlacePlayerIdentity
                     && minecraft.level == v2PlaceLevelIdentity
                     && !paused && !minecraft.isPaused() && endpointFaultCode == null;
@@ -3771,7 +3772,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
 
     private String v2InputWorldUnsafeReason(Minecraft minecraft,
             WorldSessionTracker.Snapshot session, boolean allowScreenChange, boolean allowReobservation,
-            boolean navigation, boolean exactPortalPositionSafe) {
+            boolean navigation, boolean exactPositionSafe) {
         if (!localControlAvailable(minecraft, session)) return "world_unavailable";
         var player = minecraft.player;
         var level = minecraft.level;
@@ -3790,8 +3791,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (!allowScreenChange && screenOwnership.snapshot().phase() != ScreenOwnershipSignals.Phase.IDLE)
             return "screen_owned";
         var localSafety = agentObservations.localSafety();
-        if (!exactPortalPositionSafe && !(navigation && player.isPassenger()) && localSafety == LocalObservationProjector.CurrentSafety.RECOVER) return "local_hazard";
-        if (!exactPortalPositionSafe && !(navigation && player.isPassenger()) && localSafety != LocalObservationProjector.CurrentSafety.CONTINUE && !allowReobservation)
+        if (!exactPositionSafe && !(navigation && player.isPassenger()) && localSafety == LocalObservationProjector.CurrentSafety.RECOVER) return "local_hazard";
+        if (!exactPositionSafe && !(navigation && player.isPassenger()) && localSafety != LocalObservationProjector.CurrentSafety.CONTINUE && !allowReobservation)
             return "local_safety_unconfirmed";
         BlockPos feet = BlockPos.containing(player.position());
         if (!level.isLoaded(feet) || !level.isLoaded(feet.below())) return "local_world_unloaded";

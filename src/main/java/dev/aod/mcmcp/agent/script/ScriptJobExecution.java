@@ -39,6 +39,11 @@ public final class ScriptJobExecution implements Runnable {
     private volatile ActionScript.Result result;
     private volatile String unexpectedFailure;
     private Map<String, Object> lastCommand = Map.of();
+    private Map<String, Object> activeCommand = Map.of();
+    private int commandsStarted;
+    private long placedBlocks;
+    private long brokenBlocks;
+    private long matchingBlocks;
     private Map<String, ScriptResources.Resource> resources = Map.of();
 
     public ScriptJobExecution withResources(Map<String, ScriptResources.Resource> resources) {
@@ -92,13 +97,18 @@ public final class ScriptJobExecution implements Runnable {
                 if (aborted() || !jobs.canDispatch(actionId, worldSessionId)) {
                     return ActionScript.Outcome.CANCELLED;
                 }
-                lastCommand = Map.of();
+                activeCommand = Map.of("index", ++commandsStarted, "command", command.name());
+                jobs.recordResult(actionId, progressDetails());
                 var outcome = runner.execute(command.name(), command.arguments(), cancelled);
-                lastCommand = ScriptChildDiagnostic.capture(command.name(), outcome, runner.result());
+                var child = runner.result();
+                lastCommand = ScriptChildDiagnostic.capture(command.name(), outcome, child);
+                retainBlockProgress(command.name(), child);
+                activeCommand = Map.of();
                 if (outcome == Outcome.SUCCESS) {
                     // A completed child is irreversible even if cancellation raced its reply.
                     jobs.recordOperation(actionId);
                 }
+                jobs.recordResult(actionId, progressDetails());
                 return switch (outcome) {
                     case SUCCESS -> ActionScript.Outcome.SUCCESS;
                     case FAILURE -> ActionScript.Outcome.FAILURE;
@@ -159,7 +169,7 @@ public final class ScriptJobExecution implements Runnable {
             }
         }
         if (result != null && job.state() == AgentJobStore.State.RUNNING) {
-            var details = new LinkedHashMap<String, Object>();
+            var details = progressDetails();
             details.put("script_status", result.status().name().toLowerCase(java.util.Locale.ROOT));
             details.put("work", result.work());
             details.put("iterations", result.iterations());
@@ -181,6 +191,36 @@ public final class ScriptJobExecution implements Runnable {
             jobs.finish(actionId, AgentJobStore.State.CANCELLED, "client_request", true);
         }
         return jobs.get(actionId);
+    }
+
+    private LinkedHashMap<String, Object> progressDetails() {
+        var details = new LinkedHashMap<String, Object>();
+        details.put("script_status", "running");
+        details.put("commands_started", commandsStarted);
+        details.put("completed_commands", jobs.get(actionId).completedOperations());
+        details.put("placed_blocks", placedBlocks);
+        details.put("broken_blocks", brokenBlocks);
+        details.put("already_matching_blocks", matchingBlocks);
+        if (!activeCommand.isEmpty()) details.put("active_command", activeCommand);
+        if (!lastCommand.isEmpty()) details.put("last_command", lastCommand);
+        return details;
+    }
+
+    private void retainBlockProgress(String command, Map<String, Object> child) {
+        if (!(child.get("result") instanceof Map<?, ?> details)) return;
+        // Count acknowledged changes even when later movement or cancellation stopped the child.
+        if (command.equals("place") && "place_block".equals(child.get("kind"))) {
+            placedBlocks += blockCount(details.get("confirmed_count"));
+            matchingBlocks += blockCount(details.get("observed_count"));
+        } else if (command.equals("breakBlocks") && "break_block".equals(child.get("kind"))) {
+            brokenBlocks += blockCount(details.get("confirmed_count"));
+        }
+    }
+
+    private static long blockCount(Object value) {
+        if (!(value instanceof Number number)) return 0;
+        long count = number.longValue();
+        return count >= 0 && count <= 4096 && number.doubleValue() == count ? count : 0;
     }
 
     private boolean aborted() {

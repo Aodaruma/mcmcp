@@ -33,6 +33,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
     private int completed;
     private int observationWaitTicks;
     private boolean targetActive;
+    private boolean activeChangeRecorded;
     private long startedNanos = Long.MIN_VALUE;
     private AgentJobStore.State terminalIntent;
     private String terminalFailure;
@@ -108,6 +109,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
                 switch (begin) {
                     case STARTED -> {
                         targetActive = true;
+                        activeChangeRecorded = false;
                         observationWaitTicks = 0;
                     }
                     case SKIPPED -> {
@@ -146,11 +148,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
                     yield jobs.get(actionId);
                 }
                 case CONFIRMED -> {
-                    NavCell confirmedCell = cells.get(index);
-                    index++;
-                    completed++;
-                    jobs.recordBlockProgress(actionId, index, completed);
-                    recordConfirmedCell(confirmedCell, driver.confirmedChange());
+                    recordActiveChange(driver.confirmedChange());
                     driver.close();
                     targetActive = false;
                     if (index >= cells.size() || completed >= request.maxBlocks()) {
@@ -160,7 +158,8 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
                     yield jobs.get(actionId);
                 }
                 case FAILED -> {
-                    retainTerminal(AgentJobStore.State.FAILED, "block_not_confirmed");
+                    retainTerminal(AgentJobStore.State.FAILED,
+                            driver.failureReason() == null ? "block_not_confirmed" : driver.failureReason());
                     yield publishAfterRelease();
                 }
             };
@@ -175,6 +174,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
         var job = jobs.get(actionId);
         if (job.state().terminal()) return job;
         jobs.requestCancel(actionId);
+        retainConfirmedBeforeStop();
         if (terminalIntent == null || terminalIntent == AgentJobStore.State.SUCCEEDED) {
             terminalIntent = AgentJobStore.State.CANCELLED;
             terminalFailure = "client_request";
@@ -198,6 +198,22 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
 
     int completedBlocks() { return completed; }
     int scannedCells() { return index; }
+    boolean currentPositionSafe() { return targetActive && driver.currentPositionSafe(); }
+
+    private void recordActiveChange(ConfirmedChange change) {
+        if (activeChangeRecorded) return;
+        activeChangeRecorded = true;
+        NavCell cell = cells.get(index++);
+        completed++;
+        jobs.recordBlockProgress(actionId, index, completed);
+        recordConfirmedCell(cell, change);
+    }
+
+    private void retainConfirmedBeforeStop() {
+        if (!targetActive || activeChangeRecorded) return;
+        var change = driver.confirmedBeforeCompletion();
+        if (change != null) recordActiveChange(change);
+    }
 
     private void recordConfirmedCell(NavCell cell, ConfirmedChange change) {
         if (confirmedCells.size() == MAX_RETAINED_CONFIRMED_CELLS) {
@@ -250,6 +266,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
 
     private void retainTerminal(AgentJobStore.State outcome, String failure) {
         if (terminalIntent != null) return;
+        retainConfirmedBeforeStop();
         terminalIntent = outcome;
         terminalFailure = failure;
     }
@@ -290,6 +307,10 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
         BeginResult begin(NavCell target, R request, BooleanSupplier outputAllowed);
         StepResult tick(long clientTick, BooleanSupplier outputAllowed);
         default ConfirmedChange confirmedChange() { return null; }
+        /** A server-confirmed world change whose follow-up movement is still in progress. */
+        default ConfirmedChange confirmedBeforeCompletion() { return null; }
+        default boolean currentPositionSafe() { return false; }
+        default String failureReason() { return null; }
         void close();
     }
 }

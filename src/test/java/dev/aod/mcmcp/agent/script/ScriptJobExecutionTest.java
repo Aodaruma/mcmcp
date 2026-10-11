@@ -244,6 +244,56 @@ class ScriptJobExecutionTest {
         assertThat(finished.completedOperations()).isEqualTo(1);
     }
 
+    @Test
+    void publishesLiveSectionAndRetainsPartialBuildCountsWithoutCountingInventoryTransfers() {
+        var jobs = new AgentJobStore(); var world = UUID.randomUUID(); var id = confirmed(jobs, world, 4);
+        var calls = new AtomicInteger();
+        var runner = new ScriptJobExecution.CommandRunner() {
+            public ScriptJobExecution.Outcome execute(String name, Map<String, Object> args, BooleanSupplier cancelled) {
+                int index = calls.incrementAndGet();
+                assertThat(jobs.get(id).result().get("active_command")).isEqualTo(Map.of("index", index, "command", name));
+                if (index == 3) assertThat(jobs.get(id).result()).containsEntry("placed_blocks", 8L)
+                        .containsEntry("already_matching_blocks", 2L);
+                return index == 3 ? ScriptJobExecution.Outcome.FAILURE : ScriptJobExecution.Outcome.SUCCESS;
+            }
+            public Map<String, Object> result() {
+                return switch (calls.get()) {
+                    case 1 -> Map.of("kind", "place_block", "result", Map.of("confirmed_count", 8, "observed_count", 2));
+                    case 2 -> Map.of("kind", "inventory", "result", Map.of("confirmed_count", 64));
+                    default -> Map.of("kind", "break_block", "result", Map.of("confirmed_count", 3));
+                };
+            }
+            public void cancelActive() { }
+        };
+        var execution = new ScriptJobExecution(jobs, id, world, "place(); inventory(); breakBlocks(); place();",
+                Set.of("place", "inventory", "breakBlocks"), 1000, 10, 4, runner, () -> true, Long.MAX_VALUE);
+        execution.run();
+        assertThat(execution.finishIfReleased(false).state()).isEqualTo(AgentJobStore.State.RUNNING);
+        var done = execution.finishIfReleased(true);
+        assertThat(done.state()).isEqualTo(AgentJobStore.State.FAILED);
+        assertThat(done.result()).containsEntry("placed_blocks", 8L).containsEntry("broken_blocks", 3L)
+                .containsEntry("already_matching_blocks", 2L).containsEntry("completed_commands", 2)
+                .containsEntry("commands_started", 3).doesNotContainKey("active_command");
+    }
+
+    @Test
+    void largeSectionScriptKeepsAggregateCountsBeyondOneBlockJobLimit() {
+        var jobs = new AgentJobStore(); var world = UUID.randomUUID(); var id = confirmed(jobs, world, 18432);
+        var execution = new ScriptJobExecution(jobs, id, world, "repeat(18432){place(dx=7);}", Set.of("place"),
+                1_000_000, 18432, 18432, new ScriptJobExecution.CommandRunner() {
+                    public ScriptJobExecution.Outcome execute(String n, Map<String,Object> a, BooleanSupplier c) {
+                        return ScriptJobExecution.Outcome.SUCCESS;
+                    }
+                    public Map<String,Object> result() { return Map.of("kind", "place_block", "result", Map.of("confirmed_count", 8)); }
+                    public void cancelActive() { }
+                }, () -> true, Long.MAX_VALUE);
+        execution.run();
+        var done = execution.finishIfReleased(true);
+        assertThat(done.state()).isEqualTo(AgentJobStore.State.SUCCEEDED);
+        assertThat(done.result()).containsEntry("placed_blocks", 147456L).containsEntry("completed_commands", 18432);
+        assertThat(done.result().size()).isLessThanOrEqualTo(16);
+    }
+
     private static ScriptJobExecution execution(AgentJobStore jobs, UUID id, UUID world,
             String source, ScriptJobExecution.CommandRunner runner) {
         return new ScriptJobExecution(jobs, id, world, source,
