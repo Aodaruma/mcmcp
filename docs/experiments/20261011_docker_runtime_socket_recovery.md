@@ -22,3 +22,5 @@ R13の隔離検証を始める前、Docker Desktopが起動できなくなった
 5. engineの起動、既存container／volumeの存在と状態を確認する。実機検証は新baselineと期限付きleaseを取得してから行い、終了後はworld・設定・JARをhash一致で復元する。
 
 今回は実機検証後、08:28 JSTまでに元66ファイルをhash一致で復元し、container・Docker Desktop停止とlease解放を完了した。退避した一時IPCは保管している。詳細は[移動と結果返却の検証記録](20261011_v2_movement_results.md)を参照。
+
+同日の後続[足場迂回の対照試験](20261011_v2_scaffold_detour.md)でも同種の起動エラーが再発した。今回起動したプロセスの停止と、一時IPCだけの可逆退避で再び起動できた。再発防止を確認したものではなく、Dockerの更新・設定変更はこの検証では行っていない。
