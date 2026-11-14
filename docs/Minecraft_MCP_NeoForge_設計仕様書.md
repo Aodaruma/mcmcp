@@ -711,20 +711,26 @@ Toolの規範的なname、description、inputSchema、outputSchemaは別紙`MCMC
 
 #### 8.5.1 Observation frame
 
+`frame_id=null,cursor=null`の初回pageは、同じ同期境界で最新のpublish済みimmutable frameを選び、responseへ具体的な`frame_id`を返す。まだ完成frameがなければ`NO_FRAME`を返す。この選択は観測capture、完成tick、鮮度、配送ACK、TTL、fog、JITを更新せず、続きpageは返却された具体IDと`next_cursor`で同じframeへ固定する。具体IDを指定する従来の初回pageも維持する。
+
 `agent_get_state.observation`は、大量の観測recordそのものではなく、`latest_frame_id`、設定観測半径、全方位対応、oldest/newest tick、`sampling_coverage=1`、返却可能なkind別件数、sound切り捨て有無だけを返す。`record_counts.visible_surface`はray face総数ではなく、後述の代表面圧縮後に返却できるunique block position数である。方向ごとの実効終端は`unknown_boundary`で示し、単一の実効半径へ丸めない。world未参加時と最初の完成frame生成前はnullとする。
 
 全周visualは既定8 active ClientTick、設定変更時は`ceil(2048 / rays_per_tick)` tickで1 immutable frameを完成させる。完成前のframeを公開せず、内部rolling保持は最新2 frameとする。これとは別に、`agent_get_state`がLLMへ告知した`latest_frame_id`を最大16件、合計65,536 record以下のLRU handleとして保持する。同じIDの再告知またはそのIDによる初回page取得でidle期限を更新し、最終accessから60秒、handle件数またはrecord予算超過時のLRU evictionで失効する。
 
 `cursor=null`の初回pageが続きpageを必要とする場合だけ、そのframeを別のpagination leaseへpinする。未完了leaseは同時最大2件で、上限中の3件目は`SERVER_BUSY`を返す。`next_cursor=null`の最終pageを生成したleaseは即座に未完了枠を解放するが、同じcursorの再送へ同じpageを返すため、完了leaseを最終access順のLRU最大2件だけ保持する。3件目の完了時は最終accessが最も古い完了leaseと全cursorを破棄し、以後の再送は`INVALID_CURSOR`とする。未完了・完了とも最終accessから60秒、初回accessから最大5分で失効し、時間は`System.nanoTime`で測る。これにより保持量を固定上限へ抑えながら、frame生成速度とLLMの推論待ちを分離し、読み切ったqueryが次のpaginationを不必要に阻害しない。announced handle、rolling frame、pagination leaseのいずれにも保持されないIDは`FRAME_EXPIRED`を返す。world unload、respawn、dimension変更で全frame、announced handle、lease、cursorを破棄する。
 
+未完了pageを読み捨てる場合は、同じ`agent_get_observation`へpage query fieldを付けず`schema_version=1`と`release_cursor`だけを渡し、そのcursorが属する未完了leaseと同leaseの全cursorを明示解放できる。成功は`release_status=released`を返し、観測pageとして扱わず配送receiptを作らない。既に最終pageまで完了したcursorは`release_status=completed`を副作用なしで返し、完了replay leaseのLRU順・idle/absolute期限を更新しない。不明・期限切れ・LRU破棄済み・別world sessionのcursorは区別せず`INVALID_CURSOR`とする。解放は指定cursorのleaseだけを破棄し、他queryのlease、announced frame、rolling frame、配送済みsurface認可、未確認配送、配送ACK、cursor期限、座標証拠TTLを更新しない。`release_cursor`と`frame_id`、`kinds`、`filter`、`cursor`、`limit`の混在はschema違反とする。
+
 `agent_get_observation`入力:
 
-- `frame_id`: `agent_get_state`が返したID
+- `frame_id`: `agent_get_state`が返した具体ID、または初回かつ`cursor=null`で最新publish済みframeを原子的に選ぶ`null`
 - `kinds`: `visible_surface / visible_entity / traversability / hazard / unknown_boundary / sound_clue`の1〜6種
 - `filter`（任意）: `block_ids / entity_types / displayed_items / crop_mature / position_bounds`のうち1項目以上。すでにpolicy許可されたrecordを除外するdelivery projectionであり、観測範囲や認可範囲は拡張しない。record kindに適用可能な条件同士はANDとする
 - `position_bounds`: `{dimension,min_x,min_y,min_z,max_x,max_y,max_z}`の単一inclusive整数block-coordinate box。各軸で`min <= max`を要求し、任意center/radiusや複数領域は受け付けない。anchorは`visible_surface.position`、`visible_entity / hazard / unknown_boundary / sound_clue`の`floor(position)`、`traversability.navigation_target`とする
 - `cursor`: 初回null、続きは直前の`next_cursor`
 - `limit`: 1〜256件
+
+または明示解放専用形として`schema_version=1`と、放棄するleaseが返したopaqueな`release_cursor`だけを渡す。
 
 返却recordは第7章の許可条件に従い、responseには`frame_completed_tick`を含める。1回のroot queryは1目的を原則とし、作物・container・gate・建築copy sourceは`visible_surface`、落下物は`visible_entity`、移動は`traversability`を要求する。作物収穫は`block_ids=[minecraft:wheat], crop_mature=true`、小麦drop回収は`entity_types=[minecraft:item], displayed_items=[minecraft:wheat,minecraft:wheat_seeds]`のprojectionを利用できる。`visible_surface`はblock positionごとに1件へ圧縮する。植付けsupportとなるfarmlandはUPを優先し、それ以外は実ray hitが近い面を代表にする。surfaceの返却順は`crop_mature=true`、`crop_mature=false`、非作物の3群とし、各群では観測距離が近いものを先にする。複数kindを同時要求した場合は、`visible_entity / traversability / hazard / visible_surface / sound_clue / unknown_boundary`の固定順で各kindから1件ずつround-robinし、1種類がpageを占有しないよう公平にinterleaveする。
 
@@ -787,6 +793,7 @@ Action DSL v1の制御構造:
 | apply_known_redstone_spec | camera, block_interact, block_place | 固定lever→lamp 1出力、2出力fan-out、または1 dustの直線identityを設置し、live visualでOFF / ON / OFFを試験する。wire版はlamp / dust / leverの可視glass supportとdustの直線shape・power 0 / 15 / 0も完全一致させる |
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
+| set_known_lever | camera, block_interact | 単独top-level node。配送済みの完全な可視stateを持つVanilla lever 1個を希望するpoweredへ設定。元配送lease・現在fog/LOSを通常use直前と操作不要の成功前にも再検証し、欠測は元期限内だけ待機。不一致・期限切れは操作せず失敗。送信済みACK/cleanupへ逆適用せず、通常use 1回とserver ACKで確認 |
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内の明示allowlist対象Vanilla chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
 | take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemを移送。既定は最大14 whole stacks・896個、transfer_count指定は今回の正確な追加数量。各server ACKと最後1回のfull readbackで確認 |
 | store_known_container_stack | camera, inventory_transfer | playerの指定itemを同じcontainerへ最大14 whole stacks・896個まで移し、各server ACKと最後1回のfull readbackでcontainerの絶対個数を確認 |
@@ -1005,6 +1012,7 @@ templateは`agent_start_action.inputSchema.examples`に掲載し、実装reposit
 - [`break_known_oak_column.json`](action-templates/break_known_oak_column.json): 地上から届く、現在可視な3段oak幹を下から順に破壊する
 - [`wheat_cycle.json`](action-templates/wheat_cycle.json): 2区画をmutation batchで耕し、植え、有限成熟待機後に収穫する
 - [`open_known_passage.json`](action-templates/open_known_passage.json): 可視な木製通路を開く
+- [`set_known_lever.json`](action-templates/set_known_lever.json): 完全な可視stateから既設レバーを指定ON/OFFにする
 - [`inspect_known_container.json`](action-templates/inspect_known_container.json): 明示allowlist対象のVanilla chest / barrelのserver同期済み内容を確認する
 - [`take_wheat_seeds_stack.json`](action-templates/take_wheat_seeds_stack.json): wheat seedsをwhole stack 1回だけ取得する
 - [`copy_known_oak_beam.json`](action-templates/copy_known_oak_beam.json): 完全なoak log stateを90度回転し、現在supportと先行entry dependencyで2 blockの水平梁を設置する
@@ -1143,6 +1151,7 @@ domain errorのTextContentは次のJSON objectを1件だけ直列化する。sch
 - CAPABILITY_DENIED
 - SERVER_BUSY
 - ACTION_NOT_FOUND
+- NO_FRAME
 - FRAME_EXPIRED
 - INVALID_CURSOR
 
@@ -1745,8 +1754,8 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - agent_get_stateがtop-level `standard_potions` を`[{item,potion,count}]`で返し、自inventoryの標準component完全一致の1本stackだけをitem+potionで集計し、custom Potion、不可能な複数本stack、stand内容を含めない
 - agent_get_stateのoptional `merchant_offers`は現在のVanilla MerchantScreen、player menu、world session、container ID、open packet revisionがlatest merchant packetと一致する場合だけ現れ、typed取引factsと解決済みstored enchantment ID / levelだけを返し、raw slot / component / NBT / lore / text / 未解決IDを含めない
 - agent_get_stateで告知したframe IDはidle 60秒、最大16件のLRU上限内で保持され、上限超過とworld境界で確実に失効する
-- agent_get_observationは任意center/radiusを受け付けず、同じframe_idのpage内容がframe保持中に変わらない
-- 最大256件でpage分割し、壊れたcursorはINVALID_CURSOR、保持外frameはFRAME_EXPIRED
+- agent_get_observationは任意center/radiusを受け付けず、初回の`frame_id=null,cursor=null`は最新publish済みframeを原子的に選んで具体IDを返し、同じframe_idのpage内容がframe保持中に変わらない
+- 最大256件でpage分割し、frame未生成はNO_FRAME、壊れたcursorはINVALID_CURSOR、保持外frameはFRAME_EXPIRED
 - page継続中のframeはleaseでpinされ、rolling frame更新後も同じcursor再送が同じpageを返す
 - visible_surfaceはunique block positionごとの代表面へ圧縮され、mature crop、immature crop、その他の順、各群内は近距離順となる。複数kindはround-robinで公平に混在する
 - visible_surfaceはrequired nullableな`state / placement_item`を常に返し、完全stateは閉じたcopy/support allowlistだけ、対象外はnull、非null stateでは`block == state.block`、`placement_item != null`では`state != null`となる

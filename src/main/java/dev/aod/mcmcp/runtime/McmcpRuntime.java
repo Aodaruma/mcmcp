@@ -1,6 +1,6 @@
 package dev.aod.mcmcp.runtime;
 
-import dev.aod.mcmcp.runtime.AgentObservations.PreparedObservationPage;
+import dev.aod.mcmcp.runtime.AgentObservations.PreparedObservationResponse;
 import dev.aod.mcmcp.runtime.ActionAdmission.AgentAdmissionSnapshot;
 import dev.aod.mcmcp.runtime.ActionAdmission.PreparedAgentAction;
 import dev.aod.mcmcp.runtime.ActionAdmission.AdmissionFenceFailure;
@@ -1021,10 +1021,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 assertClientThread(minecraft);
                 var session = sessions.snapshot();
                 RuntimeFailures.requireReady(session);
-                PreparedObservationPage prepared = agentObservations.getAgentObservation(observation.arguments());
-                return RuntimeReply.success(
-                        prepared.wirePage(),
-                        new McpRuntimePort.ObservationDeliveryReceipt(prepared.receiptId()));
+                PreparedObservationResponse prepared =
+                        agentObservations.getAgentObservation(observation.arguments());
+                return prepared.receiptId() == null
+                        ? RuntimeReply.success(prepared.wireResponse())
+                        : RuntimeReply.success(
+                                prepared.wireResponse(),
+                                new McpRuntimePort.ObservationDeliveryReceipt(
+                                        prepared.receiptId()));
             }
             return RuntimeReply.success(executeOnClientThread(command, context));
         });
@@ -2187,7 +2191,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 || agentExecution.primitive instanceof ActionDsl.HarvestKnownWheat
                 || agentExecution.primitive instanceof ActionDsl.HarvestKnownWheatBatch
                 || agentExecution.primitive instanceof ActionDsl.OpenKnownFenceGate
-                || agentExecution.primitive instanceof ActionDsl.OpenKnownPassage) {
+                || agentExecution.primitive instanceof ActionDsl.OpenKnownPassage
+                || agentExecution.primitive instanceof ActionDsl.SetKnownLever) {
             tickAgentBlockMutation(minecraft, session, action, actionTick);
             return true;
         }
@@ -3139,7 +3144,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             agentActions.setPhase(action.actionId(), AgentActionStore.Phase.EXECUTING, "batch_target_reproved");
         }
         var outcome = agentExecution.mutation.tick(minecraft, session, action,
-                agentExecution.primitive, agentExecution.mutationAims);
+                agentExecution.primitive, agentExecution.mutationAims, this::initialLeverUseWitness);
         if (outcome.replanEvidence() != null) {
             retryAgentMutationAim(minecraft, action, outcome.replanEvidence());
         } else {
@@ -3154,6 +3159,22 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private MinecraftPhaseFiveInventoryPort.InitialOpenWitness initialContainerOpenWitness() {
+        return initialSurfaceUseWitness(RendererRecoveryStage.INITIAL_OPEN);
+    }
+
+    private Optional<String> initialLeverUseWitness() {
+        var execution = agentExecution;
+        if (execution == null || !(execution.primitive instanceof ActionDsl.SetKnownLever)
+                || execution.surfaceRecovery == null || execution.surfaceRecovery.lease() == null
+                || !execution.surfaceRecovery.applies(execution.primitive)) {
+            return Optional.of("target_not_delivered");
+        }
+        var witness = initialSurfaceUseWitness(RendererRecoveryStage.JIT);
+        return witness == MinecraftPhaseFiveInventoryPort.InitialOpenWitness.READY
+                ? Optional.empty() : Optional.of(witness.name().toLowerCase(Locale.ROOT));
+    }
+
+    private MinecraftPhaseFiveInventoryPort.InitialOpenWitness initialSurfaceUseWitness(RendererRecoveryStage stage) {
         var execution = agentExecution;
         var ready = MinecraftPhaseFiveInventoryPort.InitialOpenWitness.READY;
         var unsafe = MinecraftPhaseFiveInventoryPort.InitialOpenWitness.SAFETY_CHANGED;
@@ -3177,7 +3198,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             var map = agentObservations.requireAgentMap(session);
             var reconciliation = reconciliationSignals.bindAndSnapshot(minecraft.level, session.worldSessionId());
             ActionEvidence.visualBarrierWorldRevision(map, reconciliation);
-            var decision = actionAdmission.surfaceRecoveryFailure(minecraft, session, execution.surfaceRecovery, RendererRecoveryStage.INITIAL_OPEN);
+            var decision = actionAdmission.surfaceRecoveryFailure(minecraft, session, execution.surfaceRecovery, stage);
             if (decision.isPresent()) {
                 return MinecraftPhaseFiveInventoryPort.InitialOpenWitness.valueOf(decision.orElseThrow().name());
             }
@@ -3187,7 +3208,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     target.position(), target.block(),
                     ActionEvidence.primitiveSurfaceRevisionBarrier(execution.primitive, map, reconciliation)
                             .applyAsLong(target.position()));
-            actionAdmission.rendererRecoveryRevalidated(execution.surfaceRecovery, RendererRecoveryStage.INITIAL_OPEN);
+            actionAdmission.rendererRecoveryRevalidated(execution.surfaceRecovery, stage);
             return ready;
         } catch (AgentPrimitivePlanner.PlanningException mismatch) {
             return MinecraftPhaseFiveInventoryPort.InitialOpenWitness.SURFACE_REOBSERVATION_MISMATCH;

@@ -28,7 +28,7 @@ public final class RestrictedCommandPolicy {
             "minecraft:oak_fence", "minecraft:oak_fence_gate",
             "minecraft:stone", "minecraft:smooth_stone", "minecraft:sandstone",
             "minecraft:snow_block", "minecraft:black_wool", "minecraft:torch",
-            "minecraft:red_concrete", "minecraft:water");
+            "minecraft:red_concrete", "minecraft:water", "minecraft:lever");
     private static final Set<String> ALLOWED_ITEMS = Set.of(
             "minecraft:air", "minecraft:iron_hoe", "minecraft:netherite_hoe",
             "minecraft:wheat_seeds",
