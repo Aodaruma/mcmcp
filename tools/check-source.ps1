@@ -25,6 +25,9 @@ try {
     & $PythonExecutable -m unittest discover -s tools/building -p 'test_*.py'
     if ($LASTEXITCODE -ne 0) { throw 'Blueprint compiler tests failed' }
 
+    & $PythonExecutable -m unittest discover -s tools/build-worker -p 'test_*.py'
+    if ($LASTEXITCODE -ne 0) { throw 'Build progress JSON tests failed' }
+
     foreach($test in Get-ChildItem -LiteralPath tools/building -Filter 'Test-McmcpBuilding*.ps1') {
         & $shellPath -NoProfile -File $test.FullName
         if ($LASTEXITCODE -ne 0) { throw 'Building checkpoint tests failed' }
