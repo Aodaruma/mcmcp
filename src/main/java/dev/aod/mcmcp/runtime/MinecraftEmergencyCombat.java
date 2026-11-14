@@ -4,6 +4,7 @@ import dev.aod.mcmcp.agent.safety.ObservedThreats;
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.routine.BoundedInputLease;
 import dev.aod.mcmcp.routine.NavigationViewLease;
+import dev.aod.mcmcp.safety.BowUseCancellation;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.InteractionHand;
@@ -174,10 +175,12 @@ final class MinecraftEmergencyCombat implements AutoCloseable {
 
     private void releaseShield() {
         if (shieldUse == null) return;
-        shieldUse.close(); shieldUse = null;
-        if (minecraft.player != null && minecraft.player.isUsingItem()
-                && minecraft.player.getUsedItemHand() == InteractionHand.OFF_HAND)
-            minecraft.gameMode.releaseUsingItem(minecraft.player);
+        try { shieldUse.close(); shieldUse = null; }
+        finally {
+            if (minecraft.player != null && minecraft.player.isUsingItem()
+                    && minecraft.player.getUsedItemHand() == InteractionHand.OFF_HAND)
+                minecraft.gameMode.releaseUsingItem(minecraft.player);
+        }
     }
 
     private boolean clearShot(Mob target, Vec3 aim, boolean ranged) {
@@ -192,18 +195,23 @@ final class MinecraftEmergencyCombat implements AutoCloseable {
                 && entity != target && entity.isAlive()).isEmpty();
     }
     private void releaseBow(boolean fire) {
-        if (bowUse != null) {
-            bowUse.close(); bowUse = null;
-            if (minecraft.player != null && minecraft.player.isUsingItem()) {
-                if (fire) minecraft.gameMode.releaseUsingItem(minecraft.player);
-                else {
-                    // Releasing a drawn bow fires it. A normal hotbar change cancels use without shooting.
-                    int slot = minecraft.player.getInventory().getSelectedSlot();
-                    minecraft.getConnection().send(new net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket((slot + 1) % 9));
-                    minecraft.getConnection().send(new net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket(slot));
-                    minecraft.player.stopUsingItem();
+        var player = minecraft.player;
+        var cancellation = BowUseCancellation.global();
+        boolean pending = cancellation.pendingFor(player);
+        if (bowUse == null && !pending) return;
+        try {
+            if (player != null && (player.isUsingItem() || pending)) {
+                int slot = player.getInventory().getSelectedSlot();
+                java.util.function.IntConsumer sendSlot = selected -> minecraft.getConnection().send(
+                        new net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket(selected));
+                if (fire && !pending) cancellation.fire(player, slot, sendSlot,
+                        () -> minecraft.gameMode.releaseUsingItem(player), player::stopUsingItem);
+                else if (!cancellation.cancel(player, slot, sendSlot, player::stopUsingItem)) {
+                    throw new IllegalStateException("bow cancellation remains unconfirmed");
                 }
             }
+        } finally {
+            if (bowUse != null) { bowUse.close(); bowUse = null; }
         }
     }
     Map<String, Object> result() {
@@ -216,10 +224,23 @@ final class MinecraftEmergencyCombat implements AutoCloseable {
     boolean readyToFight() { return shieldUse != null || targetId != null && selection != null && selection.matchesRequested(); }
     boolean cameraBlocked() { return cameraBlocked; }
     @Override public void close() {
-        releaseBow(false);
-        releaseShield();
-        if (view != null) { view.close(owner); view = null; }
-        if (selection != null) { selection.close(); selection = null; }
-        targetId = null;
+        try {
+            closeAll(() -> releaseBow(false), this::releaseShield,
+                    () -> { if (view != null) { view.close(owner); view = null; } },
+                    () -> { if (selection != null) { selection.close(); selection = null; } });
+        } finally { targetId = null; }
+    }
+
+    static void closeAll(Runnable... releases) {
+        Throwable first = null;
+        for (var release : releases) {
+            try { release.run(); }
+            catch (RuntimeException | LinkageError failure) {
+                if (first == null) first = failure;
+                else if (first != failure) first.addSuppressed(failure);
+            }
+        }
+        if (first instanceof RuntimeException failure) throw failure;
+        if (first instanceof LinkageError failure) throw failure;
     }
 }
