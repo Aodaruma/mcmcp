@@ -387,7 +387,8 @@ class InputIsolationContractTest {
                 .containsSubsequence(
                         "dev/aod/mcmcp/runtime/McmcpRuntime#closeAgentPrimitiveExecutor",
                         "dev/aod/mcmcp/runtime/McmcpRuntime#recordPendingAgentMotion",
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#closeRecoveryGovernor");
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#closeRecoveryGovernor",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#closeV2Recovery");
         assertThat(invocations(statefulCleanup).stream()
                 .filter(call -> call.equals(
                         "dev/aod/mcmcp/runtime/McmcpRuntime#closeAgentPrimitiveExecutor")))

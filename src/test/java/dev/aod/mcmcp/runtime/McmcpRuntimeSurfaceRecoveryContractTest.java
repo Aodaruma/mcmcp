@@ -13,6 +13,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** Wiring guard: fixture recovery must remain on capture, reservation and actual dispatch paths. */
 class McmcpRuntimeSurfaceRecoveryContractTest {
     @Test
+    void resumedWorkStillChecksThreatsBeforeEveryOperationTick() throws Exception {
+        assertThat(calls("onPreTick")).containsSubsequence("ObservedThreats#bindAction",
+                "AgentObservations#collectAgentObservation", "McmcpRuntime#tickV2Recovery",
+                "McmcpRuntime#tickV2Move", "McmcpRuntime#tickV2Break", "McmcpRuntime#tickV2Place");
+        assertThat(calls("tickV2Recovery")).containsSubsequence("MinecraftEmergencyRecovery#inspect",
+                "MinecraftEmergencyRecovery#tick", "LocalArmingState#resumeAfterRecovery");
+    }
+    @Test
+    void cancellationIsRequestedBeforeReleasingHeldEmergencyCompletion() throws Exception {
+        var sequence = calls("cancelAgentAction");
+        assertThat(sequence).containsSubsequence("AgentJobStore#requestCancel",
+                "McmcpRuntime#closeV2Recovery", "McmcpRuntime#returnControlReady",
+                "McmcpRuntime#isScriptJob");
+        assertThat(sequence).doesNotContain("McmcpRuntime#stopInterruptedV2Job");
+    }
+    @Test
     void recoverySummaryIsRecordedAfterCompleteChecksRatherThanOnFogAvailabilityAlone() throws Exception {
         assertThat(calls(ActionAdmission.class, "surfaceRecoveryFailure")).containsSubsequence(
                 "ClientFogDistanceSignals#current", "SurfacePreflightRecovery#evaluate",

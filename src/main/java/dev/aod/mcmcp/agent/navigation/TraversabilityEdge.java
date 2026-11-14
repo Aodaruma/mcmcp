@@ -80,7 +80,9 @@ public record TraversabilityEdge(
             throw new IllegalArgumentException("supported diagonal requires a safe level ground edge");
         }
         if (locomotion != Locomotion.GROUND && !locomotion.ballistic() && locomotion != Locomotion.WATER
-                && !key.climbableAdjacent()) {
+                && !key.climbableAdjacent()
+                && !(locomotion == Locomotion.LADDER && key.cardinalStepUp()
+                        && targetSupport == TargetSupport.CONFIRMED)) {
             throw new IllegalArgumentException(
                     "climbable edges must be vertical or cardinal horizontal transitions");
         }
@@ -196,6 +198,11 @@ public record TraversabilityEdge(
             int dy = Math.abs(to.y() - from.y());
             int dz = Math.abs(to.z() - from.z());
             return dx + dy + dz == 1;
+        }
+
+        boolean cardinalStepUp() {
+            return to.y() - from.y() == 1
+                    && Math.abs(to.x() - from.x()) + Math.abs(to.z() - from.z()) == 1;
         }
 
         @Override

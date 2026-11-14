@@ -752,14 +752,14 @@ public final class LocalObservationVolume {
                 && resolvedClimbable
                 && !targetClimbable
                 && targetLanding
-                && cardinalSameLevelTarget(start, target)
+                && cardinalLandingTarget(start, target)
                 && path.clearance() == Clearance.BLOCKED
                 && path.transition() == Transition.BLOCKED
                 && (path.hazard() == Hazard.COLLISION || path.hazard() == Hazard.FALL)
                 && resolved.y >= -MAX_LADDER_DESCENT_PER_TICK - MOVEMENT_EPSILON
                 && resolved.y <= MAX_LADDER_ASCENT_PER_TICK + MOVEMENT_EPSILON
                 && intendedTowardNavigationTarget(start, intended, intent)
-                && horizontalTargetProgress;
+                && (horizontalTargetProgress || intent.verticalDelta() > 0 && horizontalNonDivergence);
         if (intent.locomotion() == Locomotion.GROUND
                 || !targetClimbable && !targetLanding
                 || path.loaded() != LoadedState.LOADED
@@ -782,10 +782,11 @@ public final class LocalObservationVolume {
                 || movesTowardNavigationTarget(start, end, intent);
     }
 
-    private static boolean cardinalSameLevelTarget(Point start, Point target) {
+    private static boolean cardinalLandingTarget(Point start, Point target) {
         int dx = Math.abs(Mth.floor(start.x()) - Mth.floor(target.x()));
         int dz = Math.abs(Mth.floor(start.z()) - Mth.floor(target.z()));
-        return dx + dz == 1 && Mth.floor(start.y()) == Mth.floor(target.y());
+        int dy = Mth.floor(target.y()) - Mth.floor(start.y());
+        return dx + dz == 1 && dy >= 0 && dy <= 1;
     }
 
     private static boolean intendedTowardNavigationTarget(
@@ -1584,6 +1585,23 @@ public final class LocalObservationVolume {
                         worldRevision,
                         records,
                         locomotion);
+            }
+        }
+        if (locomotion == Locomotion.LADDER) {
+            var top = rungs.lastEntry().getValue();
+            var above = top.move(0, 1, 0);
+            // A ladder ending beside the floor needs an up-then-over exit, not an invented rung.
+            if (ladderPathSafe(player, level, origin, top, above)) {
+                for (var direction : CARDINAL_DIRECTIONS) {
+                    var landing = above.move(direction.x(), 0, direction.z());
+                    if (!exactClimbableAtFeet(level, landing)
+                            && stableLanding(player, level, origin, landing)
+                            && !bouncySupport(level, player, landing)
+                            && ladderPathSafe(player, level, origin, above, landing)) {
+                        addClimbableRecord(player, level, origin, entryNode, entry.getY(),
+                                top, landing, worldRevision, records, locomotion);
+                    }
+                }
             }
         }
     }

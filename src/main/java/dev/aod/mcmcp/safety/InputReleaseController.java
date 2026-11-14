@@ -13,6 +13,14 @@ public final class InputReleaseController {
         boolean released = true;
         var agentInput = AgentInputState.global();
         var player = minecraft.player;
+        // A generic RELEASE_USE_ITEM fires a drawn bow; cancel its owned use via ordinary slot changes first.
+        if (player != null && agentInput.inputOwnershipSnapshot().useOwned()
+                && player.isUsingItem() && player.getUseItem().is(net.minecraft.world.item.Items.BOW)
+                && minecraft.getConnection() != null) {
+            int slot = player.getInventory().getSelectedSlot();
+            minecraft.getConnection().send(new net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket((slot + 1) % 9));
+            minecraft.getConnection().send(new net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket(slot));
+        }
         try {
             if (player != null) {
                 agentInput.neutralizeTrackedAgentVelocity(player);

@@ -19,6 +19,7 @@ final class FixtureV2Priorities {
     private boolean storageDriftApplied;
     private boolean storageCursorDrift;
     private boolean floorFixture;
+    private FixtureEmergencyScenario emergencyFixture;
 
     static void install() {
         if (Boolean.getBoolean("mcmcp.fixture.v2Priorities")) {
@@ -30,6 +31,7 @@ final class FixtureV2Priorities {
     }
 
     private void driftStorage(net.neoforged.neoforge.event.tick.ServerTickEvent.Post event) {
+        if (emergencyFixture != null) emergencyFixture.tick(event.getServer());
         var context = storageDrift;
         if (context == null) return;
         if (event.getServer() != context.server() || event.getServer().getTickCount() > storageDriftDeadline
@@ -107,11 +109,13 @@ final class FixtureV2Priorities {
                             if (entity.entityTags().contains("mcmcp_v2_fixture")) entity.getOffers().getFirst().addToSpecialPriceDiff(1);
                         }
                     } else if (!kind.equals("report")) {
+                        emergencyFixture = null;
                         floorFixture = kind.startsWith("floor_");
                         if (!inputIdle()) throw new IllegalStateException("input owned");
                         // Fixed arena preparation must work even when the owner starts far away.
-                        for (int x = 300 >> 4; x <= 320 >> 4; x++) {
-                            for (int z = 300 >> 4; z <= 320 >> 4; z++) player.level().getChunk(x, z);
+                        boolean emergency = kind.startsWith("recovery_") || kind.startsWith("flight_");
+                        for (int x = (emergency ? 290 : 300) >> 4; x <= (emergency ? 350 : 320) >> 4; x++) {
+                            for (int z = (emergency ? 290 : 300) >> 4; z <= (emergency ? 330 : 320) >> 4; z++) player.level().getChunk(x, z);
                         }
                         var commands = commands(kind);
                         var source = player.createCommandSourceStack().withMaximumPermission(server.operatorUserPermissions()).withSuppressedOutput();
@@ -123,6 +127,7 @@ final class FixtureV2Priorities {
                         player.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
                         player.fallDistance = 0;
                         player.setHealth(player.getMaxHealth());
+                        if (emergency) emergencyFixture = new FixtureEmergencyScenario(decision.context(), kind);
                         if (kind.equals("water_air")) player.setAirSupply(120);
                         if (kind.startsWith("storage_")) prepareBackpack(player, kind);
                         if (kind.equals("floor_refill")) prepareFloorRefill(player);
@@ -188,6 +193,7 @@ final class FixtureV2Priorities {
                     report.put("position", List.of(player.getX(), player.getY(), player.getZ()));
                     report.put("air", player.getAirSupply());
                     report.put("health", player.getHealth());
+                    if (emergencyFixture != null) report.put("emergency", emergencyFixture.report());
                     if (floorFixture) {
                         var floor = new ArrayList<Object>();
                         for (int x = 300; x <= 320; x++) for (int z = 300; z <= 320; z++) {
@@ -418,6 +424,10 @@ final class FixtureV2Priorities {
                 "tp @s 305.5 101 305.5 180 0", "setblock 305 101 303 minecraft:crafting_table",
                 "recipe give @s *", "time set noon", "weather clear"));
         switch (kind) {
+            case "recovery_bucket", "recovery_web", "recovery_boat", "recovery_slime", "recovery_hay", "recovery_bed",
+                    "recovery_water", "recovery_elytra", "recovery_mob", "recovery_neutral", "recovery_returning_mob",
+                    "recovery_trader_near", "recovery_trader_push", "recovery_place_mob", "recovery_build_flight", "flight_open", "flight_wall", "flight_boost", "flight_boost_wall" ->
+                    result.addAll(FixtureEmergencyScenario.commands(kind));
             case "floor_east", "floor_west", "floor_north", "floor_south", "floor_offset", "floor_shortage", "floor_obstructed", "floor_refill" -> {
                 result.addAll(List.of("fill 300 101 300 320 116 320 minecraft:air",
                         "setblock 310 105 310 minecraft:stone",

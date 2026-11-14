@@ -360,6 +360,11 @@ public final class KnownConstructionAttempt implements AutoCloseable {
         return serverConfirmedTargets.contains(target);
     }
 
+    /** Only preparation can be restarted without replaying an uncertain placement. */
+    public boolean recoveryRestartSafe() {
+        return !closed && (phase == Phase.PREFLIGHT || phase == Phase.PREPARING);
+    }
+
     private int completedCount() {
         int count = 0;
         for (boolean value : completed) if (value) count++;

@@ -251,7 +251,7 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
         }
         if (!level.noCollision(player, player.getBoundingBox())
                 || level.getEntities(player, player.getBoundingBox().inflate(8),
-                    entity -> entity.isAlive() && (entity instanceof Enemy || entity instanceof Mob mob && mob.getTarget() == player))
+                    entity -> entity.isAlive() && (dev.aod.mcmcp.agent.safety.ObservedThreats.attacking(entity, player)))
                     .stream().anyMatch(entity -> observations.isEntityCurrentlyVisible(minecraft, entity, 8)))
             throw new IllegalStateException("floor extension collision or threat");
         if (phase != Phase.PLACE && (Math.abs(Mth.wrapDegrees(player.getYRot() - expectedYaw)) > 0.25
@@ -281,6 +281,9 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
     }
 
     public boolean placementConfirmed() { return confirmed; }
+    public boolean recoveryRestartSafe() {
+        return phase != Phase.PLACE || confirmed || construction != null && construction.recoveryRestartSafe();
+    }
 
     static boolean corridorPassable(BlockState state, net.minecraft.world.level.BlockGetter level, BlockPos position) {
         // Torches, dust and rails are safe to walk through; shape alone does not exclude contact hazards.

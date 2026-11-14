@@ -17,9 +17,9 @@ abstract class LocalPlayerMovementTickMixin {
             at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;tryToStartFallFlying()Z"),
             require = 1, expect = 1)
     private boolean mcmcp$preventAccidentalAgentGlide(LocalPlayer player, Operation<Boolean> original) {
-        // A waypoint may request another jump while airborne. Elytra flight is not a supported
-        // agent locomotion mode; keep that jump from silently changing modes mid-route.
-        return !AgentInputState.global().movementSnapshot().owned() && original.call(player);
+        // Ordinary navigation jumps cannot silently switch locomotion; the flight owner opts in.
+        return (!AgentInputState.global().movementSnapshot().owned()
+                || AgentInputState.global().elytraDeploymentAllowed(player, player.level())) && original.call(player);
     }
 
     @WrapOperation(method = "aiStep()V",

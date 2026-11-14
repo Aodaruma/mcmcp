@@ -16,6 +16,53 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AgentJobStoreTest {
+    @Test void cancellingHeldRecoveryPublishesCancellationOnlyAfterBothOwnersRelease() {
+        var store = new AgentJobStore();
+        var session = UUID.randomUUID();
+        var id = store.reserve(MOVE, session, 10, 100);
+        store.confirm(id, 1); store.start(id, session);
+        store.holdCompletionForRecovery(id);
+        store.finish(id, FAILED, "preempted_for_recovery", true);
+        store.recordRecovery(id, Map.of("status", "recovering"));
+        store.requestCancel(id);
+        store.finish(id, FAILED, "preempted_for_recovery", true);
+        assertThat(store.get(id).state()).isEqualTo(RUNNING);
+        store.releaseRecoveryCompletion(id);
+        assertThatThrownBy(() -> store.finish(id, FAILED, "preempted_for_recovery", false))
+                .isInstanceOf(IllegalStateException.class);
+        store.finish(id, FAILED, "preempted_for_recovery", true);
+        assertThat(store.get(id).state()).isEqualTo(CANCELLED);
+        assertThat(store.get(id).failure()).isEqualTo("client_request");
+        assertThat(store.get(id).result()).containsKey("recovery");
+    }
+    @Test void interruptedWorkCannotPublishCompletionOrDispatchAgainWhileRecoveryOwnsTheAction() {
+        var store = new AgentJobStore();
+        var session = UUID.randomUUID();
+        var id = store.reserve(MOVE, session, 10, 100);
+        store.confirm(id, 1); store.start(id, session);
+        store.holdCompletionForRecovery(id);
+        assertThat(store.canDispatch(id, session)).isFalse();
+        assertThat(store.interruptedInputsReleased(id)).isFalse();
+        store.finish(id, FAILED, "preempted_for_recovery", true);
+        assertThat(store.interruptedInputsReleased(id)).isTrue();
+        assertThat(store.get(id).state()).isEqualTo(RUNNING);
+        assertThat(store.active()).isPresent();
+        store.releaseRecoveryCompletion(id);
+        store.finish(id, FAILED, "preempted_for_recovery", true);
+        assertThat(store.get(id).state()).isEqualTo(FAILED);
+    }
+    @Test void recoveryProgressSurvivesDriverResultReplacement() {
+        var store = new AgentJobStore();
+        var session = UUID.randomUUID();
+        var id = store.reserve(MOVE, session, 10, 100);
+        store.confirm(id, 1); store.start(id, session);
+        store.recordRecovery(id, Map.of("status", "recovering", "distance", 5));
+        store.recordResult(id, Map.of("position", Map.of("x", 1)));
+        assertThat(store.get(id).result()).containsEntry("recovery", Map.of("status", "recovering", "distance", 5));
+        store.recordRecovery(id, Map.of("status", "resumed"));
+        store.finish(id, SUCCEEDED, null, true);
+        assertThat(store.get(id).result()).containsEntry("recovery", Map.of("status", "resumed"));
+    }
     @Test
     void cannotStartBeforeDeliveryAndAbandonedJobNeverDispatches() {
         var store = new AgentJobStore();

@@ -157,8 +157,14 @@ final class RecoveryPlanning {
             KnownTraversabilitySnapshot map,
             MinecraftRecoveryGovernor.Evidence evidence,
             boolean continuingRecovery) {
+        return recoveryCandidates(minecraft, player, map, evidence, continuingRecovery, recoveryThreat(player));
+    }
+
+    static List<MinecraftRecoveryGovernor.Candidate> recoveryCandidates(
+            Minecraft minecraft, net.minecraft.client.player.LocalPlayer player,
+            KnownTraversabilitySnapshot map, MinecraftRecoveryGovernor.Evidence evidence,
+            boolean continuingRecovery, Vec3 threat) {
         var candidates = new ArrayList<MinecraftRecoveryGovernor.Candidate>();
-        var threat = recoveryThreat(player);
         var currentHazard = LocalObservationVolume.global().latestFor(player)
                 .map(snapshot -> snapshot.current().hazard())
                 .orElse(dev.aod.mcmcp.agent.safety.ObservationRecord.Hazard.UNKNOWN);
@@ -312,6 +318,21 @@ final class RecoveryPlanning {
                         movement,
                         true,
                         true);
+            }
+            if (evidence.safeWaterVolume() && dryStable && avoidsNewDamage) {
+                addRecoveryCandidate(candidates, player, map, recoveryCandidateId("water-bank", target),
+                        MinecraftRecoveryGovernor.CandidateKind.REACH_BREATHING_SPACE,
+                        AgentInputState.RecoveryMode.REACH_BREATHING_SPACE, target, null, movement, true, true);
+            }
+            // A wide pool may have no dry bank in the local volume. Keep breathing while
+            // making witnessed horizontal progress; re-observe the bank on every tick.
+            if (player.isInWater() && !evidence.underwater() && waterStable && avoidsNewDamage
+                    && target.subtract(currentCenter).horizontalDistance() > 0.5) {
+                var swimming = EnumSet.copyOf(movement);
+                swimming.add(dev.aod.mcmcp.routine.MovementInputLease.MovementKey.JUMP);
+                addRecoveryCandidate(candidates, player, map, recoveryCandidateId("water-progress", target),
+                        MinecraftRecoveryGovernor.CandidateKind.REACH_BREATHING_SPACE,
+                        AgentInputState.RecoveryMode.REACH_BREATHING_SPACE, target, null, swimming, false, false);
             }
             if (!evidence.onGround()
                     && evidence.verticalVelocity() < -0.08D

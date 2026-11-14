@@ -728,6 +728,9 @@ final class MinecraftV2PlaceDriver
     }
 
     @Override public String failureReason() { return failure; }
+    @Override public boolean recoveryRestartSafe() {
+        return stage != Stage.CONFIRMING && (floorExtension == null || floorExtension.recoveryRestartSafe());
+    }
 
     private static BlockPos blockPos(NavCell cell) {
         return new BlockPos(cell.x(), cell.y(), cell.z());

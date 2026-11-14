@@ -1571,6 +1571,8 @@
                 "type": "boolean",
                 "default": false
               },
+              "mode": {"enum": ["auto", "elytra"], "default": "auto", "description": "elytra: rolling observed flight followed by landing near the goal; requires usable elytra. No terrain clearing, sneak or landing-damage allowance."},
+              "max_rockets": {"type": "integer", "minimum": 0, "maximum": 64, "default": 4, "description": "Finite ordinary firework uses in elytra mode. Only explosion-free duration-1 rockets; zero permits unpowered gliding."},
               "max_fall_damage": {
                 "type": "number",
                 "minimum": 0,
@@ -1640,6 +1642,8 @@
                 "type": "string",
                 "pattern": "^minecraft:[a-z0-9_./-]{1,112}$"
               },
+              "mode": {"enum": ["auto", "elytra"], "default": "auto", "description": "elytra: rolling observed flight followed by landing near the goal; requires usable elytra. No terrain clearing, sneak or landing-damage allowance."},
+              "max_rockets": {"type": "integer", "minimum": 0, "maximum": 64, "default": 4, "description": "Finite ordinary firework uses in elytra mode. Only explosion-free duration-1 rockets; zero permits unpowered gliding."},
               "max_fall_damage": {
                 "type": "number",
                 "minimum": 0,
@@ -1717,6 +1721,8 @@
                 "type": "boolean",
                 "default": false
               },
+              "mode": {"enum": ["auto", "elytra"], "default": "auto", "description": "elytra: rolling observed flight followed by landing near the goal; requires usable elytra. No terrain clearing, sneak or landing-damage allowance."},
+              "max_rockets": {"type": "integer", "minimum": 0, "maximum": 64, "default": 4, "description": "Finite ordinary firework uses in elytra mode. Only explosion-free duration-1 rockets; zero permits unpowered gliding."},
               "max_fall_damage": {
                 "type": "number",
                 "minimum": 0,
@@ -1794,6 +1800,8 @@
                 "type": "string",
                 "pattern": "^minecraft:[a-z0-9_./-]{1,112}$"
               },
+              "mode": {"enum": ["auto", "elytra"], "default": "auto", "description": "elytra: rolling observed flight followed by landing near the goal; requires usable elytra. No terrain clearing, sneak or landing-damage allowance."},
+              "max_rockets": {"type": "integer", "minimum": 0, "maximum": 64, "default": 4, "description": "Finite ordinary firework uses in elytra mode. Only explosion-free duration-1 rockets; zero permits unpowered gliding."},
               "max_fall_damage": {
                 "type": "number",
                 "minimum": 0,

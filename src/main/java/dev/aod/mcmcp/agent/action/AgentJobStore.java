@@ -113,7 +113,7 @@ public final class AgentJobStore {
         return job.state == State.RUNNING && !job.cancelRequested
                 && job.worldSessionId.equals(currentWorldSessionId)
                 && (!job.deadlineSet || clock.getAsLong() - job.deadlineNanos < 0)
-                && job.completedOperations < job.maxOperations;
+                && !job.completionHeld && job.completedOperations < job.maxOperations;
     }
 
     public synchronized void recordOperation(UUID actionId) {
@@ -153,6 +153,22 @@ public final class AgentJobStore {
         notifyAll();
     }
 
+    /** Recovery progress is retained independently from the work driver's replaceable result. */
+    public synchronized void recordRecovery(UUID actionId, Map<String, Object> recovery) {
+        Job job = current(actionId);
+        if (recovery.size() > 24) throw new IllegalArgumentException("recovery result exceeds bound");
+        job.recovery = Map.copyOf(recovery);
+        notifyAll();
+    }
+    /** Keep the action active while its replacement emergency owner is releasing or executing. */
+    public synchronized void holdCompletionForRecovery(UUID actionId) {
+        Job job = current(actionId);
+        if (job.state != State.RUNNING && job.state != State.QUEUED) throw new IllegalStateException("job cannot recover");
+        job.completionHeld = true;
+    }
+    public synchronized boolean interruptedInputsReleased(UUID actionId) { return current(actionId).completionReady; }
+    public synchronized void releaseRecoveryCompletion(UUID actionId) { current(actionId).completionHeld = false; }
+
     /** Cancellation is a request; the owner must release inputs before publishing a terminal state. */
     public synchronized boolean requestCancel(UUID actionId) {
         Job job = current(actionId);
@@ -183,6 +199,15 @@ public final class AgentJobStore {
                 || outcome != State.SUCCEEDED && (failure == null || failure.isBlank()
                         || failure.length() > 128)) {
             throw new IllegalArgumentException("invalid job failure");
+        }
+        if (job.completionHeld) {
+            job.completionReady = true;
+            notifyAll();
+            return;
+        }
+        if (job.completionReady && job.cancelRequested && outcome == State.FAILED) {
+            outcome = State.CANCELLED;
+            failure = "client_request";
         }
         job.failure = failure;
         job.finishedNanos = clock.getAsLong();
@@ -263,8 +288,10 @@ public final class AgentJobStore {
         int scannedCells;
         int completedBlocks;
         boolean cancelRequested;
+        boolean completionHeld, completionReady;
         String failure;
         Map<String, Object> result = Map.of();
+        Map<String, Object> recovery = Map.of();
         boolean deadlineSet;
         long admittedNanos;
         long deadlineNanos;
@@ -280,8 +307,14 @@ public final class AgentJobStore {
         }
 
         Snapshot snapshot() {
+            Map<String, Object> visibleResult = result;
+            if (!recovery.isEmpty()) {
+                var merged = new java.util.LinkedHashMap<String, Object>(result);
+                merged.put("recovery", recovery);
+                visibleResult = Map.copyOf(merged);
+            }
             return new Snapshot(id, kind, worldSessionId, state, completedOperations,
-                    maxOperations, scannedCells, completedBlocks, cancelRequested, failure, result,
+                    maxOperations, scannedCells, completedBlocks, cancelRequested, failure, visibleResult,
                     timing());
         }
 

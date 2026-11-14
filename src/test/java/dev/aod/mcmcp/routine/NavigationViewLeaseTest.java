@@ -10,6 +10,22 @@ import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 
 class NavigationViewLeaseTest {
     @Test
+    void smallRemainingBudgetAllowsAnAimedAttackAndRejectsAnOversizedTurnWithoutMutation() {
+        var owner = UUID.randomUUID();
+        var control = new FakeViewControl(0, 0, 0);
+        var lease = NavigationViewLease.acquire(control, owner);
+        assertThat(lease.turnTowardWithinBudget(owner, 5, 2, 7.01)).isTrue();
+        assertThat(control.yaw).isEqualTo(5);
+        assertThat(control.pitch).isEqualTo(2);
+        assertThat(lease.turnTowardWithinBudget(owner, 90, 20, 7)).isFalse();
+        assertThat(control.turnCount).isOne();
+        assertThat(lease.matches(owner)).isTrue();
+        assertThat(lease.turnTowardWithinBudget(owner, 5, 2, 0)).isTrue();
+        assertThat(control.yaw).isEqualTo(5);
+        assertThat(control.pitch).isEqualTo(2);
+    }
+
+    @Test
     void turnIsBoundedAndCloseKeepsThePlannedViewWhileRestoringTheSlot() {
         var owner = UUID.randomUUID();
         var control = new FakeViewControl(20.0F, 10.0F, 1);

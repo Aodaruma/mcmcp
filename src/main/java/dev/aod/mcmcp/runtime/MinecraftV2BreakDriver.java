@@ -433,5 +433,6 @@ final class MinecraftV2BreakDriver
                 && level.getBlockState(position).isAir();
     }
 
+    @Override public boolean recoveryRestartSafe() { return stage != Stage.BREAKING; }
     private enum Stage { IDLE, APPROACH, FACING, WAIT_CROSSHAIR, BREAKING }
 }

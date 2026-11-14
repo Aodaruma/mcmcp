@@ -200,6 +200,21 @@ class LocalObservationVolumeTest {
     }
 
     @Test
+    void ladderTopExitAllowsBoundedBootstrapButRejectsMissingSupportAndTwoBlockLip() {
+        var start = new Point(204.67, 203.9, 200.5);
+        var path = ladderPath(Clearance.BLOCKED, Transition.BLOCKED, Fluid.NONE, false, Hazard.COLLISION);
+        var endpoint = ladderEndpoint(Clearance.CLEAR, Fluid.NONE, false, Hazard.FALL);
+        var target = new AgentInputState.NavigationIntent(new Vec3(205.5, 204.9, 200.5), 1, Locomotion.LADDER, 0.25);
+        var intended = new Vec3(0.08, 0, 0);
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(path, endpoint, start, start,
+                target, true, true, false, true, false, intended, Vec3.ZERO)).isTrue();
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(path, endpoint, start, start,
+                target, true, true, false, false, false, intended, Vec3.ZERO)).isFalse();
+        var tooHigh = new AgentInputState.NavigationIntent(new Vec3(205.5, 205.9, 200.5), 1, Locomotion.LADDER, 0.25);
+        assertThat(LocalObservationVolume.climbableNavigationMovementSafe(path, endpoint, start, start,
+                tooHigh, true, true, false, true, false, intended, Vec3.ZERO)).isFalse();
+    }
+    @Test
     void ladderAscentAllowsBoundedNonDivergingBootstrapBeforeVanillaJumpBoost() {
         var start = new Point(204.669921664D, 200.9D, 200.5D);
         var bootstrapEnd = new Point(204.669921664D, 200.82D, 200.5D);

@@ -175,6 +175,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private double v2InputMaxDistance = 48.0;
     private CoordinateMoveJobExecution v2MoveExecution;
     private MinecraftV2MoveDriver v2GroundMoveDriver;
+    private MinecraftEmergencyRecovery v2Emergency;
+    private UUID v2EmergencyJob;
+    private long v2EmergencyEpoch, v2EmergencyDeadline;
+    private boolean v2EmergencyResumable;
+    private boolean v2RecoveryCompletionHeld;
+    private MinecraftEmergencyRecovery.Hazard v2InitialRecoveryHazard;
+    private Vec3 v2LastSafeAnchor;
     private V2BlockJobExecution<V2BreakArguments> v2BreakExecution;
     private V2BlockJobExecution<V2PlaceArguments> v2PlaceExecution;
     private final ChatHistory chatHistory = new ChatHistory();
@@ -499,6 +506,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         routineLifecycle.onPauseChanged(paused, nowNanos);
         if (paused) {
             pauseStartedAtNanos = nowNanos;
+            closeV2Recovery("game_paused");
             releaseAgentInputsForHold(minecraft, "pause_input_release_failed");
         } else {
             long pausedNanos = ActionBudgets.nonNegativeNanoElapsed(pauseStartedAtNanos, nowNanos);
@@ -565,6 +573,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         try {
             synchronizeWorld(minecraft);
             pollPortalArrival(minecraft);
+            dev.aod.mcmcp.agent.safety.ObservedThreats.bindAction(minecraft.player,
+                    scriptJobs.active().or(() -> v2Jobs.active()).map(AgentJobStore.Snapshot::actionId).orElse(null));
             var frameSession = sessions.snapshot();
             if (frameSession.worldReady() && minecraft.level != null) {
                 FrameDisplaySyncSignals.global().bindAndSnapshot(
@@ -596,6 +606,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         inbox.drainControlsPreTick(sessions.snapshot());
         routineLifecycle.retryPendingFinalizations(minecraft);
         tickActiveRoutine(minecraft);
+        if (tickV2Recovery(minecraft)) {
+            publishSession();
+            return;
+        }
         stopExpiredV2Job();
         tickV2Move(minecraft);
         tickV2Break(minecraft);
@@ -921,7 +935,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private boolean automationActivityPending(boolean ignorePassivePortalArrival) {
-        return routines.activeRoutineId().isPresent()
+        return v2Emergency != null || routines.activeRoutineId().isPresent()
                 || agentActions.active().isPresent()
                 || v2Jobs.active().filter(job -> !ignorePassivePortalArrival || pendingPortalArrival == null
                         || !pendingPortalArrival.owns(job.actionId())).isPresent()
@@ -1005,6 +1019,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private void clearAgentSessionState() {
+        closeV2Recovery("world_boundary");
+        v2LastSafeAnchor = null;
         chatHistory.clear();
         if (scriptExecution != null) scriptExecution.cancel();
         if (v2InputExecution != null) {
@@ -1134,7 +1150,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private boolean evaluationActionsTerminal() {
-        return agentActions.active().isEmpty()
+        return v2Emergency == null && agentActions.active().isEmpty()
                 && v2Jobs.active().isEmpty()
                 && scriptJobs.active().isEmpty()
                 && v2InputExecution == null
@@ -1620,7 +1636,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                                 && worldId.equals(current.worldSessionId())
                                 && worldId.equals(control.worldSessionId())
                                 && (control.mode() == LocalArmingState.Mode.READY
-                                        || control.mode() == LocalArmingState.Mode.AGENT);
+                                        || control.mode() == LocalArmingState.Mode.AGENT
+                                        || control.mode() == LocalArmingState.Mode.RECOVERING
+                                            && scriptChildActionId.get() != null);
                     }, scriptDeadline).withResources(request.resources());
             if (blueprint != null) scriptExecution.withBlueprint(blueprint);
             requireLiveCall(context, toolName);
@@ -2230,7 +2248,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         var request = V2MoveArguments.parse(arguments,
                 ActionPlanning.playerCell(minecraft.player, session.dimension()));
-        requireV2WorldSafe(minecraft, session, "Move", true);
+        if (request.mode().equals("elytra")) {
+            String unsafe = v2InputWorldUnsafeReason(minecraft, session, false, true, false, true, true);
+            if (unsafe != null || paused || minecraft.isPaused() || endpointFaultCode != null || !multiplayerPolicyAllows(minecraft))
+                throw RuntimeFailures.v2SafetyPrecondition("Elytra flight", unsafe == null ? "control_unavailable" : unsafe, null);
+            if (!MinecraftElytraFlight.available(minecraft.player))
+                throw new IllegalArgumentException("elytra flight requires a usable elytra in player inventory");
+        } else requireV2WorldSafe(minecraft, session, "Move", true);
         if (pendingAgentInputRelease || agentExecution != null
                 || agentActions.active().isPresent() || v2Jobs.active().isPresent()
                 || scriptJobs.active().isPresent() && !context.scriptChild()
@@ -2252,6 +2276,21 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             requireLiveCall(context, "agent_move");
             actionId = reserveV2Job(AgentJobStore.Kind.MOVE, session.worldSessionId(),
                     request.maxTicks(), System.nanoTime() + ACTION_DELIVERY_CONFIRM_NANOS, context);
+            if (request.mode().equals("elytra")) {
+                v2InteractExecution = new V2OperationJobExecution(v2Jobs, actionId, session.worldSessionId(),
+                        new MinecraftV2ElytraDriver(minecraft, session.worldSessionId(), request,
+                                () -> request.stopWhen() != null && request.stopWhen().matches(v2LocalConditions(minecraft)),
+                                () -> agentObservations.requireAgentMap(sessions.snapshot()),
+                                () -> Math.max(0, v2InteractMaxDistance - v2InteractTravelled)),
+                        () -> boundedActionInputRelease(() -> releaseAllAndConfirmNoInputOwner(minecraft)));
+                v2InteractPlayerIdentity = minecraft.player; v2InteractLevelIdentity = minecraft.level;
+                v2InteractControlEpoch = arming.snapshot(session.worldSessionId()).controlEpoch();
+                v2InteractHealthBaseline = minecraft.player.getHealth() + minecraft.player.getAbsorptionAmount();
+                v2InteractLastPosition = minecraft.player.position(); v2InteractTravelled = 0;
+                v2InteractMaxDistance = request.maxDistance();
+                requireLiveCall(context, "agent_move");
+                return Map.of("schema_version", 2, "action_id", actionId.toString(), "state", "queued");
+            }
             CoordinateMoveJobExecution.MovementDriver driver = minecraft.player.isPassenger()
                     ? new MinecraftV2VehicleDriver(minecraft, request) : new MinecraftV2MoveDriver(minecraft, request);
             v2GroundMoveDriver = driver instanceof MinecraftV2MoveDriver ground ? ground : null;
@@ -2280,6 +2319,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             v2MoveMaxDistance = request.maxDistance();
             requireLiveCall(context, "agent_move");
         } catch (RuntimeException | LinkageError failure) {
+            if (v2InteractExecution != null && v2InteractExecution.allowsFlight()) {
+                finishV2InteractIfTerminal(v2InteractExecution.stop("delivery_not_confirmed"));
+            }
             if (actionId != null) v2Jobs.abandon(actionId);
             if (AgentInputState.global().inputOwnerNone()) AgentInputState.global().clearActionDeadline();
             v2MoveExecution = null;
@@ -3071,6 +3113,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             Minecraft minecraft, Map<String, Object> arguments) {
         RuntimeArguments.requireExactKeys(arguments, "agent_cancel_action", Set.of("action_id"));
         UUID requestedId = RuntimeArguments.actionId(arguments);
+        if ((v2Emergency != null || v2RecoveryCompletionHeld) && (requestedId.equals(v2EmergencyJob)
+                || scriptJobs.active().map(job -> requestedId.equals(job.actionId())).orElse(false))) {
+            v2Jobs.requestCancel(v2EmergencyJob);
+            closeV2Recovery("cancelled");
+            returnControlReady();
+            // Let the ordinary owner below publish cancellation after the rescue owner released.
+        }
         if (isScriptJob(requestedId)) {
             var before = scriptJobs.get(requestedId);
             boolean requested = !before.state().terminal();
@@ -3089,6 +3138,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     || before.kind() == AgentJobStore.Kind.CLICK)
                     && v2InputExecution != null) {
                 finishV2InputIfTerminal(v2InputExecution.cancel());
+            } else if (requested && before.kind() == AgentJobStore.Kind.MOVE
+                    && v2InteractExecution != null && v2InteractExecution.allowsFlight()) {
+                finishV2InteractIfTerminal(v2InteractExecution.cancel());
             } else if (requested && before.kind() == AgentJobStore.Kind.MOVE
                     && v2MoveExecution != null) {
                 finishV2MoveIfTerminal(v2MoveExecution.cancel());
@@ -3457,6 +3509,166 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
     }
 
+    /** The emergency owner runs before ordinary job damage guards and keeps their original deadlines. */
+    private boolean tickV2Recovery(Minecraft minecraft) {
+        var session = sessions.snapshot();
+        var job = v2Jobs.active().orElse(null);
+        if (v2Emergency == null && !v2RecoveryCompletionHeld && (job == null || job.cancelRequested()
+                || job.state() != AgentJobStore.State.RUNNING && job.state() != AgentJobStore.State.QUEUED
+                || !McmcpClientConfig.automaticRecovery())) return false;
+        try {
+            var control = arming.snapshot(session.worldSessionId());
+            boolean live = session.worldReady() && minecraft.player != null && minecraft.level != null
+                    && !minecraft.player.isDeadOrDying() && !paused && !minecraft.isPaused()
+                    && endpointFaultCode == null && !pendingAgentInputRelease && minecraft.gui.overlay() == null
+                    && (v2Emergency != null && v2Emergency.allowsScreenChange()
+                        || AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen()));
+            if ((v2Emergency != null || v2RecoveryCompletionHeld) && (!live
+                    || v2Emergency != null && (control.mode() != LocalArmingState.Mode.RECOVERING || control.controlEpoch() != v2EmergencyEpoch)
+                    || v2RecoveryCompletionHeld && (job == null || job.cancelRequested()
+                        || v2Emergency == null && (v2Jobs.expired(job.actionId())
+                            || control.mode() != LocalArmingState.Mode.AGENT))
+                    || !McmcpClientConfig.automaticRecovery())) {
+                closeV2Recovery("control_changed");
+                stopInterruptedV2Job("recovery_interrupted");
+                returnControlReady();
+                return true;
+            }
+            if (!live || v2Emergency == null && control.mode() != LocalArmingState.Mode.AGENT) return false;
+            boolean expectedFall = v2Emergency == null && (v2GroundMoveDriver != null
+                    && v2GroundMoveDriver.currentTraversalSafe() || v2InteractExecution != null && v2InteractExecution.allowsFlight());
+            var hazard = MinecraftEmergencyRecovery.inspect(minecraft,
+                    v2Emergency == null && v2GroundMoveDriver != null && v2GroundMoveDriver.waterNavigationExpected(), expectedFall);
+            if (v2Emergency == null) {
+                if (!v2RecoveryCompletionHeld && hazard.danger() == EmergencyRecoveryPolicy.Danger.NONE) {
+                    if (minecraft.player.onGround() && !minecraft.player.isInWater()
+                            && agentObservations.localSafety() == LocalObservationProjector.CurrentSafety.CONTINUE)
+                        v2LastSafeAnchor = minecraft.player.position();
+                    return false;
+                }
+                if (!v2RecoveryCompletionHeld) {
+                    v2EmergencyJob = job.actionId();
+                    v2InitialRecoveryHazard = hazard;
+                    v2EmergencyResumable = v2MoveExecution != null ? v2MoveExecution.suspendForRecovery()
+                            : v2BreakExecution != null ? v2BreakExecution.suspendForRecovery()
+                            : v2PlaceExecution != null && v2PlaceExecution.suspendForRecovery();
+                    if (!v2EmergencyResumable) {
+                        v2Jobs.holdCompletionForRecovery(v2EmergencyJob);
+                        v2RecoveryCompletionHeld = true;
+                    }
+                }
+                if (v2RecoveryCompletionHeld) {
+                    stopInterruptedV2Job("preempted_for_recovery");
+                    if (!v2Jobs.interruptedInputsReleased(v2EmergencyJob)) return true;
+                }
+                if (!inputRelease.inputOwnerNone(minecraft) || pendingAgentInputRelease) return true;
+                control = arming.snapshot(session.worldSessionId());
+                if (control.mode() == LocalArmingState.Mode.READY) arming.beginAction(session.worldSessionId());
+                if (!arming.beginRecovery(session.worldSessionId())) {
+                    closeV2Recovery("recovery_admission_failed");
+                    stopInterruptedV2Job("recovery_admission_failed");
+                    return true;
+                }
+                v2EmergencyEpoch = arming.snapshot(session.worldSessionId()).controlEpoch();
+                v2EmergencyDeadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(
+                        McmcpClientConfig.recoveryMaxTicks() * 50L);
+                AgentInputState.global().setActionDeadline(v2EmergencyDeadline);
+                v2Emergency = new MinecraftEmergencyRecovery(minecraft, session.worldSessionId(), session.clientTick(),
+                        v2LastSafeAnchor, v2InitialRecoveryHazard, sessions::snapshot);
+            }
+            if (v2Jobs.get(v2EmergencyJob).cancelRequested()) {
+                closeV2Recovery("cancelled"); stopInterruptedV2Job("cancelled_during_recovery");
+                returnControlReady(); return true;
+            }
+            var map = agentObservations.requireAgentMap(session);
+            var local = agentObservations.localObservation();
+            var status = System.nanoTime() - v2EmergencyDeadline >= 0 ? MinecraftEmergencyRecovery.State.EXHAUSTED
+                    : v2Emergency.tick(session.clientTick(), map.worldRevision(), hazard, () -> {
+                        if (local == null || local.worldRevision() != map.worldRevision()) return List.of();
+                        var evidence = recoveryEvidence(minecraft.player, session, map, local, session.clientTick());
+                        return RecoveryPlanning.recoveryCandidates(minecraft, minecraft.player, map, evidence,
+                                true, v2Emergency.threatOrigin());
+                    }, () -> arming.snapshot(session.worldSessionId()).mode() == LocalArmingState.Mode.RECOVERING
+                            && arming.snapshot(session.worldSessionId()).controlEpoch() == v2EmergencyEpoch
+                            && !paused && endpointFaultCode == null && System.nanoTime() - v2EmergencyDeadline < 0);
+            var result = v2Emergency.result(session.clientTick(), status.name().toLowerCase(Locale.ROOT));
+            v2Jobs.recordRecovery(v2EmergencyJob, result);
+            scriptJobs.active().ifPresent(parent -> scriptJobs.recordRecovery(parent.actionId(), result));
+            if (status == MinecraftEmergencyRecovery.State.RECOVERING) return true;
+            boolean resume = status == MinecraftEmergencyRecovery.State.STABLE && v2EmergencyResumable
+                    && McmcpClientConfig.recoveryResume() && !v2Jobs.expired(v2EmergencyJob)
+                    && !minecraft.player.isPassenger();
+            long recoveryEpoch = v2EmergencyEpoch;
+            UUID interrupted = v2EmergencyJob;
+            closeV2Recovery(resume ? "resumed" : status.name().toLowerCase(Locale.ROOT));
+            if (resume && arming.resumeAfterRecovery(session.worldSessionId(), recoveryEpoch)) {
+                long epoch = arming.snapshot(session.worldSessionId()).controlEpoch();
+                float health = minecraft.player.getHealth() + minecraft.player.getAbsorptionAmount();
+                var position = minecraft.player.position();
+                // Rescue travel is reported separately; ordinary action distance and fall budgets are retained.
+                if (v2MoveExecution != null) {
+                    v2MoveControlEpoch = epoch; v2MoveHealthBaseline = health; v2MoveLastPosition = position;
+                    if (v2GroundMoveDriver != null) v2GroundMoveDriver.resumeAfterRecovery();
+                }
+                if (v2BreakExecution != null) {
+                    v2BreakControlEpoch = epoch; v2BreakHealthBaseline = health; v2BreakLastPosition = position;
+                }
+                if (v2PlaceExecution != null) {
+                    v2PlaceControlEpoch = epoch; v2PlaceHealthBaseline = health; v2PlaceLastPosition = position;
+                }
+                AgentInputState.global().setActionDeadline(v2Jobs.deadlineNanos(interrupted));
+            } else {
+                stopInterruptedV2Job("recovery_" + status.name().toLowerCase(Locale.ROOT));
+                returnControlReady();
+            }
+            if (status == MinecraftEmergencyRecovery.State.DISCONNECT && McmcpClientConfig.recoveryDisconnect())
+                minecraft.disconnectFromWorld(net.minecraft.network.chat.Component.literal("Agent emergency retreat"));
+            return true;
+        } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error("MCMCP automatic recovery failed", failure);
+            try { closeV2Recovery("runtime_exception"); stopInterruptedV2Job("recovery_exception"); }
+            finally { arming.lock("recovery_exception"); }
+            return true;
+        }
+    }
+
+    private void closeV2Recovery(String reason) {
+        if (v2Emergency == null) {
+            if (v2RecoveryCompletionHeld) {
+                v2Jobs.releaseRecoveryCompletion(v2EmergencyJob);
+                v2RecoveryCompletionHeld = false;
+            }
+            return;
+        }
+        var result = v2Emergency.result(sessions.snapshot().clientTick(), reason);
+        v2Jobs.recordRecovery(v2EmergencyJob, result);
+        scriptJobs.active().ifPresent(parent -> scriptJobs.recordRecovery(parent.actionId(), result));
+        try {
+            v2Emergency.close();
+            if (!boundedActionInputRelease(() -> releaseAllAndConfirmNoInputOwner(Minecraft.getInstance())))
+                throw new IllegalStateException("emergency input release unconfirmed");
+        } catch (RuntimeException | LinkageError failure) {
+            pendingAgentInputRelease = true;
+            arming.lock("recovery_release_failed");
+            throw failure;
+        }
+        v2Emergency = null;
+        if (v2RecoveryCompletionHeld) {
+            v2Jobs.releaseRecoveryCompletion(v2EmergencyJob);
+            v2RecoveryCompletionHeld = false;
+        }
+        AgentInputState.global().clearActionDeadline();
+    }
+
+    private void stopInterruptedV2Job(String reason) {
+        if (v2InputExecution != null) finishV2InputIfTerminal(v2InputExecution.stop(reason));
+        if (v2MoveExecution != null) finishV2MoveIfTerminal(v2MoveExecution.stop(reason));
+        if (v2BreakExecution != null) finishV2BreakIfTerminal(v2BreakExecution.stop(reason));
+        if (v2PlaceExecution != null) finishV2PlaceIfTerminal(v2PlaceExecution.stop(reason));
+        if (v2InteractExecution != null) finishV2InteractIfTerminal(v2InteractExecution.stop(reason));
+        if (v2InventoryExecution != null) finishV2InventoryIfTerminal(v2InventoryExecution.stop(reason));
+    }
+
     private void tickV2InputSequence(Minecraft minecraft) {
         if (v2InputExecution == null) return;
         var session = sessions.snapshot();
@@ -3640,7 +3852,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private void tickV2Script() {
-        if (scriptExecution == null) return;
+        if (scriptExecution == null || v2Emergency != null) return;
         scriptJobs.expireUnconfirmed(System.nanoTime());
         boolean released = scriptChildActionId.get() == null
                 && v2Jobs.active().isEmpty()
@@ -3700,7 +3912,8 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             boolean safe = v2InputWorldUnsafeReason(minecraft, session,
                     v2InteractExecution instanceof V2OperationJobExecution operation && operation.allowsScreenChange(),
                     false, v2InteractExecution.allowsRiding(),
-                    v2InteractExecution instanceof V2PortalJobExecution portal && portal.currentPositionSafe()) == null
+                    v2InteractExecution.allowsFlight() || v2InteractExecution instanceof V2PortalJobExecution portal && portal.currentPositionSafe(),
+                    v2InteractExecution.allowsFlight()) == null
                     && minecraft.player == v2InteractPlayerIdentity
                     && minecraft.level == v2InteractLevelIdentity
                     && !paused && !minecraft.isPaused() && endpointFaultCode == null;
@@ -3814,6 +4027,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private String v2InputWorldUnsafeReason(Minecraft minecraft,
             WorldSessionTracker.Snapshot session, boolean allowScreenChange, boolean allowReobservation,
             boolean navigation, boolean exactPositionSafe) {
+        return v2InputWorldUnsafeReason(minecraft, session, allowScreenChange, allowReobservation, navigation, exactPositionSafe, false);
+    }
+
+    private String v2InputWorldUnsafeReason(Minecraft minecraft,
+            WorldSessionTracker.Snapshot session, boolean allowScreenChange, boolean allowReobservation,
+            boolean navigation, boolean exactPositionSafe, boolean elytra) {
         if (!localControlAvailable(minecraft, session)) return "world_unavailable";
         var player = minecraft.player;
         var level = minecraft.level;
@@ -3825,7 +4044,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (!spectator && player.isInWater() && !navigation) return "player_in_water";
         if (navigation && WaterNavigationSafety.needsAir(minecraft) && player.getAirSupply() <= 20) return "air_supply_critical";
         if (player.isPassenger() && (!navigation || !MinecraftV2VehicleDriver.supported(player))
-                || player.isFallFlying()) return "unsupported_locomotion";
+                || player.isFallFlying() && !elytra) return "unsupported_locomotion";
         if (!allowScreenChange && !AgentScreenPolicy.allowsWorldInput(minecraft.gui.screen()))
             return "screen_changed";
         if (minecraft.gui.overlay() != null) return "overlay_open";
@@ -3863,7 +4082,9 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private void finishV2JobIfTerminal(AgentJobStore.Snapshot result) {
-        if (result.kind() == AgentJobStore.Kind.MOVE) {
+        if (result.kind() == AgentJobStore.Kind.MOVE && v2InteractExecution != null && v2InteractExecution.allowsFlight()) {
+            finishV2InteractIfTerminal(result);
+        } else if (result.kind() == AgentJobStore.Kind.MOVE) {
             finishV2MoveIfTerminal(result);
         } else if (result.kind() == AgentJobStore.Kind.BREAK_BLOCK) {
             finishV2BreakIfTerminal(result);
@@ -3901,6 +4122,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     }
 
     private void rollbackAbandonedV2Move(Map<String, Object> receipt) {
+        if (v2InteractExecution != null && v2InteractExecution.allowsFlight()
+                && receipt.get("action_id") instanceof String id
+                && v2Jobs.active().map(job -> job.actionId().toString().equals(id)).orElse(false)) {
+            finishV2InteractIfTerminal(v2InteractExecution.stop("delivery_not_confirmed"));
+            return;
+        }
         if (v2MoveExecution == null) return;
         Object rawId = receipt.get("action_id");
         if (!(rawId instanceof String id)) return;
@@ -5876,7 +6103,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private void returnControlReady() {
         // READY is both public state and the physical-input release edge. Do not publish it while
         // any Agent cleanup reference is still retained for the next bounded retry.
-        if (pendingAgentInputRelease
+        if (v2Emergency != null || pendingAgentInputRelease
                 || pendingAgentTerminal != null
                 || agentExecution != null
                 || pendingAgentAdmission != null
@@ -5954,6 +6181,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         // while AgentExecution and the first terminal intent are still retained.
         recordPendingAgentMotion(minecraft);
         boolean recoveryClosed = closeRecoveryGovernor();
+        try {
+            closeV2Recovery("control_release");
+        } catch (RuntimeException | LinkageError failure) {
+            McmcpMod.LOGGER.error("MCMCP automatic recovery release remains pending", failure);
+            recoveryClosed = false;
+        }
         lastStatefulAgentCleanup = new AgentCleanupProgress(
                 primitiveClosed, recoveryClosed);
         return lastStatefulAgentCleanup;
@@ -6200,6 +6433,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private ClientCommandInbox.StopProgress stopActiveRoutineForEmergency(
             String reason,
             WorldSessionTracker.Snapshot session) {
+        closeV2Recovery(RuntimeFailures.sanitizeLocalCode(reason));
         routineLifecycle.clearContinuation();
         if (scriptExecution != null) scriptExecution.cancel();
         ClientCommandInbox.StopProgress v2Progress = ClientCommandInbox.StopProgress.COMPLETE;

@@ -10,6 +10,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class V2MoveArgumentsTest {
     private static final NavCell ORIGIN = new NavCell("minecraft:overworld", 10, 64, -20);
+    @Test void elytraModeIsExplicitAndBoundsRocketsWithoutTerrainMutations() {
+        var request = V2MoveArguments.parse(Map.of("x", 10, "y", 80, "z", 20, "mode", "elytra", "max_rockets", 0), ORIGIN);
+        assertThat(request.mode()).isEqualTo("elytra");
+        assertThat(request.maxRockets()).isZero();
+        assertThat(V2MoveArguments.parse(Map.of("x", 10, "y", 80, "z", 20), ORIGIN).mode()).isEqualTo("auto");
+        for (var option : Map.of("clear_path", true, "sneak", true, "max_fall_damage", 1, "max_rockets", 65).entrySet()) {
+            var values = new java.util.HashMap<String, Object>(Map.of("x", 10, "y", 80, "z", 20, "mode", "elytra"));
+            values.put(option.getKey(), option.getValue());
+            assertThatThrownBy(() -> V2MoveArguments.parse(values, ORIGIN)).isInstanceOf(IllegalArgumentException.class);
+        }
+    }
 
     @Test void decimalCoordinatesFloorNegativeCellsAndPreserveIntegerCompatibility() {
         var exact = V2MoveArguments.parse(Map.of("x", -1.8, "y", 64.5, "z", 2), ORIGIN);

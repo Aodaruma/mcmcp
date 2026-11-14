@@ -289,7 +289,7 @@ final class AgentObservations {
                     true,
                     Map.of());
         }
-        return map;
+        return ObservedEntityObstacles.filter(map, Minecraft.getInstance());
     }
 
     void synchronizeKnownTraversability(Minecraft minecraft) {

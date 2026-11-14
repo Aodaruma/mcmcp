@@ -131,8 +131,7 @@ public final class MinecraftStationaryBreakPort implements StationaryBreakPort {
                         player,
                         player.getBoundingBox().inflate(THREAT_RADIUS),
                         entity -> entity.isAlive()
-                                && (entity instanceof Enemy
-                                || entity instanceof Mob mob && mob.getTarget() == player))
+                                && (dev.aod.mcmcp.agent.safety.ObservedThreats.attacking(entity, player)))
                 .stream()
                 .noneMatch(entity -> observations.isEntityCurrentlyVisible(
                         minecraft, entity, THREAT_RADIUS));

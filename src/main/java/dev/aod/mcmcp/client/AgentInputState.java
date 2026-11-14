@@ -15,6 +15,17 @@ import java.util.Optional;
  * release can suppress output immediately; only a later lease heartbeat may drive it again.</p>
  */
 public final class AgentInputState {
+    private Object elytraPlayer, elytraLevel;
+    private long elytraUntil;
+    public synchronized void allowElytraDeployment(Object player, Object level, long until) {
+        elytraPlayer = player; elytraLevel = level; elytraUntil = until;
+    }
+    public synchronized boolean elytraDeploymentAllowed(Object player, Object level) {
+        return elytraPlayer == player && elytraLevel == level && System.nanoTime() - elytraUntil < 0;
+    }
+    public synchronized void clearElytraDeployment(Object player) {
+        if (elytraPlayer == player) { elytraPlayer = null; elytraLevel = null; elytraUntil = 0; }
+    }
     private static final AgentInputState GLOBAL = new AgentInputState();
 
     private MovementSnapshot movement = MovementSnapshot.unowned();
@@ -373,6 +384,7 @@ public final class AgentInputState {
 
     /** Releases ownership. Physical input is left untouched once the lease no longer owns it. */
     public synchronized void releaseMovement() {
+        elytraPlayer = null; elytraLevel = null; elytraUntil = 0;
         movement = MovementSnapshot.unowned();
         movementSuppressed = false;
         movementExpiryRequired = false;

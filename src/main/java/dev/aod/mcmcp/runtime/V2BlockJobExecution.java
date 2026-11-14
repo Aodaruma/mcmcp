@@ -198,6 +198,17 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
     }
 
     int completedBlocks() { return completed; }
+    /** Release the current attempt without losing proven cells or replaying a completed cell. */
+    boolean suspendForRecovery() {
+        if (terminalIntent != null || jobs.get(actionId).state() != AgentJobStore.State.RUNNING) return false;
+        retainConfirmedBeforeStop();
+        if (targetActive && !activeChangeRecorded && !driver.recoveryRestartSafe()) return false;
+        driver.close();
+        targetActive = false;
+        activeChangeRecorded = false;
+        observationWaitTicks = 0;
+        return releaseAndVerify.getAsBoolean();
+    }
     int scannedCells() { return index; }
     boolean currentPositionSafe() { return targetActive && driver.currentPositionSafe(); }
 
@@ -311,6 +322,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
         /** A server-confirmed world change whose follow-up movement is still in progress. */
         default ConfirmedChange confirmedBeforeCompletion() { return null; }
         default boolean currentPositionSafe() { return false; }
+        default boolean recoveryRestartSafe() { return false; }
         default String failureReason() { return null; }
         void close();
     }

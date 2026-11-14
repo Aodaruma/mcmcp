@@ -1096,8 +1096,7 @@ public final class MinecraftKnownFurnacePort implements PhaseFivePort {
                 && (baseline == null || baseline.matches(player))
                 && minecraft.gameMode.getPlayerMode() == GameType.SURVIVAL
                 && level.getEntities(player, player.getBoundingBox().inflate(THREAT_RADIUS),
-                        entity -> entity.isAlive() && (entity instanceof Enemy
-                                || entity instanceof Mob mob && mob.getTarget() == player))
+                        entity -> entity.isAlive() && (dev.aod.mcmcp.agent.safety.ObservedThreats.attacking(entity, player)))
                         .stream().noneMatch(entity -> observations.isEntityCurrentlyVisible(
                                 minecraft, entity, THREAT_RADIUS));
     }

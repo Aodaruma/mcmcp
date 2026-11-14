@@ -33,6 +33,7 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
     private RoutePlan pendingRoute;
     private double pendingTolerance;
     private final Locomotion mode;
+    private final boolean startedInWater;
     private long takeoffStarted = -1;
     private net.minecraft.world.phys.Vec3 takeoffTarget;
     private final FallDamageBudget fallBudget;
@@ -50,6 +51,7 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
         this.minecraft = minecraft;
         this.request = request;
         mode = Locomotion.aerialMode(minecraft.player);
+        startedInWater = minecraft.player.isInWater();
         executor.sneakWhileMoving(request.sneak());
         fallBudget = new FallDamageBudget(request.maxFallDamage());
         var player = minecraft.player;
@@ -58,10 +60,19 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
     }
 
     KnownTraversabilitySnapshot augment(KnownTraversabilitySnapshot map) {
-        return active() && !aligning || request.sneak() ? map : MinecraftGroundTransferMap.augment(map, minecraft.player, fallBudget.remaining());
+        return active() && !aligning || request.sneak() ? map : ObservedEntityObstacles.filter(
+                MinecraftGroundTransferMap.augment(map, minecraft.player, fallBudget.remaining()), minecraft);
     }
 
     boolean currentTraversalSafe() { return arc != null && arc.currentSafe(); }
+    boolean waterNavigationExpected() {
+        return startedInWater || wholeRoute != null && wholeRoute.edges().stream().anyMatch(edge -> edge.locomotion() == Locomotion.WATER);
+    }
+
+    void resumeAfterRecovery() {
+        var player = minecraft.player;
+        damageEvidence = PlayerDamageSignals.global().bind(player, player.getHealth(), player.getAbsorptionAmount());
+    }
 
     String observeDamage() {
         var player = minecraft.player;

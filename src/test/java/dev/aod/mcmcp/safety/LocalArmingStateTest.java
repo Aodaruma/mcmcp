@@ -8,6 +8,24 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class LocalArmingStateTest {
+    @Test void recoveryResumesOnlyTheRetainedEpochAndNeverRevivesEscOrANewSession() {
+        var state = new LocalArmingState();
+        var session = UUID.randomUUID();
+        state.arm(session, Set.of("movement"));
+        state.beginAction(session);
+        assertThat(state.beginRecovery(session)).isTrue();
+        long recovery = state.snapshot(session).controlEpoch();
+        assertThat(state.resumeAfterRecovery(session, recovery - 1)).isFalse();
+        assertThat(state.resumeAfterRecovery(session, recovery)).isTrue();
+        assertThat(state.beginRecovery(session)).isTrue();
+        recovery = state.snapshot(session).controlEpoch();
+        state.lock("escape");
+        assertThat(state.resumeAfterRecovery(session, recovery)).isFalse();
+        state.arm(session, Set.of("movement"));
+        state.beginAction(session); state.beginRecovery(session);
+        recovery = state.snapshot(session).controlEpoch();
+        assertThat(state.resumeAfterRecovery(UUID.randomUUID(), recovery)).isFalse();
+    }
     @Test
     void manyCompletedAndRecoveredActionsKeepTheSameCapabilityLeaseUntilExplicitOff() {
         var state = new LocalArmingState();

@@ -16,6 +16,24 @@ class CoordinateGoalPlannerTest {
     private static final CoordinateGoalPlanner.Budget DEFAULT = CoordinateGoalPlanner.Budget.DEFAULT;
 
     @Test
+    void ladderCanExitOneBlockUpOnlyOntoAConfirmedCardinalLanding() {
+        var map = map();
+        map.observe(ladder(rung(64), rung(65)));
+        var landing = new NavCell("overworld", 1, 66, 0);
+        var exit = new TraversabilityEdge(SESSION, new TraversabilityEdge.Key(rung(65), landing),
+                TraversabilityEdge.Status.PROBE_ALLOWED, TraversabilityEdge.TargetSupport.CONFIRMED,
+                TraversabilityEdge.Clearance.CONFIRMED, TraversabilityEdge.Transition.PARTIAL,
+                TraversabilityEdge.Fluid.NONE, TraversabilityEdge.Hazard.NONE,
+                TraversabilityEdge.Provenance.LOCAL_VOLUME, rung(65), 1, 0,
+                dev.aod.mcmcp.agent.safety.Locomotion.LADDER);
+        map.observe(exit);
+        assertThat(plan(new CoordinateGoalPlanner(SESSION, landing), map, rung(64))
+                .route().orElseThrow().cells()).containsExactly(rung(64), rung(65), landing);
+        assertThatThrownBy(() -> ladder(rung(65), landing)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ladder(landing, rung(65))).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void aLongScaffoldUsesBoundedTransitWithoutTreatingAnUnsupportedRungAsFinalArrival() {
         var map = map();
         for (int y = 64; y < 68; y++) {
@@ -489,6 +507,21 @@ class CoordinateGoalPlannerTest {
                 DEFAULT, () -> false, cell -> true, false);
         assertThat(result.status()).isEqualTo(BLOCKED);
         assertThat(result.route()).isEmpty();
+    }
+
+    @Test
+    void transientBodyExclusionTakesSideRouteWithoutErasingTerrain() {
+        var snapshot = map(edge(cell(0, 0), cell(1, 0)), edge(cell(1, 0), cell(2, 0)),
+                edge(cell(0, 0), cell(0, 1)), edge(cell(0, 1), cell(1, 1)),
+                edge(cell(1, 1), cell(2, 1)), edge(cell(2, 1), cell(2, 0))).snapshot().orElseThrow();
+        var filtered = snapshot.excludingEdges(edge -> edge.key().from().equals(cell(1, 0))
+                || edge.key().to().equals(cell(1, 0)));
+        var route = new DeterministicAStar().findRoute(filtered, cell(0, 0), cell(2, 0));
+        assertThat(route.found()).isTrue();
+        assertThat(filtered.edges()).hasSize(4);
+        assertThat(snapshot.edges()).hasSize(6);
+        assertThat(snapshot.excludingEdges(edge -> false)).isSameAs(snapshot);
+        assertThat(new DeterministicAStar().findRoute(snapshot, cell(0, 0), cell(2, 0)).found()).isTrue();
     }
 
     private static KnownTraversabilityMap map(TraversabilityEdge... edges) {

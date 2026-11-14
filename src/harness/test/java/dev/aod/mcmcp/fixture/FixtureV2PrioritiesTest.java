@@ -4,6 +4,11 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 class FixtureV2PrioritiesTest {
     @Test void onlyFixedCasesWithAnExplicitNewRequestNumberAreAccepted() {
+        for (String kind : java.util.List.of("recovery_bucket", "recovery_web", "recovery_boat", "recovery_slime", "recovery_hay",
+                "recovery_bed", "recovery_water", "recovery_elytra", "recovery_mob", "recovery_neutral", "recovery_returning_mob",
+                "recovery_trader_near", "recovery_trader_push", "recovery_place_mob", "recovery_build_flight", "flight_open", "flight_wall", "flight_boost", "flight_boost_wall"))
+            assertThat(FixtureV2PrioritiesConfig.validRequest("7:" + kind)).isTrue();
+        assertThat(FixtureV2PrioritiesConfig.validRequest("7:recovery_command")).isFalse();
         assertThat(FixtureV2PrioritiesConfig.validRequest("1:water")).isTrue();
         assertThat(FixtureV2PrioritiesConfig.validRequest("1:scaffold_detour")).isTrue();
         assertThat(FixtureV2PrioritiesConfig.validRequest("1:scaffold_detour_roof")).isTrue();

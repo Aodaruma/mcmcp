@@ -32,6 +32,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /** Current public transport checks plus frozen v1 fixtures for reused internal executors. */
 class McpToolCatalogTest {
+    @Test void elytraMoveOptionsAreDiscoverableAndFiniteForCoordinateAndRelativeMoves() {
+        var input = new McpToolCatalog().inputSchema("agent_move");
+        for (String goal : List.of("\"x\":1,\"y\":80,\"z\":2", "\"direction\":\"east\",\"distance\":50")) {
+            assertThat(CatalogSchemaValidator.matches(input, JsonParser.parseString("{" + goal + ",\"mode\":\"elytra\",\"max_rockets\":4}"))).isTrue();
+            assertThat(CatalogSchemaValidator.matches(input, JsonParser.parseString("{" + goal + ",\"mode\":\"elytra\",\"max_rockets\":65}"))).isFalse();
+        }
+    }
     @Test
     void scriptChildDiagnosticIsDiscoverableAndFitsTheDetailedActionContract() {
         var catalog = new McpToolCatalog();

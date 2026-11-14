@@ -31,6 +31,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class KnownConstructionAttemptTest {
+    @Test void recoveryMayRestartPreparationButNeverAnUnconfirmedSend() {
+        var request = request(1);
+        var port = new FakePort(request);
+        var attempt = new KnownConstructionAttempt(port, request, 1, 301);
+        assertThat(attempt.recoveryRestartSafe()).isTrue();
+        attempt.tick(1);
+        assertThat(attempt.recoveryRestartSafe()).isTrue();
+        assertThat(port.dispatchedEntryIds).isEmpty();
+        port.tick = 2;
+        attempt.tick(2);
+        assertThat(port.dispatchedEntryIds).containsExactly("cell0");
+        assertThat(attempt.recoveryRestartSafe()).isFalse();
+        attempt.close();
+        assertThat(attempt.recoveryRestartSafe()).isFalse();
+    }
     @Test
     void remembersServerConfirmedWorldWhileInventoryIsStillPending() {
         for (boolean ack : List.of(false, true)) {

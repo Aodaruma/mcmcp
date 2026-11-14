@@ -11,9 +11,19 @@ import java.util.Set;
 /** Coordinate goal accepted without requiring prior observation of the destination. */
 record V2MoveArguments(NavCell goal, net.minecraft.world.phys.Vec3 exactPosition, double arrivalRadius,
         double tolerance, int maxTicks, double maxDistance, V2StopCondition stopWhen,
-        boolean clearPath, String bridgeBlock, boolean autoReplan, boolean sneak, double maxFallDamage) {
+        boolean clearPath, String bridgeBlock, boolean autoReplan, boolean sneak, double maxFallDamage,
+        String mode, int maxRockets) {
+    V2MoveArguments(NavCell goal, net.minecraft.world.phys.Vec3 exactPosition, double arrivalRadius,
+            double tolerance, int maxTicks, double maxDistance, V2StopCondition stopWhen,
+            boolean clearPath, String bridgeBlock, boolean autoReplan, boolean sneak, double maxFallDamage) {
+        this(goal, exactPosition, arrivalRadius, tolerance, maxTicks, maxDistance, stopWhen,
+                clearPath, bridgeBlock, autoReplan, sneak, maxFallDamage, "auto", 4);
+    }
     V2MoveArguments {
         Objects.requireNonNull(goal, "goal");
+        if (!Set.of("auto", "elytra").contains(mode) || maxRockets < 0 || maxRockets > 64
+                || mode.equals("elytra") && (clearPath || bridgeBlock != null || sneak || maxFallDamage != 0))
+            throw new IllegalArgumentException("elytra flight cannot clear terrain, sneak or accept landing damage");
         if (bridgeBlock != null && (!clearPath || !bridgeBlock.matches("minecraft:[a-z0-9_./-]{1,112}"))) {
             throw new IllegalArgumentException("bridge_block requires clear_path and a Vanilla block ID");
         }
@@ -33,7 +43,7 @@ record V2MoveArguments(NavCell goal, net.minecraft.world.phys.Vec3 exactPosition
         RuntimeArguments.requireAllowedKeys(arguments, "agent_move",
                 Set.of("x", "y", "z", "direction", "distance",
                         "arrival_radius", "tolerance", "max_ticks", "max_distance",
-                        "stop_when", "clear_path", "bridge_block", "auto_replan", "sneak", "max_fall_damage", "coordinate_mode"));
+                        "stop_when", "clear_path", "bridge_block", "auto_replan", "sneak", "max_fall_damage", "coordinate_mode", "mode", "max_rockets"));
         boolean coordinates = arguments.keySet().containsAll(Set.of("x", "y", "z"));
         boolean relative = arguments.keySet().containsAll(Set.of("direction", "distance"));
         if (coordinates == relative || arguments.containsKey("direction") != arguments.containsKey("distance")
@@ -70,7 +80,9 @@ record V2MoveArguments(NavCell goal, net.minecraft.world.phys.Vec3 exactPosition
                 arguments.containsKey("bridge_block") ? RuntimeArguments.stringArgument(arguments, "bridge_block") : null,
                 !arguments.containsKey("auto_replan") || RuntimeArguments.booleanArgument(arguments, "auto_replan"),
                 arguments.containsKey("sneak") && RuntimeArguments.booleanArgument(arguments, "sneak"),
-                arguments.containsKey("max_fall_damage") ? RuntimeArguments.doubleArgument(arguments, "max_fall_damage") : 0);
+                arguments.containsKey("max_fall_damage") ? RuntimeArguments.doubleArgument(arguments, "max_fall_damage") : 0,
+                arguments.containsKey("mode") ? RuntimeArguments.stringArgument(arguments, "mode") : "auto",
+                arguments.containsKey("max_rockets") ? RuntimeArguments.intArgument(arguments, "max_rockets") : 4);
     }
 
     private static double coordinate(Map<String, Object> arguments, String key) {

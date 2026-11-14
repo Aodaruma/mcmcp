@@ -36,10 +36,10 @@ final class V2OperationJobExecution implements V2JobExecution {
         operation = job.kind() == AgentJobStore.Kind.INVENTORY ? "inventory"
                 : job.kind() == AgentJobStore.Kind.CRAFT ? "craft"
                 : job.kind() == AgentJobStore.Kind.LOOK ? "look"
-                : job.kind() == AgentJobStore.Kind.CHAT ? "chat" : "interaction";
+                : job.kind() == AgentJobStore.Kind.CHAT ? "chat" : job.kind() == AgentJobStore.Kind.MOVE ? "move" : "interaction";
         if ((job.kind() != AgentJobStore.Kind.INVENTORY
                 && job.kind() != AgentJobStore.Kind.CRAFT
-                && job.kind() != AgentJobStore.Kind.CHAT
+                && job.kind() != AgentJobStore.Kind.CHAT && job.kind() != AgentJobStore.Kind.MOVE
                 && job.kind() != AgentJobStore.Kind.INTERACT && job.kind() != AgentJobStore.Kind.LOOK)
                 || !job.worldSessionId().equals(worldSessionId)) {
             throw new IllegalArgumentException("operation job does not match its session");
@@ -167,6 +167,7 @@ final class V2OperationJobExecution implements V2JobExecution {
 
     public boolean allowsScreenChange() { return begun && driver.allowsScreenChange(); }
     public boolean allowsRiding() { return driver.allowsRiding(); }
+    public boolean allowsFlight() { return driver.allowsFlight(); }
 
     interface Driver {
         void begin(long clientTick, BooleanSupplier outputAllowed);
@@ -174,6 +175,7 @@ final class V2OperationJobExecution implements V2JobExecution {
         Map<String, Object> result();
         default boolean allowsScreenChange() { return false; }
         default boolean allowsRiding() { return false; }
+        default boolean allowsFlight() { return false; }
         void close();
     }
 }

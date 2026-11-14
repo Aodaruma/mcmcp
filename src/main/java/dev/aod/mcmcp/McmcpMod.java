@@ -62,6 +62,8 @@ public final class McmcpMod {
         screenOwnership.setFailureHandler(runtime::onScreenOwnershipFailure);
 
         modContainer.registerConfig(ModConfig.Type.CLIENT, McmcpClientConfig.SPEC);
+        modContainer.registerExtensionPoint(net.neoforged.neoforge.client.gui.IConfigScreenFactory.class,
+                net.neoforged.neoforge.client.gui.ConfigurationScreen::new);
         modEventBus.addListener(automationIndicator::onRegisterGuiLayers);
         var eventBus = NeoForge.EVENT_BUS;
         eventBus.addListener(this::onClientStarted);

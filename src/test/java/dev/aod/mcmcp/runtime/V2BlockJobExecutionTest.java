@@ -17,6 +17,50 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class V2BlockJobExecutionTest {
     private static final UUID SESSION = UUID.randomUUID();
+    @Test void recoveryDoesNotReplayAnUnconfirmedDispatchedMutation() {
+        var store = new AgentJobStore();
+        var id = store.reserve(AgentJobStore.Kind.BREAK_BLOCK, SESSION, 10, 100);
+        var request = V2BreakArguments.parse(Map.of("x", 10, "y", 64, "z", 20), "minecraft:overworld");
+        var driver = new FakeDriver();
+        driver.begins.add(V2BlockJobExecution.BeginResult.STARTED);
+        driver.steps.add(V2BlockJobExecution.StepResult.RUNNING);
+        var job = new V2BlockJobExecution<>(store, id, SESSION, AgentJobStore.Kind.BREAK_BLOCK, request, driver, () -> true);
+        store.confirm(id, 1); job.tick(SESSION, 1, 1, true, () -> true);
+        assertThat(job.suspendForRecovery()).isFalse();
+        assertThat(job.stop("preempted_for_recovery").state()).isEqualTo(AgentJobStore.State.FAILED);
+        assertThat(driver.targets).hasSize(1);
+    }
+
+    @Test void recoveryRetainsConfirmedPartialCellAndResumesAtTheNextCell() {
+        var store = new AgentJobStore();
+        var id = store.reserve(AgentJobStore.Kind.PLACE_BLOCK, SESSION, 100, 100);
+        var request = V2PlaceArguments.parse(Map.of("x", 1, "y", 64, "z", 0, "dx", 1,
+                "block", "minecraft:stone"), "minecraft:overworld");
+        var targets = new ArrayList<NavCell>();
+        var driver = new V2BlockJobExecution.Driver<V2PlaceArguments>() {
+            boolean partial;
+            public String dimension() { return "minecraft:overworld"; }
+            public V2BlockJobExecution.BeginResult begin(NavCell cell, V2PlaceArguments value, BooleanSupplier allowed) {
+                targets.add(cell); return V2BlockJobExecution.BeginResult.STARTED;
+            }
+            public V2BlockJobExecution.StepResult tick(long tick, BooleanSupplier allowed) {
+                partial = true;
+                return targets.size() == 1 ? V2BlockJobExecution.StepResult.RUNNING : V2BlockJobExecution.StepResult.CONFIRMED;
+            }
+            public V2BlockJobExecution.ConfirmedChange confirmedBeforeCompletion() {
+                return partial ? new V2BlockJobExecution.ConfirmedChange(new BlockStateFingerprint("minecraft:air", Map.of()),
+                        new BlockStateFingerprint("minecraft:stone", Map.of())) : null;
+            }
+            public void close() { partial = false; }
+        };
+        var job = new V2BlockJobExecution<>(store, id, SESSION, AgentJobStore.Kind.PLACE_BLOCK, request, driver, () -> true);
+        store.confirm(id, 1); job.tick(SESSION, 1, 1, true, () -> true);
+        assertThat(job.suspendForRecovery()).isTrue();
+        assertThat(store.get(id).completedBlocks()).isEqualTo(1);
+        assertThat(job.tick(SESSION, 100, 100, true, () -> true).state()).isEqualTo(AgentJobStore.State.SUCCEEDED);
+        assertThat(store.get(id).completedBlocks()).isEqualTo(2);
+        assertThat(targets).extracting(NavCell::x).containsExactly(1, 2);
+    }
 
     @Test
     void walksOnlyRequestedCellsAndPublishesAfterRelease() {

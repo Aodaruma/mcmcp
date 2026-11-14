@@ -14,6 +14,7 @@ final class V2HeldItemSelection implements AutoCloseable {
     private final Minecraft minecraft;
     private final UUID session;
     private final String item;
+    private final java.util.function.Predicate<net.minecraft.world.item.ItemStack> filter;
     private final LocalPlayer player;
     private final ClientLevel level;
     private final int originalSlot;
@@ -24,9 +25,15 @@ final class V2HeldItemSelection implements AutoCloseable {
     private boolean keepSelected;
 
     V2HeldItemSelection(Minecraft minecraft, UUID session, String item) {
+        this(minecraft, session, item, stack -> true);
+    }
+
+    V2HeldItemSelection(Minecraft minecraft, UUID session, String item,
+            java.util.function.Predicate<net.minecraft.world.item.ItemStack> filter) {
         this.minecraft = minecraft;
         this.session = session;
         this.item = item;
+        this.filter = java.util.Objects.requireNonNull(filter);
         player = minecraft.player;
         level = minecraft.level;
         originalSlot = player.getInventory().getSelectedSlot();
@@ -76,8 +83,8 @@ final class V2HeldItemSelection implements AutoCloseable {
     void keepSelected() { keepSelected = true; }
 
     private boolean matches(int slot) {
-        return item == null || item.equals(
-                StackFingerprint.fromServerPacket(player.getInventory().getItem(slot)).itemId());
+        var stack = player.getInventory().getItem(slot);
+        return (item == null || item.equals(StackFingerprint.fromServerPacket(stack).itemId())) && filter.test(stack);
     }
 
     @Override

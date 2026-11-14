@@ -38,9 +38,11 @@ public abstract class ClientPacketListenerMixin {
     @Inject(method = "handleDamageEvent", at = @At("TAIL"), require = 1, expect = 1)
     private void mcmcp$damageEvent(net.minecraft.network.protocol.game.ClientboundDamageEventPacket packet, CallbackInfo callback) {
         var player = Minecraft.getInstance().player;
-        if (player != null && this.level == player.level() && packet.entityId() == player.getId())
+        if (player != null && this.level == player.level() && packet.entityId() == player.getId()) {
             dev.aod.mcmcp.runtime.PlayerDamageSignals.global().damage(player,
                     packet.sourceType().is(net.minecraft.tags.DamageTypeTags.IS_FALL), player.getHealth(), player.getAbsorptionAmount());
+            dev.aod.mcmcp.agent.safety.ObservedThreats.received(player, packet.getSource(this.level));
+        }
     }
 
     @Inject(method = "handleSetHealth", at = @At("TAIL"), require = 1, expect = 1)

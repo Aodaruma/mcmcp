@@ -20,6 +20,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class CoordinateMoveJobExecutionTest {
     private static final UUID SESSION = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    @Test void recoveryReplansFromTheRescuedPositionWithoutResettingTheOriginalBudget() {
+        var map = map(edge(cell(0), cell(1)), edge(cell(1), cell(2)), edge(cell(3), cell(2)));
+        var store = new AgentJobStore();
+        var id = store.reserve(MOVE, SESSION, 300, 100);
+        var driver = new FakeDriver(RUNNING_STEP, RUNNING_STEP);
+        var execution = execution(store, id, cell(2), driver, () -> true);
+        store.confirm(id, 1);
+        execution.tick(map.snapshot().orElseThrow(), cell(0), SESSION, 0, 1, 1, true, 0, () -> true);
+        assertThat(execution.suspendForRecovery()).isTrue();
+        assertThat(driver.active).isFalse();
+        execution.tick(map.snapshot().orElseThrow(), cell(3), SESSION, 0, 102, 102, true, 1, () -> true);
+        assertThat(driver.routes).hasSize(2);
+        assertThat(driver.routes.get(1).cells()).containsExactly(cell(3), cell(2));
+        assertThat(store.get(id).completedOperations()).isEqualTo(2);
+        var expired = execution.tick(map.snapshot().orElseThrow(), cell(3), SESSION, 0, 103,
+                java.time.Duration.ofDays(1).toNanos(), true, 1, () -> true);
+        assertThat(expired.failure()).isEqualTo("duration_limit");
+    }
 
     @Test
     void knownGoalRunsOnlyAfterDeliveryAndPublishesSuccessAfterRelease() {

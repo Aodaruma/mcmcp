@@ -83,6 +83,15 @@ public final class KnownTraversabilitySnapshot {
     }
 
     public boolean hasFallDamage() { return fallDamage.values().stream().anyMatch(value -> value > 0); }
+
+    /** A transient planning view; moving bodies must not erase retained terrain evidence. */
+    public KnownTraversabilitySnapshot excludingEdges(java.util.function.Predicate<TraversabilityEdge> blocked) {
+        var retained = new TreeMap<>(edges);
+        if (!retained.values().removeIf(blocked)) return this;
+        var damage = new java.util.HashMap<>(fallDamage);
+        damage.keySet().retainAll(retained.keySet());
+        return new KnownTraversabilitySnapshot(worldSessionId, dimension, worldRevision, retained, damage, fallDamageBudget);
+    }
     public double fallDamage(TraversabilityEdge.Key edge) { return fallDamage.getOrDefault(edge, 0.0); }
     public double fallDamageBudget() { return fallDamageBudget; }
 

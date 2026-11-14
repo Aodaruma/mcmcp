@@ -39,3 +39,28 @@ Cloudflareのapplication sessionはpolicyの既定値で、個別policyのdurati
 利用者の事前許可があるaodのtmpチャットから、hostname・sshd/Cloudflared Running・対象lab・baseline66件・containerとMCP状態を確認し、検証環境の操作を引き継いだ。接続先や認証要件を変更してSSHを迂回したわけではない。Windowsの認証画面を自動操作せず、通常ゲームも操作していない。
 
 期限付きlease中に認証が失効する場合は、再認証だけに依存せず、許可済みの管理経路で元環境復元とDocker停止を確実に行う。今回の復元結果は[移動・結果返却の検証記録](20261011_v2_movement_results.md)へ記載する。認証期間72時間の設定変更は引き続き未実施。
+
+## 2026-10-11夜の更新後確認
+
+ブラウザー認証完了の連絡後も、`ssh -o BatchMode=yes -o ConnectTimeout=12 aod-mimoid "hostname"` は約13秒・exit 1で `Connection timed out during banner exchange`、`Connection to UNKNOWN port 65535 timed out`。利用者が復旧を進める間、再試行を止めた。
+
+利用者のcloudflared更新後、23:34 JSTに開発PCで `2026.10.0 (built 2026-10-05T08:39 UTC)` を確認。ConnectTimeout=20の単独SSHは約3秒・exit 0で実hostname `aod` を取得した。続くSSHの読取りでsshd／CloudflaredのRunningと隔離labの存在も確認した。この再確認では開発担当側のlock退避・サービス再起動・再認証を行っていない。
+
+Codexの遠隔projectは一覧に出ていないため、SSH復旧とCodex遠隔接続を区別する。今回の成功だけで残存lockや特定バージョンの不具合が原因だったとは断定しない。認証期間延長の設定変更を確認した記録でもない。
+
+## 2026-10-12 04:15の新規認証待ち
+
+cloudflared 2026.10.0でSCP開始時にブラウザー認証待ちが発生した。既存の03:44開始lease SSHは存続し、新規接続だけが待機。アプリ用／組織用lockは更新時刻04:15、各81 bytesで、古い0byte lockの退避手順は適用しなかった。token本文と認証URLは本記録へ保存しない。
+
+後続にGUI操作を含む保留SCPのPowerShellとそのSSH／認証の子processだけを終了し、既存leaseと常駐Cloudflaredは保持した。単独 `access login --quiet` の起動はローカルツールの自動承認レビューに `blocked by policy` で拒否された。詳細理由は返されず、別経路で同じ認証起動を強行していない。利用者へ再認証を依頼した。
+
+Codex遠隔のチャット読取り・メッセージ送信は利用できたため、aod側「Cloudflare TunnelのSSHタイムアウト調査」へ元環境復元とDocker停止を依頼。対象・mount・lease所有者・backup66ファイルのhash一致は遠隔側でも確認できた。ただし遠隔側から元チャットの利用者の許可を参照できず、復元・停止は直接承認待ちになった。04:26時点では未実行であり、利用者へ遠隔チャットの確認への回答を依頼済み。
+
+再発防止として、新しい検証runnerでは有効なbackup取得後のlease終了を、認証中の新規SSHに依存しないremote側の復元・停止処理へ接続する必要がある。現行leaseは期限でlockを解放するだけでDocker停止・world復元を自動実行しない。認証期間延長も未実施。
+
+04:29:02の期限到達後、既存lease SSHはexit 1、`Lease deadline; restore explicitly before reuse` で終了した。期限は延長していない。**Docker停止・world復元は未完了**で、接続調査チャットへ期限終了を追記通知した。leaseの終了を環境復元の成功と混同しない。
+
+04:38、利用者の「認証しました」の連絡後、単独SSHがexit 0でhostname `aod` を返した。新たな認証設定変更は行っていない。Docker process 0・lease lockなし、復元記録なしだったため、復元専用の所有lockを取得してDockerを起動し、前runの復元helperを実行。04:40:00に元66/world61ファイルのhash一致、04:40:53にDocker process 0、続いてWSL停止・lock解放を確認した。証拠zipは162ファイル、SHA-256 `2004d6a73bbd2869b9956dccddb70dc3bd67fe9cafbc7d6588df161e671cdb22`。遠隔側には重複操作防止のため復元依頼の取り下げを通知した。
+
+次の隔離run用leaseには、期限到達または`finish-request`で既存の復元・停止helperを遠隔側の`finally`から実行する処理を追加した。新規SSH認証に依存して期限時の後始末が止まらないようにする。元の45分期限は延長せず、前runの完全復元後に別runとして開始する。
+- 2026-10-12 05:25 JST: 認証後に再開した通し試験runも、遠隔leaseのfinish-request経由で元66/world61ファイル復元・Docker停止・lock解放まで完了した。期限時も同じ遠隔finallyを実行するため、SSH再認証が切れても後始末を現地で継続できる。

@@ -43,6 +43,17 @@ public final class CoordinateMoveJobExecution {
     private Map<String, Object> pendingDiversion;
 
     public boolean diverted() { return divertedReason != null; }
+    public boolean suspendForRecovery() {
+        if (terminalIntent != null || jobs.get(actionId).state() != AgentJobStore.State.RUNNING || clearing) return false;
+        driver.close();
+        planner = new CoordinateGoalPlanner(worldSessionId, goal, arrivalRadius);
+        awaitingFinalPosition = false;
+        waitingEvidence = null;
+        evidenceWaitTicks = 0;
+        localObservationWaitTicks = 0;
+        pathReplans++;
+        return releaseAndVerify.getAsBoolean();
+    }
     public void divertTo(NavCell destination, String reason) {
         if (diverted() || terminalIntent != null || jobs.get(actionId).cancelRequested()) return;
         driver.close();
