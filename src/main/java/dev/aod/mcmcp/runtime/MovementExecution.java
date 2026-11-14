@@ -39,6 +39,7 @@ final class MovementExecution {
     NavCell pickupCell() { return pickupCell; }
     boolean active() { return primitiveExecutor.active(); }
     void close() { primitiveExecutor.close(); }
+    void retainLadderHold(net.minecraft.client.player.LocalPlayer player) { primitiveExecutor.retainLadderHold(player); }
 
     MinecraftActionPrimitiveExecutor.TickResult tick(Minecraft minecraft, KnownTraversabilitySnapshot map,
             LocalObservationVolume localVolume, double remainingDistance, double remainingCameraDegrees,

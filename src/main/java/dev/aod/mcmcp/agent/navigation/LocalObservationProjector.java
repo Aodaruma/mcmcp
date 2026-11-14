@@ -48,6 +48,14 @@ public final class LocalObservationProjector {
 
         var publicRecords = new ArrayList<dev.aod.mcmcp.agent.observation.ObservationRecord>();
         var edges = new ArrayList<TraversabilityEdge>();
+        // Contact with a ladder at the start of a move does not prove a resting rung at its end.
+        var observedRungs = snapshot.transitions().stream()
+                .filter(source -> source.locomotion() == Locomotion.LADDER
+                        && source.support() == dev.aod.mcmcp.agent.safety.ObservationRecord.Support.ABSENT
+                        && source.transition() == dev.aod.mcmcp.agent.safety.ObservationRecord.Transition.PROBE_ALLOWED
+                        && !unknown(source) && status(source) == TraversabilityEdge.Status.PROBE_ALLOWED)
+                .map(source -> navCell(dimension, source.to(), centerToFeet))
+                .collect(java.util.stream.Collectors.toSet());
         addHazard(snapshot.current(), dimensionId, snapshot.center(), publicRecords);
         for (var source : snapshot.transitions()) {
             projectTransition(
@@ -57,6 +65,7 @@ public final class LocalObservationProjector {
                     worldSessionId,
                     dimensionId,
                     currentWorldRevision,
+                    observedRungs,
                     publicRecords,
                     edges);
         }
@@ -73,6 +82,7 @@ public final class LocalObservationProjector {
             UUID worldSessionId,
             ResourceId dimension,
             long worldRevision,
+            java.util.Set<NavCell> observedRungs,
             List<dev.aod.mcmcp.agent.observation.ObservationRecord> records,
             List<TraversabilityEdge> edges) {
         if (source.worldRevision() != worldRevision) {
@@ -89,6 +99,10 @@ public final class LocalObservationProjector {
         NavCell resolved = navCell(dimension.value(), source.to(), centerToFeet);
         var to = new NavCell(
                 dimension.value(), requested.x(), resolved.y(), requested.z());
+        if (source.locomotion() == Locomotion.LADDER
+                && source.support() == dev.aod.mcmcp.agent.safety.ObservationRecord.Support.ABSENT
+                && source.transition() == dev.aod.mcmcp.agent.safety.ObservationRecord.Transition.CONTACT
+                && !observedRungs.contains(to)) return;
         final TraversabilityEdge.Key key;
         try {
             key = new TraversabilityEdge.Key(from, to);

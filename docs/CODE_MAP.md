@@ -42,6 +42,8 @@ Javaの基点は [`src/main/java/dev/aod/mcmcp/`](../src/main/java/dev/aod/mcmcp
 
 ## 行動計画の分割
 
+はしごの観測区間・隣接床・上端の身体経路は `agent/safety/LocalObservationVolume`、公開終点は `LocalObservationProjector` / `TraversabilityEdge`、実際の昇降と静止確認は `MinecraftActionPrimitiveExecutor` が担当します。区間間のSHIFTのみの静止所有権は `client/LadderHoldState` に分け、runtimeと実入力境界でMCP OFF・ladder離脱・手動移動・world/player変更を照合します。対応試験は `LocalObservationVolumeTest`、`KnownTraversabilityNavigationTest`、`LocalObservationProjectorTest`、`LadderHoldStateTest` です。[候補の確認表](experiments/20260926_ladder_segments_candidate.md)で実機未確認の範囲を追跡します。
+
 [`AgentPrimitivePlanner`](../src/main/java/dev/aod/mcmcp/agent/action/AgentPrimitivePlanner.java) は既存public APIとimmutableな結果型を保持する入口です。同packageの実装を直接探す場合は次を使います。
 
 | 実装 | 責務 |

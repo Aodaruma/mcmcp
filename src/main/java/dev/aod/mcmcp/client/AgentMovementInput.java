@@ -36,7 +36,11 @@ public final class AgentMovementInput extends KeyboardInput {
 
     /** Applies the shared command after {@link KeyboardInput#tick()} collected physical input. */
     public void apply(AgentInputState.MovementSnapshot agent) {
-        var resolved = resolve(keyPresses, moveVector, agent);
+        apply(agent, false);
+    }
+
+    public void apply(AgentInputState.MovementSnapshot agent, boolean ladderHold) {
+        var resolved = resolve(keyPresses, moveVector, agent, ladderHold);
         keyPresses = resolved.keyPresses();
         moveVector = resolved.moveVector();
     }
@@ -45,10 +49,17 @@ public final class AgentMovementInput extends KeyboardInput {
             Input physicalKeys,
             Vec2 physicalMovement,
             AgentInputState.MovementSnapshot agent) {
+        return resolve(physicalKeys, physicalMovement, agent, false);
+    }
+
+    static ResolvedMovement resolve(Input physicalKeys, Vec2 physicalMovement,
+            AgentInputState.MovementSnapshot agent, boolean ladderHold) {
         Objects.requireNonNull(physicalKeys, "physicalKeys");
         Objects.requireNonNull(physicalMovement, "physicalMovement");
         Objects.requireNonNull(agent, "agent");
         if (!agent.owned()) {
+            if (ladderHold) return new ResolvedMovement(
+                    new Input(false, false, false, false, false, true, false), Vec2.ZERO);
             return new ResolvedMovement(physicalKeys, physicalMovement);
         }
 
