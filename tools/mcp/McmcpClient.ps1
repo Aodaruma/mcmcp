@@ -20,6 +20,38 @@ function Assert-McmcpSchema {
     }
 }
 
+function Get-McmcpResponseDiagnostic {
+    param([object]$Result, [string]$Stage)
+    # Hints from a rejected reply are not verified Action results and never drive polling.
+    $diagnostic = [ordered]@{ validation_stage = $Stage; schema_validated = $false }
+    $isError = Get-PropertyValue $Result 'isError'
+    if ($isError -is [bool]) { $diagnostic.is_error = $isError }
+    $content = Get-Property $Result 'content'
+    if ($null -ne $content -and (Test-IsArrayValue $content.Value)) {
+        $diagnostic.content_count = @($content.Value).Count
+    }
+    $structured = Get-Property $Result 'structuredContent'
+    $diagnostic.has_structured_content = $null -ne $structured
+    if ($null -ne $structured -and (Test-IsObjectValue $structured.Value)) {
+        $data = $structured.Value
+        $id = Get-PropertyValue $data 'action_id'
+        if ($id -is [string] -and $id -cmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z') {
+            $diagnostic.unverified_action_id = $id
+        }
+        $state = Get-PropertyValue $data 'state'
+        if ($state -is [string] -and $state -cin @('queued', 'running', 'succeeded', 'failed', 'cancelled', 'unconfirmed')) {
+            $diagnostic.unverified_state = $state
+        }
+        foreach ($key in @('failure', 'stop_reason')) {
+            $value = Get-PropertyValue $data $key
+            if ($value -is [string] -and $value -cmatch '^[a-z][a-z0-9_]{0,127}\z') {
+                $diagnostic["unverified_$key"] = $value
+            }
+        }
+    }
+    return $diagnostic
+}
+
 function Invoke-McmcpClient {
     param(
         [Parameter(Mandatory)][string]$TokenPath,
@@ -35,6 +67,8 @@ function Invoke-McmcpClient {
     )
     $bearer = $null
     $actionId = $null
+    $result = $null
+    $validationStage = $null
     try {
         $startTools = @('agent_move', 'agent_look', 'agent_break_block',
             'agent_place_block', 'agent_interact', 'agent_inventory', 'agent_craft', 'agent_click',
@@ -117,6 +151,8 @@ function Invoke-McmcpClient {
         }
         $clock = [Diagnostics.Stopwatch]::StartNew()
         do {
+            $result = $null
+            $validationStage = $null
             $timeout = 35
             if ($Tool -ceq 'agent_get_action') {
                 $wait = Get-PropertyValue $Arguments 'wait_timeout_ms'
@@ -133,10 +169,20 @@ function Invoke-McmcpClient {
             }
             $result = Send-Request 'tools/call' $Tool `
                 @{ _meta = $meta; name = $Tool; arguments = $Arguments } $timeout
-            try { Assert-McmcpToolResult $result 'tools/call' } catch {
+            $definition = @($catalog.tools | Where-Object name -CEQ $Tool)[0]
+            $validationStage = 'tool_result'
+            try {
+                $actionSchema = if ($Tool -cin ($startTools + @('agent_get_action', 'agent_cancel_action'))) {
+                    $definition.outputSchema
+                } else { $null }
+                Assert-McmcpToolResult $result 'tools/call' -ActionOutputSchema $actionSchema
+            } catch {
+                if ($_.Exception.Data.Contains('tool_validation_code')) {
+                    $validationStage = $_.Exception.Data['tool_validation_code']
+                }
                 throw (New-McmcpClientFailure 'protocol_validation' 'invalid_tool_result')
             }
-            if ($result.isError) {
+            if ($result.isError -and $null -eq (Get-Property $result 'structuredContent')) {
                 $rejection = [ordered]@{ ok = $false; failure_kind = 'tool'; diagnostic_code = 'tool_rejected'
                     error = ($result.content[0].text | ConvertFrom-Json -Depth 10) }
                 # TextContent contains a second JSON document; decoding escapes can reveal a secret.
@@ -147,8 +193,9 @@ function Invoke-McmcpClient {
                 return $rejection
             }
             $data = $result.structuredContent
-            $definition = @($catalog.tools | Where-Object name -CEQ $Tool)[0]
+            $validationStage = 'output_schema'
             Assert-McmcpSchema $data $definition.outputSchema 'invalid_success_schema'
+            $validationStage = 'action_id_match'
             if ($Tool -cin @('agent_get_action', 'agent_cancel_action') -and
                 $data.action_id -cne (Get-PropertyValue $Arguments 'action_id')) {
                 throw (New-McmcpClientFailure 'protocol_validation' 'action_id_mismatch')
@@ -169,6 +216,13 @@ function Invoke-McmcpClient {
         }
         if ($_.Exception.Data.Contains('http_status')) { $failure.http_status = $_.Exception.Data['http_status'] }
         if ($null -ne $actionId) { $failure.action_id = $actionId }
+        if ($null -ne $result -and $null -ne $validationStage -and
+            $failure.failure_kind -ceq 'protocol_validation' -and $failure.diagnostic_code -cne 'secret_blocked') {
+            $diagnostic = Get-McmcpResponseDiagnostic $result $validationStage
+            if (-not (ConvertTo-CompactJson $diagnostic).Contains($bearer, [StringComparison]::Ordinal)) {
+                $failure.response_diagnostic = $diagnostic
+            }
+        }
         return $failure
     } finally {
         $bearer = $null

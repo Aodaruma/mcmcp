@@ -188,7 +188,8 @@ function Assert-McmcpToolResult {
     param(
         [Parameter(Mandatory)][object]$Result,
         [Parameter(Mandatory)][string]$Operation,
-        [switch]$RequireSuccess
+        [switch]$RequireSuccess,
+        [object]$ActionOutputSchema
     )
     if ((Get-PropertyValue $Result 'resultType') -cne 'complete') {
         throw "$Operation returned an invalid resultType"
@@ -218,7 +219,41 @@ function Assert-McmcpToolResult {
     $structuredProperty = Get-Property $Result 'structuredContent'
     if ($isErrorProperty.Value) {
         if ($null -ne $structuredProperty) {
-            throw "$Operation domain error must omit structuredContent"
+            if ($null -eq $ActionOutputSchema) {
+                throw "$Operation domain error must omit structuredContent"
+            }
+            $validationCode = 'invalid_action_error'
+            try {
+                $data = $structuredProperty.Value
+                if (-not (Test-IsObjectValue $data) -or
+                    (Get-PropertyValue $data 'schema_version') -ne 2 -or
+                    (Get-PropertyValue $data 'state') -cnotin @('failed', 'cancelled')) {
+                    throw 'Expected a stopped v2 Action'
+                }
+                $id = Get-PropertyValue $data 'action_id'
+                if ($id -isnot [string] -or $id -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z') {
+                    throw 'Expected an exact Action UUID'
+                }
+                $validationCode = 'invalid_action_error_schema'
+                if (-not (Test-Json -Json (ConvertTo-CompactJson $data) `
+                        -Schema (ConvertTo-CompactJson $ActionOutputSchema) -ErrorAction Stop)) {
+                    throw 'Action schema mismatch'
+                }
+                $validationCode = 'action_error_text_mismatch'
+                $content = @($contentProperty.Value)
+                if ($content.Count -ne 1) { throw 'Expected one Action TextContent' }
+                # Compare parsed JSON, allowing formatting/key order but not conflicting receipts.
+                $textNode = [Text.Json.Nodes.JsonNode]::Parse([string](Get-PropertyValue $content[0] 'text'))
+                $dataNode = [Text.Json.Nodes.JsonNode]::Parse((ConvertTo-CompactJson $data))
+                if (-not [Text.Json.Nodes.JsonNode]::DeepEquals($textNode, $dataNode)) {
+                    throw 'Action text differs from structuredContent'
+                }
+            } catch {
+                $failure = [InvalidOperationException]::new("$Operation returned an invalid Action error")
+                $failure.Data['tool_validation_code'] = $validationCode
+                throw $failure
+            }
+            return
         }
         $content = @($contentProperty.Value)
         if ($content.Count -ne 1) {

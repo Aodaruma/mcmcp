@@ -252,6 +252,139 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(reply['action_id'], ACTION)
         self.assertEqual(len(self.requests), 3)
 
+    def test_synchronous_failed_and_cancelled_actions_retain_results_without_polling(self):
+        for state in ['failed', 'cancelled']:
+            for wait in [0, 10]:
+                with self.subTest(state=state, wait=wait):
+                    self.requests.clear()
+                    data = v2_status(state)
+                    data.update(failure='path_blocked' if state == 'failed' else 'client_request',
+                                result={'confirmed_count': 1, 'failure_diagnostics': ['check=fixture']})
+                    def modify(request, envelope):
+                        if request['method'] == 'tools/call':
+                            envelope['result'] = tool_result(data)
+                            envelope['result']['isError'] = True
+                            # Formatting and key order are not a protocol mismatch.
+                            envelope['result']['content'][0]['text'] = json.dumps(
+                                dict(reversed(list(data.items()))), indent=2)
+                        return envelope
+                    self.modify = modify
+                    reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', str(wait), arguments=START)
+                    self.assertTrue(reply['ok'], reply)  # Receipt validity, not gameplay success.
+                    self.assertEqual(reply['result'], data)
+                    self.assertEqual(len(self.requests), 2)
+
+    def test_malformed_action_errors_stop_with_bounded_unverified_hints(self):
+        modes = ['queued', 'running', 'succeeded', 'wrong_id', 'id_newline', 'wrong_progress',
+                 'wrong_failure', 'wrong_result', 'text_mismatch', 'duplicate_text_id', 'extra_text',
+                 'read_tool', 'chat_read', 'build_preview']
+        for mode in modes:
+            with self.subTest(mode=mode):
+                self.requests.clear()
+                def modify(request, envelope):
+                    if request['method'] != 'tools/call':
+                        return envelope
+                    data = v2_status('failed')
+                    data['failure'] = 'path_blocked'
+                    if mode in ['queued', 'running', 'succeeded']: data['state'] = mode
+                    if mode == 'wrong_id': data['action_id'] = 'invalid-' * 1000
+                    if mode == 'id_newline': data['action_id'] += '\n'
+                    if mode == 'wrong_progress': data['progress']['completed_operations'] = -1
+                    if mode == 'wrong_failure': data['failure'] = {'private_message': 'do not copy'}
+                    if mode == 'wrong_result': data['result'] = 'private-payload' * 1000
+                    result = tool_result(data)
+                    result['isError'] = True
+                    if mode == 'text_mismatch':
+                        result['content'][0]['text'] = json.dumps(dict(data, action_id=ACTION[:-1]+'2'))
+                    if mode == 'duplicate_text_id':
+                        result['content'][0]['text'] = result['content'][0]['text'].replace(
+                            '"action_id":', f'"action_id": "{ACTION}", "action_id":')
+                    if mode == 'extra_text': result['content'].append({'type': 'text', 'text': 'private text'})
+                    envelope['result'] = result
+                    return envelope
+                self.modify = modify
+                tool, arguments = {
+                    'read_tool': ('agent_get_state', {}),
+                    'chat_read': ('agent_chat', {'operation': 'read'}),
+                    'build_preview': ('agent_build', {'blueprint_file': 'art.json', 'dimension': 'minecraft:overworld'})
+                }.get(mode, ('agent_move', START))
+                reply = self.invoke('-Tool', tool, arguments=arguments)
+                self.assertFalse(reply['ok'], reply)
+                self.assertEqual(reply['diagnostic_code'], 'invalid_tool_result')
+                self.assertNotIn('result', reply)
+                self.assertNotIn('action_id', reply)  # Never promote an unverified ID.
+                hint = reply['response_diagnostic']
+                self.assertFalse(hint['schema_validated'])
+                self.assertTrue(hint['is_error'])
+                self.assertTrue(hint['has_structured_content'])
+                if mode not in ['wrong_id', 'id_newline']: self.assertEqual(hint['unverified_action_id'], ACTION)
+                else: self.assertNotIn('unverified_action_id', hint)
+                if mode == 'wrong_failure': self.assertNotIn('unverified_failure', hint)
+                self.assertLess(len(json.dumps(hint).encode()), 1024)
+                self.assertNotIn('private', json.dumps(reply))
+                self.assertEqual(len(self.requests), 2)
+
+    def test_malformed_success_also_retains_hints_without_accepting_or_polling(self):
+        def modify(request, envelope):
+            if request['method'] == 'tools/call':
+                data = v2_status('running')
+                data['progress']['completed_operations'] = -1
+                envelope['result'] = tool_result(data)
+            return envelope
+        self.modify = modify
+        reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10', arguments=START)
+        self.assertEqual(reply['diagnostic_code'], 'invalid_success_schema')
+        self.assertEqual(reply['response_diagnostic']['validation_stage'], 'output_schema')
+        self.assertEqual(reply['response_diagnostic']['unverified_action_id'], ACTION)
+        self.assertNotIn('action_id', reply)
+        self.assertEqual(len(self.requests), 2)
+
+    def test_polled_action_error_checks_identity_and_never_loses_known_id(self):
+        for mismatch in [False, True]:
+            with self.subTest(mismatch=mismatch):
+                self.requests.clear()
+                def modify(request, envelope):
+                    if request.get('params', {}).get('name') == 'agent_get_action':
+                        data = v2_status('failed')
+                        data['failure'] = 'path_blocked'
+                        if mismatch: data['action_id'] = ACTION[:-1]+'2'
+                        envelope['result'] = tool_result(data)
+                        envelope['result']['isError'] = True
+                    return envelope
+                self.modify = modify
+                reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10', arguments=START)
+                if mismatch:
+                    self.assertEqual(reply['diagnostic_code'], 'action_id_mismatch')
+                    self.assertEqual(reply['action_id'], ACTION)
+                    self.assertEqual(reply['response_diagnostic']['unverified_action_id'], ACTION[:-1]+'2')
+                else:
+                    self.assertTrue(reply['ok'], reply)
+                    self.assertEqual(reply['result']['state'], 'failed')
+                self.assertEqual(len(self.requests), 3)
+
+    def test_action_errors_and_rejected_diagnostics_cannot_expose_tokens(self):
+        for encoded_text_only in [False, True]:
+            with self.subTest(encoded_text_only=encoded_text_only):
+                self.requests.clear()
+                def modify(request, envelope):
+                    if request['method'] == 'tools/call':
+                        data = v2_status('failed')
+                        data['failure'] = TOKEN
+                        result = tool_result(data)
+                        result['isError'] = True
+                        if encoded_text_only:
+                            result['structuredContent']['failure'] = 'path_blocked'
+                            result['content'][0]['text'] = result['content'][0]['text'].replace(
+                                TOKEN, ''.join('\\u%04x' % ord(c) for c in TOKEN))
+                        envelope['result'] = result
+                    return envelope
+                self.modify = modify
+                reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10', arguments=START)
+                self.assertFalse(reply['ok'])
+                self.assertNotIn('result', reply)
+                self.assertEqual(reply['diagnostic_code'], 'invalid_tool_result' if encoded_text_only else 'secret_blocked')
+                self.assertEqual(len(self.requests), 2)
+
     def test_nested_domain_json_cannot_decode_an_escaped_token_into_output(self):
         def modify(request, envelope):
             if request['method'] == 'tools/call':
