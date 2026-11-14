@@ -49,8 +49,11 @@ Maintainers may merge ordinary changes within the existing safety boundaries whe
 4. **Squash merge**し、`Closes #N`で対応Issueを閉じる。配布に残る確認は別途追跡する。<br>
    **Squash merge** and close the issue through `Closes #N`. Track any remaining release verification separately.
 
-現在はowner中心の運用のため、GitHub上の必須approval数は**0**です。レビュー不要という意味ではありません。外部PRには可能な場合approveし、本人作成PRは独立したreviewerまたは別agentのレビュー結果を記録してからmergeします。同じGitHubアカウントでは自己承認できないため、別agentの記録をGitHubのapprovalと表現しないでください。<br>
-The current owner-led workflow requires **0** GitHub approvals. This does not waive review. Approve external PRs when possible. For self-authored PRs, record an independent reviewer or separate agent's review before merging. A GitHub account cannot approve its own PR; do not describe another agent's written review as a GitHub approval.
+現在はowner中心の運用のため、GitHub上の必須approval数は**0**です。レビュー不要という意味ではありません。外部PRには可能な場合approveします。本人作成PRのコード変更は独立したreviewerの確認を記録します。小さな文書のみの変更は、別工程で差分・リンク・既存条件の保持を自己レビューし、対象SHAと検証結果を記録できます。認証・権限・安全条件・merge/配布gateの変更は文書でもこの例外に含めません。自己レビューは独立レビューやGitHub approvalと区別します。<br>
+The current owner-led workflow requires **0** GitHub approvals, but still requires a recorded review. Approve external PRs when possible. Self-authored code changes need an independent reviewer. Small documentation-only changes may use a separate self-review pass recording the SHA, links, retained requirements, and validation. Changes to authentication, permissions, safety conditions, or merge/release gates do not qualify, even in documentation. Do not call self-review an independent review or GitHub approval.
+
+サブエージェントは使いません。独立確認が必要で人のreviewerがいない場合に限り、Codex CLIへ対象差分と確認点を絞ってレビューを依頼できます。常時並列化・再帰委譲は避け、未実施の独立レビューを完了扱いにしません。<br>
+Do not use subagents. When independent review is required and no human reviewer is available, a bounded Codex CLI review may be used. Avoid routine parallelism and recursive delegation; never mark an unperformed independent review as complete.
 
 人員が増えたら、必須approval **1**とCODEOWNERS review必須へ移行します。移行はownerが判断します。<br>
 When more reviewers are available, the owner should enable **1** required approval and required CODEOWNERS review.

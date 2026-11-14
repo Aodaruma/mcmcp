@@ -5,6 +5,9 @@ Bug reports, documentation fixes, and small improvements are welcome. Read the s
 
 ## 1. Issueで担当を決める / Claim an issue
 
+読み取り調査やローカルの文書草案は、依頼内容を範囲として先に進められます。共同実装への着手・PR公開までにIssueと担当を揃えてください。<br>
+Read-only investigation and local documentation drafts may start from the request. Coordinate an issue and ownership before shared implementation or PR publication.
+
 1. [Issues](https://github.com/Aodaruma/mcmcp/issues)で同じ報告や着手中の作業を探します。なければ、期待する動作・実際の動作・再現手順を書いてIssueを作ります。<br>
    Check for an existing report or active work. Otherwise, open an issue with expected behavior, actual behavior, and reproduction steps.
 2. 着手前に「対応します」とコメントし、担当を調整します。担当変更権限がなければmaintainerに割り当てを依頼してください。<br>
