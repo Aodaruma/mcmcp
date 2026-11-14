@@ -92,7 +92,8 @@ public final class KnownMenuProfileSupport {
                     && screen.getMenu() == menu;
             if (fullContent) {
                 Object value = type.getMethod("itemStacks").invoke(payload);
-                if (!(value instanceof List<?> items) || items.size() != slotViews(menu).size()
+                var slots = slotViews(menu);
+                if (!(value instanceof List<?> items) || items.size() != slots.size()
                         || items.stream().anyMatch(item -> !(item instanceof ItemStack))) return;
                 var stacks = items.stream().map(item -> ContainerSyncSignals.StackFingerprint
                         .fromServerPacket((ItemStack) item)).toList();
@@ -100,12 +101,19 @@ public final class KnownMenuProfileSupport {
                 signals.onFullContent(minecraft.level, id, BACKPACK_MENU_TYPE, state, stacks,
                         ContainerSyncSignals.StackFingerprint.fromServerPacket(carried),
                         screenMatches, signals.currentTick());
+                for (int index = 0; index < slots.size(); index++) {
+                    PlayerMenuSyncSignals.global().menuSlot(minecraft, slots.get(index), stacks.get(index));
+                }
             } else {
                 int slot = (int) type.getMethod("slotNumber").invoke(payload);
                 var stack = (ItemStack) type.getMethod("stack").invoke(payload);
+                var slots = slotViews(menu);
+                if (slot < 0 || slot >= slots.size()) return;
+                var fingerprint = ContainerSyncSignals.StackFingerprint.fromServerPacket(stack);
                 signals.onSlot(minecraft.level, id, BACKPACK_MENU_TYPE, state, slot,
-                        ContainerSyncSignals.StackFingerprint.fromServerPacket(stack),
+                        fingerprint,
                         screenMatches, signals.currentTick());
+                PlayerMenuSyncSignals.global().menuSlot(minecraft, slots.get(slot), fingerprint);
             }
         } catch (ReflectiveOperationException | RuntimeException ignored) {
             // No evidence is preferable to mistaking a client prediction for a server update.

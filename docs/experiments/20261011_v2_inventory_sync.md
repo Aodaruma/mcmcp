@@ -34,3 +34,7 @@ nav-r14で携帯収納の確認・移送・終了は成功する一方、`agent_
 - 元66ファイル（world61）を全hash一致で復元し、fixtureを撤去。15:42 JSTまでにcontainer/Docker/WSL停止とlease解放、16:10の期限内完了を確認。
 
 証跡はaod-mimoidの `F:/mcmcp-testlab/20260902-hard-building-v1/eval-artifacts/20261011-v2-inventory-sync`。ローカルの `artifacts/v2-inventory-sync-20261011/remote-verification.json` に公開job要約と最終receipt検証出力を回収した。診断候補は通常profileに未導入。利用者の後続指示で床延長のv2統合を優先し、同期調査はこの状態を保存する。
+
+## 10月13日の追加調査
+
+バッグtake後の不一致を旧R22bの隔離環境で再現した。SophisticatedBackpacksの独自受信がplayer menu記録へ反映されない経路を修正・検証する。[R23の記録](20261013_v2_backpack_inventory_sync.md)。診断のsnapshot/full packet tickはJVM内の累積時計で、worldのclient_tickとは起点が異なる。tickの大小だけでは別sessionの残存を意味しない。

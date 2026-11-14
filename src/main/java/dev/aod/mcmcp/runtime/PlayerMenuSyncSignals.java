@@ -5,6 +5,8 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.protocol.game.ClientboundContainerSetContentPacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket;
+import net.minecraft.world.Container;
+import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import java.util.ArrayList;
 import java.util.List;
@@ -39,8 +41,8 @@ public final class PlayerMenuSyncSignals {
             var menu = player.containerMenu;
             if (packet.containerId() == menu.containerId && packet.items().size() == menu.slots.size()) {
                 for (int index = 0; index < menu.slots.size(); index++) {
-                    var slot = menu.getSlot(index);
-                    if (slot.container == player.getInventory()) playerSlot(minecraft, slot.getContainerSlot(), packet.items().get(index));
+                    menuSlot(minecraft, menu.getSlot(index),
+                            ContainerSyncSignals.StackFingerprint.fromServerPacket(packet.items().get(index)));
                 }
             }
             return;
@@ -61,20 +63,35 @@ public final class PlayerMenuSyncSignals {
                     ContainerSyncSignals.StackFingerprint.fromServerPacket(packet.getItem()), tick());
         } else if (packet.getContainerId() == menu.containerId
                 && packet.getSlot() >= 0 && packet.getSlot() < menu.slots.size()) {
-            var slot = menu.getSlot(packet.getSlot());
-            if (slot.container == player.getInventory()) playerSlot(minecraft, slot.getContainerSlot(), packet.getItem());
+            menuSlot(minecraft, menu.getSlot(packet.getSlot()),
+                    ContainerSyncSignals.StackFingerprint.fromServerPacket(packet.getItem()));
         }
     }
 
     public void playerSlot(Minecraft minecraft, int slot, ItemStack stack) {
         if (!bind(minecraft)) return;
+        recordSlot(channel, player.getInventory(), player.inventoryMenu.slots, player.getInventory(), slot,
+                ContainerSyncSignals.StackFingerprint.fromServerPacket(stack), tick());
+    }
+
+    /** The caller must validate the inbound payload's menu identity before mapping its slots. */
+    void menuSlot(Minecraft minecraft, Slot slot, ContainerSyncSignals.StackFingerprint packetStack) {
+        if (!bind(minecraft)) return;
+        recordSlot(channel, player.getInventory(), player.inventoryMenu.slots,
+                slot.container, slot.getContainerSlot(), packetStack, tick());
+    }
+
+    static void recordSlot(ContainerSyncSignals.SessionChannel channel, Container inventory,
+            List<Slot> playerMenuSlots, Container source, int inventorySlot,
+            ContainerSyncSignals.StackFingerprint packetStack, long tick) {
+        if (source != inventory) return;
         var indices = new ArrayList<Integer>();
-        for (int index = 0; index < player.inventoryMenu.slots.size(); index++) {
-            var entry = player.inventoryMenu.getSlot(index);
-            if (entry.container == player.getInventory() && entry.getContainerSlot() == slot) indices.add(index);
+        for (int index = 0; index < playerMenuSlots.size(); index++) {
+            var entry = playerMenuSlots.get(index);
+            if (entry.container == inventory && entry.getContainerSlot() == inventorySlot) indices.add(index);
         }
         channel.playerInventorySlot(0, "mcmcp:player_inventory", List.copyOf(indices),
-                ContainerSyncSignals.StackFingerprint.fromServerPacket(stack), tick());
+                packetStack, tick);
     }
 
     public void carried(Minecraft minecraft, ItemStack stack) {
