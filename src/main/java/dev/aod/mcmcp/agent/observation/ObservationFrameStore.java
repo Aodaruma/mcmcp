@@ -25,6 +25,11 @@ import java.util.function.LongSupplier;
  * Minecraft objects never enter this boundary.
  */
 public final class ObservationFrameStore {
+    public enum CursorReleaseStatus {
+        RELEASED,
+        COMPLETED
+    }
+
     public static final int ROLLING_FRAME_LIMIT = 2;
     public static final int ANNOUNCED_FRAME_LIMIT = 16;
     public static final int ANNOUNCED_RECORD_LIMIT = 65_536;
@@ -135,6 +140,31 @@ public final class ObservationFrameStore {
             return continuePage(frameId, kinds, filter, cursor, limit, now);
         }
         return firstPage(frameId, kinds, filter, limit, now);
+    }
+
+    /**
+     * Releases the pagination lease identified by an opaque cursor.
+     *
+     * <p>Any cursor belonging to an active lease releases that entire lease and all of its
+     * cursors. A completed cursor is a side-effect-free acknowledgement: completed replay
+     * retention and its deadlines are not refreshed. Unknown, expired, or previous-session
+     * cursors are deliberately indistinguishable.</p>
+     */
+    public synchronized CursorReleaseStatus releaseCursor(String cursor)
+            throws ObservationStoreException {
+        Objects.requireNonNull(cursor, "cursor");
+        long now = nanoTime.getAsLong();
+        purgeExpired(now);
+        CursorState state = cursors.get(cursor);
+        if (state == null) {
+            throw failure(ObservationStoreException.Code.INVALID_CURSOR,
+                    "The observation cursor is invalid, expired, or belongs to another session");
+        }
+        if (state.lease.completed) {
+            return CursorReleaseStatus.COMPLETED;
+        }
+        invalidateLease(state.lease);
+        return CursorReleaseStatus.RELEASED;
     }
 
     /** Invalidates every frame, pagination lease, and cursor at a world-session boundary. */

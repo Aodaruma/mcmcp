@@ -1,6 +1,6 @@
 package dev.aod.mcmcp.runtime;
 
-import dev.aod.mcmcp.runtime.AgentObservations.PreparedObservationPage;
+import dev.aod.mcmcp.runtime.AgentObservations.PreparedObservationResponse;
 import dev.aod.mcmcp.runtime.ActionAdmission.AgentAdmissionSnapshot;
 import dev.aod.mcmcp.runtime.ActionAdmission.PreparedAgentAction;
 import dev.aod.mcmcp.runtime.ActionAdmission.AdmissionFenceFailure;
@@ -1021,10 +1021,14 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 assertClientThread(minecraft);
                 var session = sessions.snapshot();
                 RuntimeFailures.requireReady(session);
-                PreparedObservationPage prepared = agentObservations.getAgentObservation(observation.arguments());
-                return RuntimeReply.success(
-                        prepared.wirePage(),
-                        new McpRuntimePort.ObservationDeliveryReceipt(prepared.receiptId()));
+                PreparedObservationResponse prepared =
+                        agentObservations.getAgentObservation(observation.arguments());
+                return prepared.receiptId() == null
+                        ? RuntimeReply.success(prepared.wireResponse())
+                        : RuntimeReply.success(
+                                prepared.wireResponse(),
+                                new McpRuntimePort.ObservationDeliveryReceipt(
+                                        prepared.receiptId()));
             }
             return RuntimeReply.success(executeOnClientThread(command, context));
         });
