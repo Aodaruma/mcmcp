@@ -550,6 +550,17 @@ final class AgentProgramPlanner {
                     node, input, cameraLimit, costs, knownSurfaces, mutationAims, work,
                     surface, 1, 0, 0);
         }
+        if (node instanceof ActionDsl.SetKnownLever lever) {
+            MutationSurface surface = AgentSurfaceEvidence.requireMutationSurface(
+                    map, latestFrame, input, lever.target(),
+                    AgentSurfaceEvidence.surfaceBarrierWorldRevision(map, surfaceRevisionBarrier, lever.target()),
+                    "minecraft:lever",
+                    value -> AgentSurfaceEvidence.exactObservedState(value, lever.expectedState()),
+                    "Lever target requires a current matching complete visible lever state");
+            return AgentMutationPlanner.analyzeMutation(
+                    node, input, cameraLimit, costs, knownSurfaces, mutationAims, work,
+                    surface, 1, 0, 0);
+        }
         if (node instanceof ActionDsl.InspectKnownContainer inspect) {
             AgentSurfaceEvidence.requireRoutingLabel(
                     map, latestFrame, inspect.routingLabel(), inspect.target(),

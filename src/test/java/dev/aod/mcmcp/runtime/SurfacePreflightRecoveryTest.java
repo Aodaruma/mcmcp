@@ -40,6 +40,15 @@ class SurfacePreflightRecoveryTest {
     private static final ActionDsl.InspectKnownContainer NODE = new ActionDsl.InspectKnownContainer(
             "inspect", new ActionDsl.Position(DIM.value(), 1, 64, 0), "minecraft:chest");
     private static final ActionDsl.Budget BUDGET = new ActionDsl.Budget(1_000, 20, 0, 360, 3, 0, 0);
+    private static final ResourceId LEVER_BLOCK = new ResourceId("minecraft:lever");
+    private static final Map<String, String> LEVER_PROPERTIES =
+            Map.of("face", "floor", "facing", "north", "powered", "false");
+    private static final VisibleSurface LEVER = new VisibleSurface(
+            CHEST.position(), ObservationRecord.Face.UP, LEVER_BLOCK,
+            new ObservationRecord.BlockStateView(LEVER_BLOCK, LEVER_PROPERTIES), null,
+            ObservationRecord.ShapeClass.PARTIAL, null, CHEST.rayHit(), CHEST.eyeOrigin(), 10, 10);
+    private static final ActionDsl.SetKnownLever SET_LEVER = new ActionDsl.SetKnownLever(
+            "lever", NODE.target(), new ActionDsl.BlockStateSpec(LEVER_BLOCK.value(), LEVER_PROPERTIES), true);
     private static final VisibleSurface TABLE = new VisibleSurface(
             CHEST.position(), ObservationRecord.Face.UP,
             new ResourceId("minecraft:crafting_table"), ObservationRecord.ShapeClass.OPAQUE, null,
@@ -67,6 +76,47 @@ class SurfacePreflightRecoveryTest {
                     Optional.empty(), Optional.empty(), Optional.of(FLOOR.placementStateRef()),
                     new ActionDsl.PlacementSupport(FLOOR.support(), ActionDsl.BlockFace.UP,
                             Optional.of(FLOOR.expectedSupport()), Optional.empty()))));
+
+    @Test
+    void leverKeepsItsOriginalDeliveryAcrossEveryPreUseStage() {
+        var fixture = new Fixture(SET_LEVER, LEVER);
+        assertThat(fixture.recovery.lease()).isNotNull();
+        int tick = 10;
+        for (var stage : List.of(RendererRecoveryStage.CAPTURE, RendererRecoveryStage.COMMIT,
+                RendererRecoveryStage.DISPATCH, RendererRecoveryStage.JIT)) {
+            var pending = fixture.submit(stage, stage == RendererRecoveryStage.JIT);
+            fixture.drain(tick++, false);
+            assertThat(pending).isNotDone();
+            assertThat(fixture.interactions).hasValue(0);
+            fixture.drain(tick++, true);
+            assertThat(pending.join()).isEqualTo("ready");
+        }
+        assertThat(fixture.rays).hasValue(4);
+        assertThat(fixture.interactions).hasValue(1);
+        assertThat(fixture.store.augment(Optional.of(fixture.raw)).orElseThrow().records()).containsExactly(LEVER);
+        assertThat(fixture.recovery.evaluate(VALID, 30, 1_500_000_000L, true))
+                .isEqualTo(RENDERER_EVIDENCE_TIMEOUT);
+        assertThat(fixture.recovery.evaluate(DeliveredPolicyEvidenceStore.SurfaceLeaseStatus.DELIVERY_EXPIRED,
+                31, 1_550_000_000L, true))
+                .isEqualTo(SurfacePreflightRecovery.Decision.DELIVERY_EXPIRED);
+    }
+
+    @Test
+    void leverCannotUseChangedOccludedOrFogHiddenEvidenceAfterWaiting() {
+        for (int obstruction = 0; obstruction < 3; obstruction++) {
+            var fixture = new Fixture(SET_LEVER, LEVER);
+            var pending = fixture.submit(RendererRecoveryStage.JIT, true);
+            fixture.drain(10, false);
+            assertThat(pending).isNotDone();
+            if (obstruction == 0) fixture.block = new ResourceId("minecraft:stone");
+            if (obstruction == 1) fixture.block = null;
+            if (obstruction == 2) fixture.fogDistance = 1;
+            fixture.drain(11, true);
+            assertThatThrownBy(pending::join).hasCauseInstanceOf(AgentPrimitivePlanner.PlanningException.class);
+            assertThat(fixture.interactions).hasValue(0);
+            assertThat(fixture.recovery.summary().revalidatedStages()).isZero();
+        }
+    }
 
     @Test
     void singlePlacementWaitsAtEveryPreDispatchStageUsingOnlyItsOriginalSupport() {
@@ -481,6 +531,8 @@ class SurfacePreflightRecoveryTest {
                                 ? new SurfacePreflightRecovery.Target(floor.support(), floor.expectedSupport().block())
                                 : primitive instanceof ActionDsl.CraftKnownRecipe craft
                                         ? new SurfacePreflightRecovery.Target(craft.target(), craft.expectedState().block())
+                                : primitive instanceof ActionDsl.SetKnownLever lever
+                                        ? new SurfacePreflightRecovery.Target(lever.target(), lever.expectedState().block())
                                 : new SurfacePreflightRecovery.Target(NODE.target(), NODE.expectedBlock());
                 AgentPrimitivePlanner.requireKnownSurface(map.snapshot().orElseThrow(), planning,
                         target.position(), target.block(), 65);

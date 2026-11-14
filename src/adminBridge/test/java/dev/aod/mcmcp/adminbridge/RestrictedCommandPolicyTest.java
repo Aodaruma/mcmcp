@@ -42,6 +42,20 @@ class RestrictedCommandPolicyTest {
     }
 
     @Test
+    void acceptsLeverFixturesOnlyInsideTheDeclaredMutationEnvelope() throws Exception {
+        assertThat(policy.validate(manifest(1), List.of(
+                "setblock 1 64 1 minecraft:lever[face=floor,facing=north,powered=false]")))
+                .hasSize(1);
+        assertCode("coordinate_outside_effect_inset",
+                "setblock 11 64 1 minecraft:lever[face=floor,facing=north,powered=false]");
+        assertThatThrownBy(() -> policy.validate(manifest(1), List.of(
+                "setblock 1 64 1 minecraft:lever[face=floor,facing=north,powered=false]",
+                "setblock 2 64 1 minecraft:lever[face=floor,facing=north,powered=false]")))
+                .isInstanceOfSatisfying(FixtureFormatException.class,
+                        error -> assertThat(error.code()).isEqualTo("changed_block_budget_exceeded"));
+    }
+
+    @Test
     void rejectsMetaCommandsAndArbitrarySelectors() {
         for (String command : List.of(
                 "execute as @s run setblock 1 64 1 minecraft:dirt",
