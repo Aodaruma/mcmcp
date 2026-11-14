@@ -52,6 +52,8 @@
 - 単一entryで既知の完全state支持を指定する`apply_known_block_plan`は、受付・予約・実行開始・未dispatch JITの描画欠測を既存の元支持lease内で有限待機できる。元HTTP締切・配送TTL・総Action予算を共有し、最初の300tick枠へ待機を算入する。復帰時の元支持面・state/item/shape・fog/LOS・姿勢・安全の再検証を省略せず、複数entryやplan内依存支持へ拡張しない。送信済み設置の確認・cleanupへ逆適用しない。
 - 外部施工runnerのcheckpointは進捗と未確認intentの台帳に限定し、公開MCPやActionの上限を増やさない。world sessionの変更を検出し、座標・支持・経路は再観測する。不変なplacement-state identityだけを同じsession内で保持できる。confirmed/observed/unknownと材料収支を区別し、受付前拒否と応答不明を混同しない。未知Actionのblind replay、failed/cancelled後の未検証継続、進捗の二重計上をしない。
 
+- 有限長押しのtarget_guardは観測済み座標・ブロック種と現在の実BLOCK hitを照合する。面一致は既定trueとし、attackだけ明示match_face:falseで省略できる。useではfalseを拒否し、reach・手持ち・安全条件は維持する。expected_state:nullは明示expected_blockを必須とし、完全state指定時は従来通り全property一致を要求する。nullを無対象入力やhidden propertyの推測に使わない。既定は対象不一致で厳密停止する。明示した反復モードだけは新規入力を抑止して同一対象の復帰を待つ。開始済みuse、時間由来の開始予算、解放条件は設計仕様書を正本とする。
+
 ## Fixture and environments
 
 - admin command/fixture機能はMCMCP本体から分離したdev-only MODに置き、release JARへ含めない。singleplayer、integrated server、loopback認証、固定test profileだけで有効にし、MCMCPを自動armしない。
