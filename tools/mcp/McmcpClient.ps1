@@ -200,7 +200,7 @@ function Invoke-McmcpClient {
                 $data.action_id -cne (Get-PropertyValue $Arguments 'action_id')) {
                 throw (New-McmcpClientFailure 'protocol_validation' 'action_id_mismatch')
             }
-            if ($Tool -cin $startTools -and $WaitSeconds -gt 0 -and $data.state -ceq 'queued') {
+            if ($Tool -cin $startTools -and $WaitSeconds -gt 0 -and $data.state -cin @('queued', 'running')) {
                 # Only the schema-validated successful start may supply this ID.
                 $actionId = $data.action_id
                 $Tool = 'agent_get_action'
