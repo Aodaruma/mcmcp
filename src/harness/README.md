@@ -52,6 +52,31 @@ with 30 experience levels. It does not select a destination or change any cooldo
 `report` can read the fixed private End fixture; setup still requires the Overworld owner boundary.
 Back up the entire world, including MOD saved data and both dimensions, before this preparation.
 
+## 弓cleanupの故障注入（#90）
+
+検証専用の `BowFaultMixin` は、弓取消のslot送信または発射処理の直前に1回だけ例外を投げる。
+入力・発射を追加せず、製品の結果も書き換えない。
+`-Dmcmcp.testHarness=true -Dmcmcp.fixture.v2Priorities=true` を有効にし、既存のprivateな
+`recovery_equipment_bow` を使う。番号付きのsetup要求前に、次の1モードだけを
+`config/mcmcp-v2-priorities/bow-fault.txt` へ書く。
+
+- `cancel_first_runtime`, `cancel_second_runtime`, `fire_runtime`
+- `cancel_first_linkage`, `cancel_second_linkage`, `fire_linkage`
+
+制御ファイルは64 byteまで。symlink、未知の値、複数要求を拒否し、明示認可されたsetup時だけ読む。
+空・欠落なら注入しない。armは180秒で失効し、毎回同じclient player/level、private integrated server、
+単独のsingleplayer owner、Agent所有のuse leaseを要求する。他caseのsetupで解除し、新しいsetupまで再注入しない。
+
+T0前に新しい番号の `report` で `bow_fault.mode` と `fired:false` を確認する。
+公開MCPで通常の有限移動・回復を開始する。取消モードではcombat ownerが弓を引く間に公開cancelを送り、
+発射モードでは通常の発射まで待つ。Action中にfixture commandやGUI観測を加えない。
+全Actionのterminal後に新しい番号の `report` を出すと、注入点、入力所有・channel解放、local使用状態、
+注入時とreport時の矢の所持数・弓耐久を返す。通常のserver inventory報告と公開control状態も照合する。
+`input_owner_none` は追跡velocity台帳も含み、`input_channels_none` は入力channelの解放を別に示す。
+falseを解放成功の証拠へ読み替えない。
+
+受入後は退避したworld/config/MODを復元し、故障制御ファイルを削除する。
+
 ## Original fixed arenas
 
 This source set is a destructive development fixture, not part of the production mod. It is

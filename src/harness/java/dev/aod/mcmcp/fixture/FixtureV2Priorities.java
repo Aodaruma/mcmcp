@@ -88,10 +88,12 @@ final class FixtureV2Priorities {
             UUID playerId = minecraft.player.getUUID();
             var buildProfile = value.endsWith(":report") ? BuildPhaseProfiler.finish() : Map.of();
             var flightProfile = value.endsWith(":report") ? FlightRecoveryProfiler.finish() : Map.of();
+            var bowFault = value.endsWith(":report") ? BowFaultInjector.report() : Map.of();
             server.execute(() -> {
                 var report = new LinkedHashMap<String, Object>();
                 if (!buildProfile.isEmpty()) report.put("build_profile", buildProfile);
                 if (!flightProfile.isEmpty()) report.put("flight_profile", flightProfile);
+                if (!bowFault.isEmpty()) report.put("bow_fault", bowFault);
                 report.put("request", value);
                 try {
                     var player = server.getPlayerList().getPlayer(playerId);
@@ -144,6 +146,7 @@ final class FixtureV2Priorities {
                         if (kind.equals("water_air")) player.setAirSupply(120);
                         if (kind.startsWith("storage_")) prepareBackpack(player, kind);
                         if (kind.startsWith("recovery_equipment")) prepareEquipmentBackpack(player);
+                        BowFaultInjector.arm(decision.context(), kind);
                         if (kind.equals("floor_refill")) prepareFloorRefill(player);
                         storageDriftApplied = false;
                         storageCursorDrift = kind.equals("storage_cursor_drift");
