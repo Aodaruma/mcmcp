@@ -426,7 +426,7 @@ final class FixtureV2Priorities {
         switch (kind) {
             case "recovery_bucket", "recovery_web", "recovery_boat", "recovery_slime", "recovery_hay", "recovery_bed",
                     "recovery_water", "recovery_elytra", "recovery_mob", "recovery_neutral", "recovery_returning_mob",
-                    "recovery_trader_near", "recovery_trader_push", "recovery_floor_offset", "recovery_floor_push", "recovery_floor_clear", "recovery_place_mob", "recovery_build_flight", "flight_open", "flight_wall", "flight_boost", "flight_boost_wall" ->
+                    "recovery_trader_near", "recovery_trader_push", "recovery_floor_offset", "recovery_floor_push", "recovery_floor_clear", "recovery_torch_edge", "recovery_torch_chain", "recovery_torch_graze", "recovery_place_mob", "recovery_build_flight", "flight_open", "flight_wall", "flight_boost", "flight_boost_wall" ->
                     result.addAll(FixtureEmergencyScenario.commands(kind));
             case "floor_east", "floor_west", "floor_north", "floor_south", "floor_offset", "floor_shortage", "floor_obstructed", "floor_refill" -> {
                 result.addAll(List.of("fill 300 101 300 320 116 320 minecraft:air",

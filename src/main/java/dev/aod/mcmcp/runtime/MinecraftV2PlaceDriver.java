@@ -29,6 +29,7 @@ import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.DoorBlock;
@@ -37,6 +38,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -92,6 +94,7 @@ final class MinecraftV2PlaceDriver
     private int selectedSlot = -1;
     private Object selectedPlayer;
     private int crosshairWaitTicks;
+    private boolean centerAimAttempted;
     private long dispatchedTick;
 
     MinecraftV2PlaceDriver(Minecraft minecraft,
@@ -416,7 +419,13 @@ final class MinecraftV2PlaceDriver
         }
         if (stage == Stage.WAIT_CROSSHAIR) {
             if (sneak != null && !minecraft.player.isShiftKeyDown() || !crosshairOnSupport()) {
-                return ++crosshairWaitTicks <= MAX_CROSSHAIR_WAIT_TICKS
+                ++crosshairWaitTicks;
+                // A sampled edge ray can miss after crouching or camera rounding. No use
+                // has been sent here; try one newly witnessed face-center aim before failing.
+                if (crosshairWaitTicks >= 2 && !centerAimAttempted
+                        && (sneak == null || minecraft.player.isShiftKeyDown())
+                        && beginCenterAim(session)) return V2BlockJobExecution.StepResult.RUNNING;
+                return crosshairWaitTicks <= MAX_CROSSHAIR_WAIT_TICKS
                         ? V2BlockJobExecution.StepResult.RUNNING
                         : V2BlockJobExecution.StepResult.FAILED;
             }
@@ -557,13 +566,58 @@ final class MinecraftV2PlaceDriver
     }
 
     private boolean heartbeatSneak(WorldSessionTracker.Snapshot session) {
-        if (sneak == null) return stage == Stage.CONFIRMING || stage == Stage.WAIT_CROSSHAIR;
+        if (sneak == null) return stage == Stage.CONFIRMING || stage == Stage.WAIT_CROSSHAIR
+                || centerAimAttempted && stage == Stage.FACING_CROUCHED;
         if (!sneak.heartbeat(System.nanoTime(), SNEAK_LEASE)) return false;
         var recon = reconciliationSignals.bindAndSnapshot(
                 minecraft.level, session.worldSessionId());
         AgentInputState.global().requireGoalMovementSafety(
                 minecraft.player, minecraft.level, recon.worldRevision(), 0.0D);
         return true;
+    }
+
+    private boolean beginCenterAim(WorldSessionTracker.Snapshot session) {
+        var level = minecraft.level;
+        var player = minecraft.player;
+        var support = candidate.support();
+        if (!level.isLoaded(support)) return false;
+        var eye = player.getEyePosition();
+        var point = centeredSupportAim(support, candidate.face(),
+                level.getBlockState(support).getShape(level, support), eye);
+        if (point == null) return false;
+        var recon = reconciliationSignals.bindAndSnapshot(level, session.worldSessionId());
+        var cell = new NavCell(target.dimension(), support.getX(), support.getY(), support.getZ());
+        var witness = observations.latestInternalFrame().flatMap(frame -> V2BlockAimResolver.resolve(
+                frame, cell, ObservationRecord.Face.valueOf(candidate.face().name()), eye,
+                session.worldSessionId(), session.clientTick(), recon.worldRevision(),
+                recon.surfaceBarrierWorldRevision(support.getX(), support.getY(), support.getZ())));
+        if (witness.isEmpty() || !witness.orElseThrow().blockId().equals(blockId(level.getBlockState(support))))
+            return false;
+        for (BlockPos crossed : BlockPos.betweenClosed(BlockPos.containing(eye), support)) {
+            if (!level.isLoaded(crossed)) return false;
+        }
+        for (var mode : new ClipContext.Block[] { ClipContext.Block.VISUAL, ClipContext.Block.OUTLINE }) {
+            var hit = level.clip(new ClipContext(eye, point, mode, ClipContext.Fluid.ANY, player));
+            if (hit.getType() != HitResult.Type.BLOCK || !support.equals(hit.getBlockPos())
+                    || hit.getDirection() != candidate.face() || hit.isWorldBorderHit()) return false;
+        }
+        var known = witness.orElseThrow().aim();
+        facing = new MinecraftActionPrimitiveExecutor(McmcpClientConfig.maxCameraDegreesPerSecond() / 20.0F);
+        facing.beginFace(new MinecraftActionPrimitiveExecutor.KnownFaceTarget(session.worldSessionId(),
+                recon.worldRevision(), known.target(), point.x, point.y, point.z, true), 60L);
+        centerAimAttempted = true;
+        stage = Stage.FACING_CROUCHED;
+        return true;
+    }
+
+    /** Non-cubic supports keep their sampled surface; a cube center must be on the visible side. */
+    static Vec3 centeredSupportAim(BlockPos support, Direction face, VoxelShape outline, Vec3 eye) {
+        if (!Block.isShapeFullBlock(outline)) return null;
+        var point = Vec3.atCenterOf(support).add(
+                face.getStepX() * 0.499D, face.getStepY() * 0.499D, face.getStepZ() * 0.499D);
+        var hit = outline.clip(eye, point, support);
+        return eye.distanceToSqr(point) <= V2BlockAimResolver.MAX_REACH * V2BlockAimResolver.MAX_REACH
+                && hit != null && !hit.isInside() && hit.getDirection() == face ? point : null;
     }
 
     private boolean dispatch(long clientTick, BooleanSupplier outputAllowed) {
@@ -744,6 +798,7 @@ final class MinecraftV2PlaceDriver
         floorAfter = null;
         this.failure = null;
         crosshairWaitTicks = 0;
+        centerAimAttempted = false;
         dispatchedTick = 0L;
         stage = Stage.IDLE;
         if (failure instanceof RuntimeException runtime) throw runtime;

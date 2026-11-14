@@ -74,7 +74,8 @@ final class FixtureEmergencyScenario {
             }
         }
         if (injected || !kind.startsWith("recovery_") || kind.equals("recovery_neutral")
-                || kind.equals("recovery_trader_near") || kind.equals("recovery_floor_offset")) return;
+                || kind.equals("recovery_trader_near") || kind.equals("recovery_floor_offset")
+                || kind.startsWith("recovery_torch_")) return;
         if (kind.equals("recovery_place_mob")) {
             if (!BuiltInRegistries.BLOCK.getKey(context.level().getBlockState(new BlockPos(315, 120, 310))
                     .getBlock()).toString().equals("minecraft:black_concrete")) return;
@@ -130,6 +131,11 @@ final class FixtureEmergencyScenario {
             for (int x = 315; x <= 324; x++) blocks.add(Map.of("x", x, "y", 120, "z", 310, "block",
                     BuiltInRegistries.BLOCK.getKey(context.level().getBlockState(new BlockPos(x, 120, 310)).getBlock()).toString()));
         }
+        if (kind.startsWith("recovery_torch_")) {
+            for (int x = 310; x <= 322; x++) for (int y = 120; y <= 121; y++)
+                blocks.add(Map.of("x", x, "y", y, "z", 310, "block", BuiltInRegistries.BLOCK.getKey(
+                        context.level().getBlockState(new BlockPos(x, y, 310)).getBlock()).toString()));
+        }
         return Map.of("case", kind, "hazard_injected", injected, "minimum_health", minHealth,
                 "maximum_speed", maxSpeed, "flying_ticks", flyingTicks, "landing_blocks", blocks, "mobs", entities,
                 "flight_return", Map.of("landed", rescueLanded, "threat_spawned", postFlightThreat),
@@ -177,6 +183,22 @@ final class FixtureEmergencyScenario {
             commands.add(kind.equals("recovery_floor_offset")
                     ? "tp @s 313.5677818296293 121 309.945292639711 170.55 35.466"
                     : "tp @s 314.4779310315791 121 310.468379712036 170.55 35.466");
+        }
+        if (kind.startsWith("recovery_torch_")) {
+            commands.add("fill 298 120 308 310 120 314 minecraft:black_concrete");
+            commands.add("item replace entity @s hotbar.0 with minecraft:diamond_sword");
+            commands.add("item replace entity @s hotbar.2 with minecraft:gray_concrete 64");
+            commands.add("item replace entity @s hotbar.4 with minecraft:torch 64");
+            commands.add("item replace entity @s inventory.0 with minecraft:black_concrete 64");
+            if (kind.equals("recovery_torch_chain")) {
+                commands.add("fill 311 120 310 322 120 310 minecraft:air");
+                commands.add("tp @s 310.5 121 310.5 -90 45");
+            } else if (kind.equals("recovery_torch_graze")) {
+                commands.add("setblock 309 122 310 minecraft:stone_slab[type=top]");
+                commands.add("tp @s 309.954438 121 310.2936651499406 -61.25763 46.30295");
+            } else {
+                commands.add("tp @s 309.9030241683339 121 310.2936651499406 -99.87305 50.891453");
+            }
         }
         if (kind.equals("recovery_trader_near"))
             commands.add("summon minecraft:wandering_trader 312 121 310.5 {Tags:[\"mcmcp_v2_fixture\"],NoAI:1b}");

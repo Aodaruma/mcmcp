@@ -6,7 +6,7 @@ class FixtureV2PrioritiesTest {
     @Test void onlyFixedCasesWithAnExplicitNewRequestNumberAreAccepted() {
         for (String kind : java.util.List.of("recovery_bucket", "recovery_web", "recovery_boat", "recovery_slime", "recovery_hay",
                 "recovery_bed", "recovery_water", "recovery_elytra", "recovery_mob", "recovery_neutral", "recovery_returning_mob",
-                "recovery_trader_near", "recovery_trader_push", "recovery_floor_offset", "recovery_floor_push", "recovery_floor_clear", "recovery_place_mob", "recovery_build_flight", "flight_open", "flight_wall", "flight_boost", "flight_boost_wall"))
+                "recovery_trader_near", "recovery_trader_push", "recovery_floor_offset", "recovery_floor_push", "recovery_floor_clear", "recovery_torch_edge", "recovery_torch_chain", "recovery_torch_graze", "recovery_place_mob", "recovery_build_flight", "flight_open", "flight_wall", "flight_boost", "flight_boost_wall"))
             assertThat(FixtureV2PrioritiesConfig.validRequest("7:" + kind)).isTrue();
         assertThat(FixtureV2PrioritiesConfig.validRequest("7:recovery_command")).isFalse();
         assertThat(FixtureV2PrioritiesConfig.validRequest("1:water")).isTrue();
