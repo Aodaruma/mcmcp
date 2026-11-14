@@ -21,6 +21,48 @@ class ObservationFrameStoreTest {
     private static final ResourceId DIMENSION = new ResourceId("minecraft:overworld");
 
     @Test
+    void atomicLatestSelectionPinsPaginationAcrossASubsequentPublication() throws Exception {
+        var store = new ObservationFrameStore();
+        store.publish(frame(1, 3));
+
+        ObservationPage first = store.page(
+                null, Set.of(ObservationKind.VISIBLE_SURFACE), null, 1);
+        assertThat(first.frameId()).isEqualTo(id(1));
+        assertThat(first.nextCursor()).isNotNull();
+
+        store.publish(frame(2, 1));
+        ObservationPage second = store.page(
+                first.frameId(), Set.of(ObservationKind.VISIBLE_SURFACE),
+                first.nextCursor(), 1);
+
+        assertThat(second.frameId()).isEqualTo(id(1));
+        assertThat(second.records())
+                .extracting(record -> ((VisibleSurface) record).position().x())
+                .containsExactly(1);
+        assertThat(store.page(
+                null, Set.of(ObservationKind.VISIBLE_SURFACE), null, 256).frameId())
+                .isEqualTo(id(2));
+    }
+
+    @Test
+    void latestSelectionDistinguishesNoFrameExpiredFrameAndInvalidCursor() throws Exception {
+        var store = new ObservationFrameStore();
+        assertFailure(
+                () -> store.page(null, Set.of(ObservationKind.VISIBLE_SURFACE), null, 1),
+                ObservationStoreException.Code.NO_FRAME);
+
+        store.publish(frame(1, 1));
+        store.publish(frame(2, 1));
+        store.publish(frame(3, 1));
+        assertFailure(
+                () -> store.page(id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 1),
+                ObservationStoreException.Code.FRAME_EXPIRED);
+        assertFailure(
+                () -> store.page(null, Set.of(ObservationKind.VISIBLE_SURFACE), "invalid", 1),
+                ObservationStoreException.Code.INVALID_CURSOR);
+    }
+
+    @Test
     void rollingRetentionKeepsOnlyTheLatestTwoUnpinnedFrames() throws Exception {
         var clock = new FakeClock();
         var store = store(clock);
@@ -230,6 +272,72 @@ class ObservationFrameStoreTest {
                         id(1), Set.of(ObservationKind.VISIBLE_SURFACE),
                         replacement.nextCursor(), 1),
                 ObservationStoreException.Code.INVALID_CURSOR);
+    }
+
+    @Test
+    void releaseAbandonedLeaseAllowsANewQueryWithoutTouchingOtherLeases() throws Exception {
+        var clock = new FakeClock();
+        var store = store(clock);
+        store.publish(frame(1, 5));
+
+        String abandoned = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 1).nextCursor();
+        String retained = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 1).nextCursor();
+        assertThat(store.activePaginationLeases()).isEqualTo(2);
+
+        clock.advance(Duration.ofSeconds(59));
+        assertThat(store.releaseCursor(abandoned))
+                .isEqualTo(ObservationFrameStore.CursorReleaseStatus.RELEASED);
+        assertThat(store.activePaginationLeases()).isOne();
+
+        String replacement = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 1).nextCursor();
+        assertThat(replacement).isNotNull();
+        assertThat(store.activePaginationLeases()).isEqualTo(2);
+        assertFailure(
+                () -> store.page(
+                        id(1), Set.of(ObservationKind.VISIBLE_SURFACE), abandoned, 1),
+                ObservationStoreException.Code.INVALID_CURSOR);
+
+        // Releasing the first lease must not refresh the other lease's idle deadline.
+        clock.advance(Duration.ofSeconds(2));
+        assertFailure(
+                () -> store.page(
+                        id(1), Set.of(ObservationKind.VISIBLE_SURFACE), retained, 1),
+                ObservationStoreException.Code.INVALID_CURSOR);
+        assertThat(store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), replacement, 1).records())
+                .hasSize(1);
+    }
+
+    @Test
+    void releaseCompletedCursorIsSideEffectFreeAndUnknownOrClearedCursorIsInvalid()
+            throws Exception {
+        var clock = new FakeClock();
+        var store = store(clock);
+        store.publish(frame(1, 3));
+        String cursor = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 1).nextCursor();
+        ObservationPage completed = store.page(
+                id(1), Set.of(ObservationKind.VISIBLE_SURFACE), cursor, 256);
+
+        clock.advance(Duration.ofSeconds(59));
+        assertThat(store.releaseCursor(cursor))
+                .isEqualTo(ObservationFrameStore.CursorReleaseStatus.COMPLETED);
+        clock.advance(Duration.ofSeconds(2));
+        assertFailure(() -> store.releaseCursor(cursor),
+                ObservationStoreException.Code.INVALID_CURSOR);
+        assertFailure(() -> store.releaseCursor("not-a-real-cursor"),
+                ObservationStoreException.Code.INVALID_CURSOR);
+
+        store.publish(frame(2, 3));
+        String previousSession = store.page(
+                id(2), Set.of(ObservationKind.VISIBLE_SURFACE), null, 1).nextCursor();
+        store.clear();
+        assertFailure(() -> store.releaseCursor(previousSession),
+                ObservationStoreException.Code.INVALID_CURSOR);
+        assertThat(completed.nextCursor()).isNull();
     }
 
     @Test

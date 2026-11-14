@@ -45,7 +45,7 @@ public final class ActionDsl {
             ClearKnownBlockPlan, PillarUpKnown, ExtendKnownFloor,
             ApplyKnownRedstoneSpec,
             OpenKnownFenceGate,
-            OpenKnownPassage, InspectKnownContainer, TakeKnownContainerStack,
+            OpenKnownPassage, SetKnownLever, InspectKnownContainer, TakeKnownContainerStack,
             StoreKnownContainerStack,
             RemoveVisibleFrameItem, InsertVisibleFrameItem,
             CraftKnownRecipe,
@@ -537,6 +537,16 @@ public final class ActionDsl {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(target, "target");
             Objects.requireNonNull(expectedBlock, "expectedBlock");
+        }
+    }
+
+    /** Sets one visible Vanilla lever without toggling an already satisfied target. */
+    public record SetKnownLever(
+            String id, Position target, BlockStateSpec expectedState, boolean powered) implements Node {
+        public SetKnownLever {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(target, "target");
+            Objects.requireNonNull(expectedState, "expectedState");
         }
     }
 
