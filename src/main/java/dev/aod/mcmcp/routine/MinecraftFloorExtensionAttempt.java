@@ -142,7 +142,8 @@ public final class MinecraftFloorExtensionAttempt implements AutoCloseable {
                 case LEAN -> {
                     // Release before the edge goal: ordinary crouch input retains braking inertia.
                     if (progress() < 0.55) keys(true);
-                    else if (settled()) phase = Phase.AIM;
+                    // Aim while braking; AIM still requires a settled body before any placement.
+                    else phase = Phase.AIM;
                 }
                 case AIM -> {
                     Vec3 point = new Vec3(support.getX() + 0.5 + direction.getStepX() * 0.5,

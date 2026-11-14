@@ -1,5 +1,8 @@
 license="${mod_license}"
 
+[[mixins]]
+config="mcmcp-test-profile.mixins.json"
+
 [[mods]]
 modId="${fixture_mod_id}"
 version="${mod_version}"

@@ -134,8 +134,8 @@ final class MinecraftV2PlaceDriver
         var floor = beginFloorExtension(next, request);
         if (floor != null) return floor;
         var observed = beginObservedTarget(next, request, outputAllowed);
-        if (observed != V2BlockJobExecution.BeginResult.WAITING
-                || !request.advance() || request.maxDistance() <= 0.0D) return observed;
+        if (observed != V2BlockJobExecution.BeginResult.WAITING) return observed;
+        if (!request.advance() || request.maxDistance() <= 0.0D) return observed;
         target = next;
         this.request = request;
         // An empty placement target must remain empty; it is not a standing waypoint.

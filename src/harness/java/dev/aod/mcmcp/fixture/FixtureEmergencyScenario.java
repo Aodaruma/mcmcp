@@ -75,7 +75,7 @@ final class FixtureEmergencyScenario {
         }
         if (injected || !kind.startsWith("recovery_") || kind.equals("recovery_neutral")
                 || kind.equals("recovery_trader_near") || kind.equals("recovery_floor_offset")
-                || kind.startsWith("recovery_torch_")) return;
+                || kind.startsWith("recovery_torch_") || kind.startsWith("recovery_bench_")) return;
         if (kind.equals("recovery_place_mob")) {
             if (!BuiltInRegistries.BLOCK.getKey(context.level().getBlockState(new BlockPos(315, 120, 310))
                     .getBlock()).toString().equals("minecraft:black_concrete")) return;
@@ -135,6 +135,11 @@ final class FixtureEmergencyScenario {
             for (int x = 310; x <= 322; x++) for (int y = 120; y <= 121; y++)
                 blocks.add(Map.of("x", x, "y", y, "z", 310, "block", BuiltInRegistries.BLOCK.getKey(
                         context.level().getBlockState(new BlockPos(x, y, 310)).getBlock()).toString()));
+        }
+        if (kind.startsWith("recovery_bench_")) {
+            for (int x = 310; x <= 342; x++) for (int z = 309; z <= 311; z++) for (int y = 120; y <= 121; y++)
+                blocks.add(Map.of("x", x, "y", y, "z", z, "block", BuiltInRegistries.BLOCK.getKey(
+                        context.level().getBlockState(new BlockPos(x, y, z)).getBlock()).toString()));
         }
         return Map.of("case", kind, "hazard_injected", injected, "minimum_health", minHealth,
                 "maximum_speed", maxSpeed, "flying_ticks", flyingTicks, "landing_blocks", blocks, "mobs", entities,
@@ -199,6 +204,15 @@ final class FixtureEmergencyScenario {
             } else {
                 commands.add("tp @s 309.9030241683339 121 310.2936651499406 -99.87305 50.891453");
             }
+        }
+        if (kind.startsWith("recovery_bench_")) {
+            commands.add("fill 308 120 308 342 120 314 minecraft:air");
+            commands.add("setblock 310 120 310 minecraft:black_concrete");
+            if (!kind.equals("recovery_bench_first")) commands.add("fill 310 120 309 342 120 309 minecraft:black_concrete");
+            commands.add("item replace entity @s hotbar.0 with minecraft:black_concrete 64");
+            commands.add("item replace entity @s hotbar.1 with minecraft:gray_concrete 64");
+            commands.add("item replace entity @s hotbar.4 with minecraft:torch 32");
+            commands.add("tp @s 310.5 121 310.5 90 80");
         }
         if (kind.equals("recovery_trader_near"))
             commands.add("summon minecraft:wandering_trader 312 121 310.5 {Tags:[\"mcmcp_v2_fixture\"],NoAI:1b}");

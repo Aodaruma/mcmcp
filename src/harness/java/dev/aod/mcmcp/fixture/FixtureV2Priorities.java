@@ -81,8 +81,10 @@ final class FixtureV2Priorities {
             LOGGER.info("MCMCP v2 priorities fixture request: {}", value);
             var server = minecraft.getSingleplayerServer();
             UUID playerId = minecraft.player.getUUID();
+            var buildProfile = value.endsWith(":report") ? BuildPhaseProfiler.finish() : Map.of();
             server.execute(() -> {
                 var report = new LinkedHashMap<String, Object>();
+                if (!buildProfile.isEmpty()) report.put("build_profile", buildProfile);
                 report.put("request", value);
                 try {
                     var player = server.getPlayerList().getPlayer(playerId);
@@ -128,6 +130,8 @@ final class FixtureV2Priorities {
                         player.fallDistance = 0;
                         player.setHealth(player.getMaxHealth());
                         if (emergency) emergencyFixture = new FixtureEmergencyScenario(decision.context(), kind);
+                        if (kind.startsWith("recovery_bench_") || kind.equals("floor_refill"))
+                            minecraft.execute(() -> BuildPhaseProfiler.start(kind));
                         if (kind.equals("water_air")) player.setAirSupply(120);
                         if (kind.startsWith("storage_")) prepareBackpack(player, kind);
                         if (kind.equals("floor_refill")) prepareFloorRefill(player);
@@ -426,7 +430,7 @@ final class FixtureV2Priorities {
         switch (kind) {
             case "recovery_bucket", "recovery_web", "recovery_boat", "recovery_slime", "recovery_hay", "recovery_bed",
                     "recovery_water", "recovery_elytra", "recovery_mob", "recovery_neutral", "recovery_returning_mob",
-                    "recovery_trader_near", "recovery_trader_push", "recovery_floor_offset", "recovery_floor_push", "recovery_floor_clear", "recovery_torch_edge", "recovery_torch_chain", "recovery_torch_graze", "recovery_place_mob", "recovery_build_flight", "flight_open", "flight_wall", "flight_boost", "flight_boost_wall" ->
+                    "recovery_trader_near", "recovery_trader_push", "recovery_floor_offset", "recovery_floor_push", "recovery_floor_clear", "recovery_torch_edge", "recovery_torch_chain", "recovery_torch_graze", "recovery_bench_row", "recovery_bench_first", "recovery_place_mob", "recovery_build_flight", "flight_open", "flight_wall", "flight_boost", "flight_boost_wall" ->
                     result.addAll(FixtureEmergencyScenario.commands(kind));
             case "floor_east", "floor_west", "floor_north", "floor_south", "floor_offset", "floor_shortage", "floor_obstructed", "floor_refill" -> {
                 result.addAll(List.of("fill 300 101 300 320 116 320 minecraft:air",

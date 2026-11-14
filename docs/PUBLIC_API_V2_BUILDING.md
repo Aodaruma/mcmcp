@@ -17,6 +17,8 @@
 
 支持床上の松明・レール・redstone dustなどは無衝突かつ非危険なら通行する。火・水・感圧板・tripwire等は除外する。バッグの自動補充には、server設置確認と、新たに届いた当該手持ち枠のpayload一致を使う。実機確認状況は[設計図・補充検証](experiments/20261011_v2_blueprint_tool.md)を参照。
 
+R22更新候補は、端で減速する間に照準合わせを開始して待ち時間を少し短縮する。実際の設置前には従来の静止・支持・照準確認が必要で、予算を下げて早期終了させる変更ではない。[同条件の速度比較](experiments/20261012_v2_build_speed.md)を参照。通常profileへの導入時期は施工担当が調整する。
+
 返却した`action_id`を`agent_get_action`の`include_result:true`で確認する。`confirmed_count`は今回確定した設置数、`observed_count`は既に一致していた数。設置後の前進で止まった場合にも確定済みの設置は残る。取消は`agent_cancel_action`。
 
 ## スクリプトから実行する
