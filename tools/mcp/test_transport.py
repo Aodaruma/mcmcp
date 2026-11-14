@@ -168,6 +168,23 @@ class TransportTests(unittest.TestCase):
         self.assertLessEqual(calls[1]['arguments']['wait_timeout_ms'], 25000)
         self.assertEqual(len(calls), 2)
 
+    def test_running_start_waits_only_when_requested_without_restarting(self):
+        for wait in [0, 10]:
+            with self.subTest(wait=wait):
+                self.requests.clear()
+                def modify(request, envelope):
+                    if request.get('params', {}).get('name') == 'agent_move':
+                        envelope['result'] = tool_result(v2_status('running'))
+                    return envelope
+                self.modify = modify
+                reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', str(wait), arguments=START)
+                self.assertTrue(reply['ok'], reply)
+                self.assertEqual(reply['result']['state'], 'succeeded' if wait else 'running')
+                calls = [r[0]['params'] for r in self.requests if r[0]['method'] == 'tools/call']
+                self.assertEqual([call['name'] for call in calls],
+                                 ['agent_move', 'agent_get_action'] if wait else ['agent_move'])
+                if wait: self.assertEqual(calls[1]['arguments']['action_id'], ACTION)
+
     def test_v2_move_waits_for_its_common_action_id(self):
         arguments = {'x': 4, 'y': 65, 'z': 8}
         reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10',
