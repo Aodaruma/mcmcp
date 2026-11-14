@@ -130,6 +130,25 @@ class ObservationModelContractTest {
     }
 
     @Test
+    void observationCatalogAcceptsAtomicLatestOnlyOnTheFirstPage() throws Exception {
+        JsonObject catalog = JsonParser.parseString(Files.readString(catalogPath())).getAsJsonObject();
+        JsonObject input = tool(catalog, "agent_get_observation").getAsJsonObject("inputSchema");
+
+        assertThat(matches(input, JsonParser.parseString("""
+                {"schema_version":1,"frame_id":null,"kinds":["visible_surface"],
+                 "cursor":null,"limit":1}
+                """))).isTrue();
+        assertThat(matches(input, JsonParser.parseString("""
+                {"schema_version":1,"frame_id":null,"kinds":["visible_surface"],
+                 "cursor":"opaque-cursor","limit":1}
+                """))).isFalse();
+        assertThat(matches(input, JsonParser.parseString("""
+                {"schema_version":1,"frame_id":"obs-0000000000000001",
+                 "kinds":["visible_surface"],"cursor":"opaque-cursor","limit":1}
+                """))).isTrue();
+    }
+
+    @Test
     void frameAndSummaryDefensivelyCopyMutableInputs() {
         var mutableRecords = new ArrayList<ObservationRecord>();
         mutableRecords.add(surface(95, 0));

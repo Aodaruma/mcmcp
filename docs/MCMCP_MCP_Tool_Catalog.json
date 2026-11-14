@@ -848,8 +848,11 @@
         "properties": {
           "schema_version": {"const": 1},
           "frame_id": {
-            "type": "string",
-            "pattern": "^obs-[0-9a-f]{16}$"
+            "description": "Concrete immutable frame ID, or null only with cursor=null to atomically select the latest already-published frame. The response always returns the selected concrete ID; copy it with next_cursor for every continuation page.",
+            "oneOf": [
+              {"type": "null"},
+              {"type": "string", "pattern": "^obs-[0-9a-f]{16}$"}
+            ]
           },
           "kinds": {
             "type": "array",
@@ -901,6 +904,19 @@
         "oneOf": [
           {
             "required": ["schema_version", "frame_id", "kinds", "cursor", "limit"],
+            "properties": {
+              "frame_id": {"type": "null"},
+              "cursor": {"type": "null"}
+            },
+            "propertyNames": {
+              "enum": ["schema_version", "frame_id", "kinds", "filter", "cursor", "limit"]
+            }
+          },
+          {
+            "required": ["schema_version", "frame_id", "kinds", "cursor", "limit"],
+            "properties": {
+              "frame_id": {"type": "string", "pattern": "^obs-[0-9a-f]{16}$"}
+            },
             "propertyNames": {
               "enum": ["schema_version", "frame_id", "kinds", "filter", "cursor", "limit"]
             }

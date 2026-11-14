@@ -21,6 +21,48 @@ class ObservationFrameStoreTest {
     private static final ResourceId DIMENSION = new ResourceId("minecraft:overworld");
 
     @Test
+    void atomicLatestSelectionPinsPaginationAcrossASubsequentPublication() throws Exception {
+        var store = new ObservationFrameStore();
+        store.publish(frame(1, 3));
+
+        ObservationPage first = store.page(
+                null, Set.of(ObservationKind.VISIBLE_SURFACE), null, 1);
+        assertThat(first.frameId()).isEqualTo(id(1));
+        assertThat(first.nextCursor()).isNotNull();
+
+        store.publish(frame(2, 1));
+        ObservationPage second = store.page(
+                first.frameId(), Set.of(ObservationKind.VISIBLE_SURFACE),
+                first.nextCursor(), 1);
+
+        assertThat(second.frameId()).isEqualTo(id(1));
+        assertThat(second.records())
+                .extracting(record -> ((VisibleSurface) record).position().x())
+                .containsExactly(1);
+        assertThat(store.page(
+                null, Set.of(ObservationKind.VISIBLE_SURFACE), null, 256).frameId())
+                .isEqualTo(id(2));
+    }
+
+    @Test
+    void latestSelectionDistinguishesNoFrameExpiredFrameAndInvalidCursor() throws Exception {
+        var store = new ObservationFrameStore();
+        assertFailure(
+                () -> store.page(null, Set.of(ObservationKind.VISIBLE_SURFACE), null, 1),
+                ObservationStoreException.Code.NO_FRAME);
+
+        store.publish(frame(1, 1));
+        store.publish(frame(2, 1));
+        store.publish(frame(3, 1));
+        assertFailure(
+                () -> store.page(id(1), Set.of(ObservationKind.VISIBLE_SURFACE), null, 1),
+                ObservationStoreException.Code.FRAME_EXPIRED);
+        assertFailure(
+                () -> store.page(null, Set.of(ObservationKind.VISIBLE_SURFACE), "invalid", 1),
+                ObservationStoreException.Code.INVALID_CURSOR);
+    }
+
+    @Test
     void rollingRetentionKeepsOnlyTheLatestTwoUnpinnedFrames() throws Exception {
         var clock = new FakeClock();
         var store = store(clock);

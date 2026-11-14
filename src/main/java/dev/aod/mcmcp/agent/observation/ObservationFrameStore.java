@@ -127,7 +127,6 @@ public final class ObservationFrameStore {
             ObservationFilter filter,
             String cursor,
             int limit) throws ObservationStoreException {
-        ObservationFrame.requireFrameId(frameId);
         Set<ObservationKind> kinds = canonicalKinds(requestedKinds);
         Objects.requireNonNull(filter, "filter");
         if (limit < 1 || limit > 256) {
@@ -137,7 +136,22 @@ public final class ObservationFrameStore {
         long now = nanoTime.getAsLong();
         purgeExpired(now);
         if (cursor != null) {
+            if (frameId == null) {
+                throw failure(ObservationStoreException.Code.INVALID_CURSOR,
+                        "A continuation cursor requires its concrete observation frame ID");
+            }
+            ObservationFrame.requireFrameId(frameId);
             return continuePage(frameId, kinds, filter, cursor, limit, now);
+        }
+        if (frameId == null) {
+            ObservationFrame latest = rollingFrames.peekLast();
+            if (latest == null) {
+                throw failure(ObservationStoreException.Code.NO_FRAME,
+                        "No completed observation frame has been published");
+            }
+            frameId = latest.frameId();
+        } else {
+            ObservationFrame.requireFrameId(frameId);
         }
         return firstPage(frameId, kinds, filter, limit, now);
     }

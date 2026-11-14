@@ -711,6 +711,8 @@ Toolの規範的なname、description、inputSchema、outputSchemaは別紙`MCMC
 
 #### 8.5.1 Observation frame
 
+`frame_id=null,cursor=null`の初回pageは、同じ同期境界で最新のpublish済みimmutable frameを選び、responseへ具体的な`frame_id`を返す。まだ完成frameがなければ`NO_FRAME`を返す。この選択は観測capture、完成tick、鮮度、配送ACK、TTL、fog、JITを更新せず、続きpageは返却された具体IDと`next_cursor`で同じframeへ固定する。具体IDを指定する従来の初回pageも維持する。
+
 `agent_get_state.observation`は、大量の観測recordそのものではなく、`latest_frame_id`、設定観測半径、全方位対応、oldest/newest tick、`sampling_coverage=1`、返却可能なkind別件数、sound切り捨て有無だけを返す。`record_counts.visible_surface`はray face総数ではなく、後述の代表面圧縮後に返却できるunique block position数である。方向ごとの実効終端は`unknown_boundary`で示し、単一の実効半径へ丸めない。world未参加時と最初の完成frame生成前はnullとする。
 
 全周visualは既定8 active ClientTick、設定変更時は`ceil(2048 / rays_per_tick)` tickで1 immutable frameを完成させる。完成前のframeを公開せず、内部rolling保持は最新2 frameとする。これとは別に、`agent_get_state`がLLMへ告知した`latest_frame_id`を最大16件、合計65,536 record以下のLRU handleとして保持する。同じIDの再告知またはそのIDによる初回page取得でidle期限を更新し、最終accessから60秒、handle件数またはrecord予算超過時のLRU evictionで失効する。
@@ -721,7 +723,7 @@ Toolの規範的なname、description、inputSchema、outputSchemaは別紙`MCMC
 
 `agent_get_observation`入力:
 
-- `frame_id`: `agent_get_state`が返したID
+- `frame_id`: `agent_get_state`が返した具体ID、または初回かつ`cursor=null`で最新publish済みframeを原子的に選ぶ`null`
 - `kinds`: `visible_surface / visible_entity / traversability / hazard / unknown_boundary / sound_clue`の1〜6種
 - `filter`（任意）: `block_ids / entity_types / displayed_items / crop_mature / position_bounds`のうち1項目以上。すでにpolicy許可されたrecordを除外するdelivery projectionであり、観測範囲や認可範囲は拡張しない。record kindに適用可能な条件同士はANDとする
 - `position_bounds`: `{dimension,min_x,min_y,min_z,max_x,max_y,max_z}`の単一inclusive整数block-coordinate box。各軸で`min <= max`を要求し、任意center/radiusや複数領域は受け付けない。anchorは`visible_surface.position`、`visible_entity / hazard / unknown_boundary / sound_clue`の`floor(position)`、`traversability.navigation_target`とする
@@ -1137,6 +1139,7 @@ domain errorのTextContentは次のJSON objectを1件だけ直列化する。sch
 - CAPABILITY_DENIED
 - SERVER_BUSY
 - ACTION_NOT_FOUND
+- NO_FRAME
 - FRAME_EXPIRED
 - INVALID_CURSOR
 
@@ -1739,8 +1742,8 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - agent_get_stateがtop-level `standard_potions` を`[{item,potion,count}]`で返し、自inventoryの標準component完全一致の1本stackだけをitem+potionで集計し、custom Potion、不可能な複数本stack、stand内容を含めない
 - agent_get_stateのoptional `merchant_offers`は現在のVanilla MerchantScreen、player menu、world session、container ID、open packet revisionがlatest merchant packetと一致する場合だけ現れ、typed取引factsと解決済みstored enchantment ID / levelだけを返し、raw slot / component / NBT / lore / text / 未解決IDを含めない
 - agent_get_stateで告知したframe IDはidle 60秒、最大16件のLRU上限内で保持され、上限超過とworld境界で確実に失効する
-- agent_get_observationは任意center/radiusを受け付けず、同じframe_idのpage内容がframe保持中に変わらない
-- 最大256件でpage分割し、壊れたcursorはINVALID_CURSOR、保持外frameはFRAME_EXPIRED
+- agent_get_observationは任意center/radiusを受け付けず、初回の`frame_id=null,cursor=null`は最新publish済みframeを原子的に選んで具体IDを返し、同じframe_idのpage内容がframe保持中に変わらない
+- 最大256件でpage分割し、frame未生成はNO_FRAME、壊れたcursorはINVALID_CURSOR、保持外frameはFRAME_EXPIRED
 - page継続中のframeはleaseでpinされ、rolling frame更新後も同じcursor再送が同じpageを返す
 - visible_surfaceはunique block positionごとの代表面へ圧縮され、mature crop、immature crop、その他の順、各群内は近距離順となる。複数kindはround-robinで公平に混在する
 - visible_surfaceはrequired nullableな`state / placement_item`を常に返し、完全stateは閉じたcopy/support allowlistだけ、対象外はnull、非null stateでは`block == state.block`、`placement_item != null`では`state != null`となる
