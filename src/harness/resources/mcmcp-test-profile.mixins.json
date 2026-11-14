@@ -3,6 +3,6 @@
   "minVersion": "0.8.7",
   "package": "dev.aod.mcmcp.fixture.mixin",
   "compatibilityLevel": "JAVA_25",
-  "client": ["BuildPhaseProfilerMixin", "FlightObservationProfilerMixin"],
+  "client": ["BuildPhaseProfilerMixin", "FlightObservationProfilerMixin", "FloorLeaseFaultMixin"],
   "injectors": {"defaultRequire": 1}
 }

@@ -32,6 +32,25 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /** Current public transport checks plus frozen v1 fixtures for reused internal executors. */
 class McpToolCatalogTest {
+    @Test void floorLeaseFailureDiagnosticsFitPlacementAndActionResults() {
+        var catalog = new McpToolCatalog();
+        var place = java.util.stream.StreamSupport.stream(catalog.listResult().getAsJsonArray("tools").spliterator(), false)
+                .map(JsonElement::getAsJsonObject).filter(tool -> tool.get("name").getAsString().equals("agent_place_block"))
+                .findFirst().orElseThrow();
+        assertThat(place.get("description").getAsString()).contains("result.failure_diagnostics", "two-second");
+        var reply = JsonParser.parseString("""
+                {"schema_version":2,"action_id":"550e8400-e29b-41d4-a716-446655440000","kind":"place_block",
+                 "state":"failed","progress":{"completed_operations":25,"max_operations":600},
+                 "cancel_requested":false,"failure":"floor_extension_input_lease_expired",
+                 "stop_reason":"floor_extension_input_lease_expired",
+                 "result":{"confirmed_count":1,"failure_diagnostics":["floor_extension_phase=advance_orient",
+                   "floor_extension_lease_check=tick_entry","floor_extension_lease_overdue_ms=1000",
+                   "floor_extension_lease_tick_gap=1","floor_extension_executor_ms=0"]}}
+                """);
+        for (String tool : List.of("agent_place_block", "agent_get_action"))
+            assertThat(CatalogSchemaValidator.matches(catalog.outputSchema(tool), reply)).as(tool).isTrue();
+    }
+
     @Test void elytraMoveOptionsAreDiscoverableAndFiniteForCoordinateAndRelativeMoves() {
         var input = new McpToolCatalog().inputSchema("agent_move");
         for (String goal : List.of("\"x\":1,\"y\":80,\"z\":2", "\"direction\":\"east\",\"distance\":50")) {

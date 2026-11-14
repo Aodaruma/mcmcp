@@ -72,6 +72,7 @@ final class MinecraftV2PlaceDriver
     private MinecraftFloorExtensionAttempt floorExtension;
     private BlockStateFingerprint floorAfter;
     private String failure;
+    private List<String> failureDiagnostics = List.of();
     private MinecraftActionPrimitiveExecutor navigation;
     private CoordinateGoalPlanner planner;
     private Map<TraversabilityEdge.Key, TraversabilityEdge> waitingEvidence;
@@ -338,7 +339,11 @@ final class MinecraftV2PlaceDriver
             return switch (result.status()) {
                 case RUNNING -> V2BlockJobExecution.StepResult.RUNNING;
                 case SUCCEEDED -> V2BlockJobExecution.StepResult.CONFIRMED;
-                case FAILED -> { failure = result.evidence(); yield V2BlockJobExecution.StepResult.FAILED; }
+                case FAILED -> {
+                    failure = result.evidence();
+                    failureDiagnostics = result.diagnostics();
+                    yield V2BlockJobExecution.StepResult.FAILED;
+                }
             };
         }
         if (stage == Stage.APPROACH) {
@@ -798,6 +803,7 @@ final class MinecraftV2PlaceDriver
         confirmedChange = null;
         floorAfter = null;
         this.failure = null;
+        failureDiagnostics = List.of();
         crosshairWaitTicks = 0;
         centerAimAttempted = false;
         dispatchedTick = 0L;
@@ -818,6 +824,7 @@ final class MinecraftV2PlaceDriver
     @Override public String failureReason() {
         return failure != null ? failure : "place_" + stage.name().toLowerCase(java.util.Locale.ROOT) + "_not_confirmed";
     }
+    @Override public List<String> failureDiagnostics() { return failureDiagnostics; }
     @Override public boolean recoveryRestartSafe() {
         return stage != Stage.CONFIRMING && (floorExtension == null || floorExtension.recoveryRestartSafe());
     }

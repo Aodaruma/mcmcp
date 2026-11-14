@@ -89,6 +89,41 @@ class BlueprintPlanTest {
         }
     }
 
+    @Test void failedAdvanceRetainsDiagnosticsAndConfirmedCellWithoutAdvancingSuccessfulCommandCursor() {
+        var p=plan(source(List.of(cell(1,"minecraft:stone"),cell(2,"minecraft:dirt"),cell(3,"minecraft:stone"))),0,100);
+        var jobs=new AgentJobStore(); var world=UUID.randomUUID();
+        var id=jobs.reserve(AgentJobStore.Kind.SCRIPT,world,p.commands(),Long.MAX_VALUE);
+        var details=List.of("floor_extension_phase=advance", "floor_extension_lease_check=tick_entry");
+        var runner=new ScriptJobExecution.CommandRunner() {
+            int calls;
+            public ScriptJobExecution.Outcome execute(String name,Map<String,Object> args,BooleanSupplier cancel) {
+                assertThat(++calls).isLessThanOrEqualTo(2);
+                return calls==1 ? ScriptJobExecution.Outcome.SUCCESS : ScriptJobExecution.Outcome.FAILURE;
+            }
+            public Map<String,Object> result() {
+                return Map.of("kind","place_block","state",calls==1?"succeeded":"failed",
+                        "failure",calls==1?"":"floor_extension_input_lease_expired",
+                        "result",Map.of("confirmed_count",1,"observed_count",0,
+                                "confirmed_cells",List.of(Map.of("x",calls,"y",64,"z",0)),
+                                "failure_diagnostics",calls==1?List.of():details));
+            }
+            public void cancelActive() { }
+        };
+        var execution=new ScriptJobExecution(jobs,id,world,BlueprintPlan.SOURCE,Set.of("place","breakBlocks"),
+                10000,100,p.commands(),runner,()->true,Long.MAX_VALUE).withResources(p.resources()).withBlueprint(p);
+        jobs.confirm(id,1); execution.run();
+        var result=execution.finishIfReleased(true);
+        assertThat(result.state()).isEqualTo(AgentJobStore.State.FAILED);
+        assertThat(result.result()).containsEntry("placed_blocks",2L).containsEntry("completed_commands",1);
+        assertThat(((Map<?,?>)result.result().get("blueprint")).get("next_index")).isEqualTo(1);
+        var last=(Map<?,?>)result.result().get("last_command");
+        var child=(Map<?,?>)last.get("action");
+        var childResult=(Map<?,?>)child.get("result");
+        assertThat(childResult.get("failure_diagnostics")).isEqualTo(details);
+        assertThat(childResult.get("confirmed_count")).isEqualTo(1);
+        assertThat(execution.finishIfReleased(true).result()).isEqualTo(result.result());
+    }
+
     @Test void distributedSourceExecutesMixedBatchAndReturnsExactCursor() {
         var p=plan(source(List.of(cell(1,"minecraft:stone"),cell(2,"minecraft:stone"),
                 Map.of("x",3,"y",64,"z",0,"block","minecraft:dirt","operation","break"))),0,100);

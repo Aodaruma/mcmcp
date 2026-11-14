@@ -12,6 +12,26 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ScriptChildDiagnosticTest {
     @Test
+    void oversizedCellReceiptCannotDisplaceLeaseFailureDiagnostics() {
+        var diagnostics = List.of("floor_extension_phase=advance_orient",
+                "floor_extension_lease_check=tick_entry", "floor_extension_lease_overdue_ms=1100",
+                "floor_extension_lease_tick_gap=1", "floor_extension_executor_ms=0");
+        var result = new LinkedHashMap<String, Object>();
+        result.put("confirmed_cells", java.util.Collections.nCopies(10000,
+                Map.of("x", 311, "y", 120, "z", 310, "block", "minecraft:black_concrete")));
+        result.put("confirmed_count", 10000);
+        result.put("failure_diagnostics", diagnostics);
+        var diagnostic = ScriptChildDiagnostic.capture("place", ScriptJobExecution.Outcome.FAILURE,
+                Map.of("action_id", "expired-child", "state", "failed", "result", result));
+        var action = (Map<?, ?>) diagnostic.get("action");
+        var retained = (Map<?, ?>) action.get("result");
+        assertThat(retained.get("confirmed_count")).isEqualTo(10000);
+        assertThat(retained.get("failure_diagnostics")).isEqualTo(diagnostics);
+        assertThat(diagnostic.get("truncated")).isEqualTo(true);
+        assertThat(jsonBytes(diagnostic)).isLessThanOrEqualTo(8192);
+    }
+
+    @Test
     void oversizedInventoryCannotDisplaceIdentityOrQuantityAndMarksTruncation() {
         var result = new LinkedHashMap<String, Object>();
         result.put("items", java.util.Collections.nCopies(10000, Map.of("item", "minecraft:stone", "count", 64)));

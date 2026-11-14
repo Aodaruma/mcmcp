@@ -19,6 +19,7 @@ public final class BuildPhaseProfiler {
 
     static void start(String name) {
         caseName = name; SAMPLES.clear(); started = System.nanoTime(); truncated = false;
+        FloorLeaseFaultInjector.arm();
     }
 
     public static void before(Object runtime) {
@@ -53,7 +54,8 @@ public final class BuildPhaseProfiler {
         var counts = new TreeMap<String, Integer>();
         SAMPLES.forEach(row -> counts.merge((String) row.get("phase"), 1, Integer::sum));
         var result = Map.<String, Object>of("case", caseName, "ticks", SAMPLES.size(),
-                "phase_ticks", counts, "truncated", truncated, "samples", List.copyOf(SAMPLES));
+                "phase_ticks", counts, "truncated", truncated, "samples", List.copyOf(SAMPLES),
+                "lease_fault", FloorLeaseFaultInjector.report());
         caseName = null;
         return result;
     }

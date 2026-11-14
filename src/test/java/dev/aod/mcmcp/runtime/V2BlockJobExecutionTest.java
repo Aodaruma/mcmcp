@@ -17,6 +17,54 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class V2BlockJobExecutionTest {
     private static final UUID SESSION = UUID.randomUUID();
+    @Test void leaseDiagnosticsSurviveConfirmedPlacementAndFailedCleanupWithoutReplay() {
+        for (boolean placed : List.of(false, true)) {
+            var store = new AgentJobStore();
+            var id = store.reserve(AgentJobStore.Kind.PLACE_BLOCK, SESSION, 100, 100);
+            var request = V2PlaceArguments.parse(Map.of("x", 1, "y", 64, "z", 0,
+                    "dx", 1, "block", "minecraft:stone", "advance", true), "minecraft:overworld");
+            var details = List.of("floor_extension_phase=advance", "floor_extension_lease_check=tick_entry",
+                    "floor_extension_lease_overdue_ms=1000", "floor_extension_lease_tick_gap=1",
+                    "floor_extension_executor_ms=0");
+            var calls = new ArrayList<NavCell>();
+            var driver = new V2BlockJobExecution.Driver<V2PlaceArguments>() {
+                boolean closed;
+                int closes;
+                public String dimension() { return "minecraft:overworld"; }
+                public V2BlockJobExecution.BeginResult begin(NavCell cell, V2PlaceArguments r, BooleanSupplier allowed) {
+                    calls.add(cell); return V2BlockJobExecution.BeginResult.STARTED;
+                }
+                public V2BlockJobExecution.StepResult tick(long tick, BooleanSupplier allowed) {
+                    return V2BlockJobExecution.StepResult.FAILED;
+                }
+                public String failureReason() { return "floor_extension_input_lease_expired"; }
+                public List<String> failureDiagnostics() { return closed ? List.of() : details; }
+                public V2BlockJobExecution.ConfirmedChange confirmedBeforeCompletion() {
+                    return placed && !closed ? new V2BlockJobExecution.ConfirmedChange(
+                            new BlockStateFingerprint("minecraft:air", Map.of()),
+                            new BlockStateFingerprint("minecraft:stone", Map.of())) : null;
+                }
+                public void close() {
+                    closed = true;
+                    if (++closes == 1) throw new IllegalStateException("fixture cleanup failure");
+                }
+            };
+            var job = new V2BlockJobExecution<>(store, id, SESSION, AgentJobStore.Kind.PLACE_BLOCK,
+                    request, driver, () -> true);
+            store.confirm(id, 1);
+            assertThat(job.tick(SESSION, 1, 1, true, () -> true).state()).isEqualTo(AgentJobStore.State.RUNNING);
+            assertThat(store.get(id).result()).containsEntry("failure_diagnostics", details);
+            var terminal = job.tick(SESSION, 2, 2, true, () -> true);
+            assertThat(terminal.state()).isEqualTo(AgentJobStore.State.FAILED);
+            assertThat(terminal.failure()).isEqualTo("floor_extension_input_lease_expired");
+            assertThat(terminal.result()).containsEntry("failure_diagnostics", details);
+            assertThat(terminal.completedBlocks()).isEqualTo(placed ? 1 : 0);
+            if (placed) assertThat(terminal.result()).containsEntry("confirmed_count", 1);
+            assertThat(job.tick(SESSION, 3, 3, true, () -> true)).isEqualTo(terminal);
+            assertThat(calls).hasSize(1);
+        }
+    }
+
     @Test void recoveryDoesNotReplayAnUnconfirmedDispatchedMutation() {
         var store = new AgentJobStore();
         var id = store.reserve(AgentJobStore.Kind.BREAK_BLOCK, SESSION, 10, 100);

@@ -15,7 +15,7 @@ final class ScriptChildDiagnostic {
     private static final com.google.gson.Gson JSON = new com.google.gson.GsonBuilder().serializeNulls().create();
     private static final List<String> PRIORITY = List.of(
             "action_id", "kind", "state", "stop_reason", "failure", "cancel_requested", "result",
-            "release_pending", "unconfirmed", "requested_count", "confirmed_count", "verification", "effects");
+            "release_pending", "unconfirmed", "requested_count", "confirmed_count", "failure_diagnostics", "verification", "effects");
     private int nodes;
     // Reserve the wrapper and truncation flag before copying the existing public child payload.
     private int bytes = 256;

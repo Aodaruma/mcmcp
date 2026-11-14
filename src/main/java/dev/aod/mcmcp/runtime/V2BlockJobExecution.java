@@ -281,6 +281,12 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
         retainConfirmedBeforeStop();
         terminalIntent = outcome;
         terminalFailure = failure;
+        if (outcome == AgentJobStore.State.FAILED && !driver.failureDiagnostics().isEmpty()) {
+            // Capture before close clears the driver, including when release needs another tick.
+            var result = new java.util.LinkedHashMap<>(jobs.get(actionId).result());
+            result.put("failure_diagnostics", List.copyOf(driver.failureDiagnostics()));
+            jobs.recordResult(actionId, result);
+        }
     }
 
     private AgentJobStore.Snapshot publishAfterRelease() {
@@ -324,6 +330,7 @@ final class V2BlockJobExecution<R extends V2BlockWorkRequest> implements V2JobEx
         default boolean currentPositionSafe() { return false; }
         default boolean recoveryRestartSafe() { return false; }
         default String failureReason() { return null; }
+        default List<String> failureDiagnostics() { return List.of(); }
         void close();
     }
 }
