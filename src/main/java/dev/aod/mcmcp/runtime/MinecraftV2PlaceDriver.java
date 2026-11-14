@@ -30,6 +30,7 @@ import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.BedBlock;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.DoublePlantBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -483,7 +484,7 @@ final class MinecraftV2PlaceDriver
                     approachEvidenceWaitTicks = 0;
                     yield V2BlockJobExecution.StepResult.RUNNING;
                 }
-                case FAILED -> V2BlockJobExecution.StepResult.FAILED;
+                case FAILED -> failed("place_approach_" + motion.reason().name().toLowerCase(java.util.Locale.ROOT));
             };
         }
         var floor = beginFloorExtension(target, request);
@@ -495,7 +496,7 @@ final class MinecraftV2PlaceDriver
                 return V2BlockJobExecution.StepResult.RUNNING;
             }
             return ++approachEvidenceWaitTicks <= MAX_APPROACH_EVIDENCE_WAIT_TICKS
-                    ? V2BlockJobExecution.StepResult.RUNNING : V2BlockJobExecution.StepResult.FAILED;
+                    ? V2BlockJobExecution.StepResult.RUNNING : failed("place_floor_witness_timeout");
         }
         var observed = beginObservedTarget(target, request, outputAllowed);
         switch (observed) {
@@ -504,13 +505,19 @@ final class MinecraftV2PlaceDriver
             case FAILED -> { return V2BlockJobExecution.StepResult.FAILED; }
             case WAITING -> { }
         }
+        boolean floorApproach = preferFloorApproach();
         if (waitingEvidence != null && waitingEvidence.equals(map.edges())) {
+            // A temporarily occupied support may clear; the parent tick/wall budget still bounds the wait.
+            if (floorApproach) return V2BlockJobExecution.StepResult.RUNNING;
             return ++approachEvidenceWaitTicks <= MAX_APPROACH_EVIDENCE_WAIT_TICKS
                     ? V2BlockJobExecution.StepResult.RUNNING
-                    : V2BlockJobExecution.StepResult.FAILED;
+                    : failed("place_approach_evidence_timeout");
         }
         var current = ActionPlanning.playerCell(minecraft.player, session.dimension());
-        var plan = planner.plan(map, current, session.worldSessionId(), map.worldRevision(),
+        var plan = floorApproach ? planner.plan(map, current, session.worldSessionId(), map.worldRevision(),
+                CoordinateGoalPlanner.Budget.DEFAULT, () -> !outputAllowed.getAsBoolean(),
+                cell -> floorSupportCell(target, cell), false)
+                : planner.plan(map, current, session.worldSessionId(), map.worldRevision(),
                 CoordinateGoalPlanner.Budget.DEFAULT,
                 () -> !outputAllowed.getAsBoolean());
         return switch (plan.status()) {
@@ -525,8 +532,28 @@ final class MinecraftV2PlaceDriver
                 yield V2BlockJobExecution.StepResult.RUNNING;
             }
             case LIMIT, CANCELLED, STALE_MAP, WORLD_MISMATCH ->
-                    V2BlockJobExecution.StepResult.FAILED;
+                    failed("place_approach_" + plan.status().name().toLowerCase(java.util.Locale.ROOT));
         };
+    }
+
+    private boolean preferFloorApproach() {
+        if (floorPlacement == null || !request.advance()
+                || Math.abs(minecraft.player.getY() - target.y() - 1) > 0.015
+                || minecraft.player.position().distanceToSqr(Vec3.atBottomCenterOf(blockPos(target).above())) > 36)
+            return false;
+        try {
+            var state = dev.aod.mcmcp.routine.SafeConstructionBlockPolicy.requireExpectedState(
+                    new BlockStateFingerprint(request.blockId(), request.properties()));
+            return Block.isShapeFullBlock(state.getCollisionShape(minecraft.level, blockPos(target)));
+        } catch (IllegalArgumentException | IllegalStateException unsupported) {
+            return false;
+        }
+    }
+
+    // Once nearby, an empty floor target needs a witnessed adjacent support, not another frontier.
+    static boolean floorSupportCell(NavCell target, NavCell feet) {
+        return target.dimension().equals(feet.dimension()) && feet.y() == target.y() + 1
+                && Math.abs((long) feet.x() - target.x()) + Math.abs((long) feet.z() - target.z()) == 1;
     }
 
     private boolean heartbeatSneak(WorldSessionTracker.Snapshot session) {
@@ -727,7 +754,14 @@ final class MinecraftV2PlaceDriver
         return floorExtension != null && floorExtension.currentPositionSafe(sessions.get());
     }
 
-    @Override public String failureReason() { return failure; }
+    private V2BlockJobExecution.StepResult failed(String reason) {
+        failure = reason;
+        return V2BlockJobExecution.StepResult.FAILED;
+    }
+
+    @Override public String failureReason() {
+        return failure != null ? failure : "place_" + stage.name().toLowerCase(java.util.Locale.ROOT) + "_not_confirmed";
+    }
     @Override public boolean recoveryRestartSafe() {
         return stage != Stage.CONFIRMING && (floorExtension == null || floorExtension.recoveryRestartSafe());
     }

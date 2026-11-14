@@ -23,6 +23,9 @@ final class FixtureEmergencyScenario {
     private net.minecraft.world.entity.monster.zombie.Zombie returningMob;
     private int hiddenAt = -1, returnedAt = -1, returnHitAt = -1, returnHurtAt = -1;
     private float healthAtReturn;
+    private net.minecraft.world.entity.npc.wanderingtrader.WanderingTrader floorTrader;
+    private int traderLeavesAt = -1;
+    private boolean traderCleared;
 
     FixtureEmergencyScenario(FixtureSecurity.Context context, String kind) {
         this.context = context; this.kind = kind;
@@ -37,6 +40,11 @@ final class FixtureEmergencyScenario {
         minHealth = Math.min(minHealth, player.getHealth());
         maxSpeed = Math.max(maxSpeed, player.getDeltaMovement().length());
         if (player.isFallFlying()) flyingTicks++;
+        if (floorTrader != null && kind.equals("recovery_floor_clear") && !traderCleared
+                && server.getTickCount() >= traderLeavesAt) {
+            floorTrader.teleportTo(309.5, 121, 313.5);
+            traderCleared = true;
+        }
         if (kind.equals("recovery_build_flight") && injected && flyingTicks > 0 && player.onGround()
                 && !player.isFallFlying()) rescueLanded = true;
         if (kind.equals("recovery_build_flight") && rescueLanded && !postFlightThreat
@@ -66,7 +74,7 @@ final class FixtureEmergencyScenario {
             }
         }
         if (injected || !kind.startsWith("recovery_") || kind.equals("recovery_neutral")
-                || kind.equals("recovery_trader_near")) return;
+                || kind.equals("recovery_trader_near") || kind.equals("recovery_floor_offset")) return;
         if (kind.equals("recovery_place_mob")) {
             if (!BuiltInRegistries.BLOCK.getKey(context.level().getBlockState(new BlockPos(315, 120, 310))
                     .getBlock()).toString().equals("minecraft:black_concrete")) return;
@@ -79,7 +87,8 @@ final class FixtureEmergencyScenario {
             return;
         }
         var input = AgentInputState.global().inputOwnershipSnapshot();
-        if (!input.movementOwned() || !player.onGround() || player.distanceToSqr(310.5, 121, 310.5) > 9) return;
+        double startX = kind.startsWith("recovery_floor_") ? 314.5 : 310.5;
+        if (!input.movementOwned() || !player.onGround() || player.distanceToSqr(startX, 121, 310.5) > 9) return;
         injected = true;
         if (kind.equals("recovery_mob") || kind.equals("recovery_returning_mob")) {
             var mob = new net.minecraft.world.entity.monster.zombie.Zombie(net.minecraft.world.entity.EntityTypes.ZOMBIE, context.level());
@@ -89,12 +98,16 @@ final class FixtureEmergencyScenario {
             mob.setTarget(player);
             context.level().addFreshEntity(mob);
             if (kind.equals("recovery_returning_mob")) returningMob = mob;
-        } else if (kind.equals("recovery_trader_push")) {
+        } else if (kind.equals("recovery_trader_push") || kind.startsWith("recovery_floor_")) {
             var trader = new net.minecraft.world.entity.npc.wanderingtrader.WanderingTrader(
                     net.minecraft.world.entity.EntityTypes.WANDERING_TRADER, context.level());
             trader.setPos(player.getX() + 0.35, player.getY(), player.getZ());
             trader.setNoAi(true); trader.addTag("mcmcp_v2_fixture");
             context.level().addFreshEntity(trader);
+            if (kind.startsWith("recovery_floor_")) {
+                floorTrader = trader;
+                traderLeavesAt = server.getTickCount() + 150;
+            }
         } else {
             for (int x = 308; x <= 314; x++) for (int z = 308; z <= 314; z++)
                 context.level().setBlockAndUpdate(new BlockPos(x, 120, z), Blocks.AIR.defaultBlockState());
@@ -113,14 +126,14 @@ final class FixtureEmergencyScenario {
                 entity -> entity.entityTags().contains("mcmcp_v2_fixture")).stream()
                 .map(entity -> Map.<String, Object>of("id", entity.getUUID().toString(), "type",
                         BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString(), "health", entity.getHealth())).toList();
-        if (kind.equals("recovery_place_mob") || kind.equals("recovery_build_flight")) {
+        if (kind.equals("recovery_place_mob") || kind.equals("recovery_build_flight") || kind.startsWith("recovery_floor_")) {
             for (int x = 315; x <= 324; x++) blocks.add(Map.of("x", x, "y", 120, "z", 310, "block",
                     BuiltInRegistries.BLOCK.getKey(context.level().getBlockState(new BlockPos(x, 120, 310)).getBlock()).toString()));
         }
         return Map.of("case", kind, "hazard_injected", injected, "minimum_health", minHealth,
                 "maximum_speed", maxSpeed, "flying_ticks", flyingTicks, "landing_blocks", blocks, "mobs", entities,
                 "flight_return", Map.of("landed", rescueLanded, "threat_spawned", postFlightThreat),
-                "returning_mob", Map.of("hidden_at", hiddenAt, "returned_at", returnedAt,
+                "trader_cleared", traderCleared, "returning_mob", Map.of("hidden_at", hiddenAt, "returned_at", returnedAt,
                         "hit_after_return_at", returnHitAt, "player_hurt_after_return_at", returnHurtAt));
     }
 
@@ -154,6 +167,17 @@ final class FixtureEmergencyScenario {
         }
         if (kind.equals("recovery_neutral"))
             commands.add("summon minecraft:cow 312 121 310.5 {Tags:[\"mcmcp_v2_fixture\"],NoAI:1b}");
+        if (kind.startsWith("recovery_floor_")) {
+            commands.add("fill 308 120 308 314 120 314 minecraft:brown_concrete");
+            commands.add("setblock 314 120 310 minecraft:black_concrete");
+            commands.add("setblock 314 121 310 minecraft:torch");
+            commands.add("item replace entity @s hotbar.0 with minecraft:diamond_sword");
+            commands.add("item replace entity @s hotbar.4 with minecraft:firework_rocket 20");
+            commands.add("item replace entity @s inventory.0 with minecraft:black_concrete 64");
+            commands.add(kind.equals("recovery_floor_offset")
+                    ? "tp @s 313.5677818296293 121 309.945292639711 170.55 35.466"
+                    : "tp @s 314.4779310315791 121 310.468379712036 170.55 35.466");
+        }
         if (kind.equals("recovery_trader_near"))
             commands.add("summon minecraft:wandering_trader 312 121 310.5 {Tags:[\"mcmcp_v2_fixture\"],NoAI:1b}");
         if (kind.equals("recovery_water")) commands.add("fill 307 101 307 315 102 315 minecraft:water");
