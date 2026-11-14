@@ -224,6 +224,21 @@ final class MinecraftV2PlaceDriver
         }
         var frame = observations.latestInternalFrame();
         if (frame.isEmpty()) return V2BlockJobExecution.BeginResult.WAITING;
+        var desired = new BlockStateFingerprint(request.blockId(), request.properties());
+        BlockState before = level.getBlockState(position);
+        // An existing target needs its own visible state, not an exposed face for a new placement.
+        if (desired.matches(fingerprint(before))) {
+            if (!V2LocalConditions.visible(minecraft, position, 5.5D)) return V2BlockJobExecution.BeginResult.WAITING;
+            var other = V2PlacementFootprint.companion(next, fingerprint(before), footprintKind(before));
+            if (other != null && (!V2LocalConditions.visible(minecraft, blockPos(other.position()), 5.5D)
+                    || !other.state().matches(fingerprint(level.getBlockState(blockPos(other.position())))))) {
+                return V2BlockJobExecution.BeginResult.FAILED;
+            }
+            confirmedChange = new V2BlockJobExecution.ConfirmedChange(fingerprint(before), fingerprint(before),
+                    other == null ? List.of() : List.of(new V2BlockJobExecution.CompanionChange(
+                            other.position(), other.state(), other.state())));
+            return V2BlockJobExecution.BeginResult.SKIPPED;
+        }
         var reconciliation = reconciliationSignals.bindAndSnapshot(
                 level, session.worldSessionId());
         List<Candidate> visibleSupports = new ArrayList<>();
@@ -245,20 +260,6 @@ final class MinecraftV2PlaceDriver
             }
         }
         if (visibleSupports.isEmpty()) return V2BlockJobExecution.BeginResult.WAITING;
-        var desired = new BlockStateFingerprint(request.blockId(), request.properties());
-        BlockState before = level.getBlockState(position);
-        if (desired.matches(fingerprint(before))) {
-            if (!V2LocalConditions.visible(minecraft, position, 5.5D)) return V2BlockJobExecution.BeginResult.WAITING;
-            var other = V2PlacementFootprint.companion(next, fingerprint(before), footprintKind(before));
-            if (other != null && (!V2LocalConditions.visible(minecraft, blockPos(other.position()), 5.5D)
-                    || !other.state().matches(fingerprint(level.getBlockState(blockPos(other.position())))))) {
-                return V2BlockJobExecution.BeginResult.FAILED;
-            }
-            confirmedChange = new V2BlockJobExecution.ConfirmedChange(fingerprint(before), fingerprint(before),
-                    other == null ? List.of() : List.of(new V2BlockJobExecution.CompanionChange(
-                            other.position(), other.state(), other.state())));
-            return V2BlockJobExecution.BeginResult.SKIPPED;
-        }
         if (!request.acceptsTarget(blockId(before))) {
             return V2BlockJobExecution.BeginResult.SKIPPED;
         }

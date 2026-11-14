@@ -214,6 +214,18 @@ final class FixtureEmergencyScenario {
             commands.add("item replace entity @s hotbar.4 with minecraft:torch 32");
             commands.add("tp @s 310.5 121 310.5 90 80");
         }
+        if (kind.startsWith("recovery_bench_existing")) {
+            commands.add("fill 308 120 308 342 121 314 minecraft:air");
+            commands.add("fill 308 120 309 318 120 309 minecraft:black_concrete");
+            commands.add("fill 312 120 310 318 120 310 minecraft:black_concrete");
+            commands.add("tp @s 312.5596572615958 121 309.5364405872086 -88.66699 85.2812");
+            if (kind.equals("recovery_bench_existing_hidden")) {
+                commands.add("fill 311 121 310 313 124 310 minecraft:stone");
+            }
+            if (kind.equals("recovery_bench_existing_mismatch")) {
+                commands.add("setblock 312 120 310 minecraft:gray_concrete");
+            }
+        }
         if (kind.equals("recovery_trader_near"))
             commands.add("summon minecraft:wandering_trader 312 121 310.5 {Tags:[\"mcmcp_v2_fixture\"],NoAI:1b}");
         if (kind.equals("recovery_water")) commands.add("fill 307 101 307 315 102 315 minecraft:water");

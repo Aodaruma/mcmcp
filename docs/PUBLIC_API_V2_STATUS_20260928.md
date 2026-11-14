@@ -1,5 +1,7 @@
 # 公開API v2：進捗と再開メモ（2026-09-28）
 
+2026-10-13 R24更新候補：既設ブロックが先頭にある施工で、既存一致を判定する前に新規設置用の支持面を待ち続ける問題を修正。隔離R23（R22bと同じplace driver）で600 ticksの停止を再現し、R24では既存1＋新規2が6.879秒で完工。既存のみ・遮蔽・色違い・通常新規設置を含む6ケースが期待どおり。自動1,926件・build・source checks成功。R23のバッグ同期修正を含む別候補で、通常profile未導入。元の15秒期限超過や切断原因の解消とは扱わない。[原因・試験・制限](experiments/20261013_v2_existing_placement_resume.md)。
+
 2026-10-13 R23更新候補：バッグtake後にクラフト計画が `inventory_server_snapshot_required` で停止する不具合を旧R22bの隔離Dockerで再現。SophisticatedBackpacks独自full/slot受信からplayer所持品の確定記録へ反映する経路を補い、同じ条件で板32個take→棒64個craft、松明take・数量move・sort・storeとinspectの計10 Actionsに成功した。server側の数量照合とHP20・cursor空・READYを確認。自動1,926件・build・source checks成功。`product-r23.jar` は通常profile未導入。別件の収納更新期限超過を解消したとは扱わない。[原因・試験・制限](experiments/20261013_v2_backpack_inventory_sync.md)。
 
 2026-10-13 01:12 JST R22b継続結果：96行末までの有限workerが185.444分で床4,602個＋松明33本を完了。保存された36区間のAction結果は全件成功・合計4,635設置が一致し、終了後の公開再確認はHP/食料20・接地・既設黒床支持・同session・Actionなし。床のみ3区間の加重平均は2.308秒／床だが、旧版とは行・色・時刻が違うため改善率は断定しない。松明回避策は維持。施工担当は101行まで継続中と報告し、通常ゲームの所有を保持している。追加交換は行わない。[継続検証の記録](experiments/20261012_v2_build_speed.md#96行までの継続結果2026-10-13)。
