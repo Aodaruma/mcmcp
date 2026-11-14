@@ -91,8 +91,8 @@ $AuthExpirySafetyMargin = [TimeSpan]::FromMinutes(5)
 $MinimumMcpRequestIntervalMilliseconds = 60
 $ExpectedMcmcpServerName = 'mcmcp'
 $ExpectedMcmcpServerVersion = '0.1.0'
-$ExpectedCatalogFileSha256 = '4bb7b776ddfc8d9617e4226054487dd1f57e9cf79dc99b3f5b128080096f7447'
-$ExpectedToolSurfaceSha256 = 'd7acebc984e251fa038b7be96a408500409126eda73fb3840bc040a9c0a65a9e'
+$ExpectedCatalogFileSha256 = 'dc106b4d46f6ed0713270b54d23ec0753bec768a9458336b6815a4cf623c92c6'
+$ExpectedToolSurfaceSha256 = '4b7716cc699660caadd3f0e15ee075bc17e183417f80b9fddf9deeda5b7fd689'
 $AllowedTools = @(
     'agent_get_state',
     'agent_get_observation',
