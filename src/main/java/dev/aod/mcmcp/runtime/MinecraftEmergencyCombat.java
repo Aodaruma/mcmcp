@@ -29,6 +29,9 @@ final class MinecraftEmergencyCombat implements AutoCloseable {
     private V2HeldItemSelection selection;
     private NavigationViewLease view;
     private BoundedInputLease bowUse;
+    private BoundedInputLease shieldUse;
+    private long shieldSince;
+    private int shieldUses;
     private long drawingSince, lastAttack = Long.MIN_VALUE;
     private UUID targetId;
     private String weapon;
@@ -40,11 +43,12 @@ final class MinecraftEmergencyCombat implements AutoCloseable {
     void tick(Mob target, long tick, int attackLimit, double remainingCamera, BooleanSupplier allowed) {
         cameraBlocked = false;
         var player = minecraft.player;
-        if (target == null || !allowed.getAsBoolean() || attacks >= attackLimit
+        if (target == null || !allowed.getAsBoolean() || attacks + shieldUses >= attackLimit && shieldUse == null
                 || !ObservedThreats.attacking(target, player) || !target.isAlive()
                 || !player.hasLineOfSight(target) || player.distanceToSqr(target) > 16 * 16
                 || targetId != null && !targetId.equals(target.getUUID())) { close(); return; }
         targetId = target.getUUID();
+        if (defendArrow(target, tick, attackLimit, remainingCamera)) return;
         boolean arrows = false;
         for (int slot = 0; slot < 36; slot++) {
             var stack = player.getInventory().getItem(slot);
@@ -52,16 +56,22 @@ final class MinecraftEmergencyCombat implements AutoCloseable {
         }
         boolean rangedClear = !(target instanceof EnderMan) && player.distanceToSqr(target) >= 16
                 && clearShot(target, target.getBoundingBox().getCenter(), true);
+        int priority = Integer.MAX_VALUE;
+        String preferred = null;
+        for (int slot = 0; slot < 36; slot++) {
+            var stack = player.getInventory().getItem(slot);
+            if (stack.isEmpty()) continue;
+            String id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+            int score = EmergencyRecoveryPolicy.weaponPriority(id, arrows, rangedClear);
+            if (score < priority) { priority = score; preferred = id; }
+        }
+        if (preferred == null) { close(); return; }
+        // A bystander can leave the shot corridor after we first selected a melee tool.
+        if (selection != null && !preferred.equals(weapon)) {
+            releaseBow(false); selection.close(); selection = null;
+        }
         if (selection == null) {
-            int priority = Integer.MAX_VALUE;
-            for (int slot = 0; slot < 36; slot++) {
-                var stack = player.getInventory().getItem(slot);
-                if (stack.isEmpty()) continue;
-                String id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
-                int score = EmergencyRecoveryPolicy.weaponPriority(id, arrows, rangedClear);
-                if (score < priority) { priority = score; weapon = id; }
-            }
-            if (priority == Integer.MAX_VALUE) return;
+            weapon = preferred;
             selection = new V2HeldItemSelection(minecraft, session, weapon);
             if (!selection.begin(tick, false)) { close(); return; }
         }
@@ -110,6 +120,66 @@ final class MinecraftEmergencyCombat implements AutoCloseable {
         }
     }
 
+    private boolean defendArrow(Mob target, long tick, int limit, double camera) {
+        var player = minecraft.player;
+        var shield = player.getOffhandItem();
+        if (!shield.is(Items.SHIELD) || !shield.has(net.minecraft.core.component.DataComponents.BLOCKS_ATTACKS)
+                || player.getCooldowns().isOnCooldown(shield) || !player.onGround()
+                || player.isFallFlying() || player.isInWater() || player.isInLava()) {
+            releaseShield(); return false;
+        }
+        var incoming = minecraft.level.getEntitiesOfClass(net.minecraft.world.entity.projectile.arrow.AbstractArrow.class,
+                player.getBoundingBox().inflate(16), arrow ->
+                        (arrow.getType() == net.minecraft.world.entity.EntityTypes.ARROW
+                            || arrow.getType() == net.minecraft.world.entity.EntityTypes.SPECTRAL_ARROW)
+                        && arrow.getOwner() == target && arrow.getPierceLevel() == 0 && arrow.isAlive()
+                        && player.hasLineOfSight(arrow) && approachingArrow(player.getBoundingBox(),
+                            arrow.position(), arrow.getDeltaMovement())).stream()
+                .min(java.util.Comparator.comparingDouble(player::distanceToSqr)).orElse(null);
+        if (incoming == null || shieldUse != null && tick - shieldSince >= 32) {
+            releaseShield(); return false;
+        }
+        releaseBow(false);
+        if (selection != null) { selection.close(); selection = null; }
+        var direction = incoming.position().subtract(player.getEyePosition());
+        float yaw = (float) Math.toDegrees(Math.atan2(-direction.x, direction.z));
+        if (view == null) view = NavigationViewLease.acquire(player, owner);
+        if (!view.matches(owner) || !view.turnTowardWithinBudget(owner, yaw, 0, camera)) {
+            cameraBlocked = true; releaseShield(); return true;
+        }
+        if (shieldUse == null) {
+            if (attacks + shieldUses >= limit || player.isUsingItem()) return true;
+            shieldUses++;
+            minecraft.gameMode.useItem(player, InteractionHand.OFF_HAND);
+            if (!player.isUsingItem() || player.getUsedItemHand() != InteractionHand.OFF_HAND) return true;
+            shieldUse = BoundedInputLease.acquire(AgentInputState.global(), Set.of(BoundedInputLease.Input.USE),
+                    System.nanoTime(), HORIZON);
+            AgentInputState.global().suppressUseRestart();
+            shieldSince = tick;
+        } else if (!shieldUse.heartbeat(System.nanoTime(), HORIZON)) releaseShield();
+        return true;
+    }
+
+    static boolean approachingArrow(AABB body, Vec3 position, Vec3 velocity) {
+        if (velocity.lengthSqr() < .01) return false;
+        // Native, non-piercing arrows only; this does not classify unknown MOD projectiles.
+        for (int i = 0; i < 12; i++) {
+            var next = position.add(velocity);
+            if (body.inflate(.3).clip(position, next).isPresent()) return true;
+            position = next;
+            velocity = velocity.scale(.99).add(0, -.05, 0);
+        }
+        return false;
+    }
+
+    private void releaseShield() {
+        if (shieldUse == null) return;
+        shieldUse.close(); shieldUse = null;
+        if (minecraft.player != null && minecraft.player.isUsingItem()
+                && minecraft.player.getUsedItemHand() == InteractionHand.OFF_HAND)
+            minecraft.gameMode.releaseUsingItem(minecraft.player);
+    }
+
     private boolean clearShot(Mob target, Vec3 aim, boolean ranged) {
         var player = minecraft.player;
         Vec3 start = player.getEyePosition();
@@ -137,14 +207,17 @@ final class MinecraftEmergencyCombat implements AutoCloseable {
         }
     }
     Map<String, Object> result() {
-        return Map.of("attacks_dispatched", attacks, "weapon", weapon == null ? "none" : weapon,
+        return Map.of("attacks_dispatched", attacks, "shield_uses_dispatched", shieldUses,
+                "shield_active", shieldUse != null, "weapon", weapon == null ? "none" : weapon,
                 "target", targetId == null ? "none" : targetId.toString(), "camera_budget_blocked", cameraBlocked);
     }
     int attacksDispatched() { return attacks; }
-    boolean readyToFight() { return targetId != null && selection != null && selection.matchesRequested(); }
+    int interactionsDispatched() { return attacks + shieldUses; }
+    boolean readyToFight() { return shieldUse != null || targetId != null && selection != null && selection.matchesRequested(); }
     boolean cameraBlocked() { return cameraBlocked; }
     @Override public void close() {
         releaseBow(false);
+        releaseShield();
         if (view != null) { view.close(owner); view = null; }
         if (selection != null) { selection.close(); selection = null; }
         targetId = null;

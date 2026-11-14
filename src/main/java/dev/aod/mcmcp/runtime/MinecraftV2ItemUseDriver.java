@@ -22,6 +22,7 @@ final class MinecraftV2ItemUseDriver implements V2OperationJobExecution.Driver {
     private final Minecraft minecraft;
     private final UUID session;
     private final V2ItemUseArguments request;
+    private final java.util.function.Predicate<net.minecraft.world.item.ItemStack> itemFilter;
     private LocalPlayer player;
     private ClientLevel level;
     private V2HeldItemSelection selection;
@@ -40,9 +41,15 @@ final class MinecraftV2ItemUseDriver implements V2OperationJobExecution.Driver {
     private boolean menuReleaseFault;
 
     MinecraftV2ItemUseDriver(Minecraft minecraft, UUID session, V2ItemUseArguments request) {
+        this(minecraft, session, request, stack -> true);
+    }
+
+    MinecraftV2ItemUseDriver(Minecraft minecraft, UUID session, V2ItemUseArguments request,
+                            java.util.function.Predicate<net.minecraft.world.item.ItemStack> itemFilter) {
         this.minecraft = Objects.requireNonNull(minecraft);
         this.session = Objects.requireNonNull(session);
         this.request = Objects.requireNonNull(request);
+        this.itemFilter = Objects.requireNonNull(itemFilter);
     }
 
     MinecraftV2ItemUseDriver withMenu(MinecraftV2MenuDriver menu) {
@@ -62,7 +69,7 @@ final class MinecraftV2ItemUseDriver implements V2OperationJobExecution.Driver {
             failure = "item_context_unavailable";
             return;
         }
-        selection = new V2HeldItemSelection(minecraft, session, request.item());
+        selection = new V2HeldItemSelection(minecraft, session, request.item(), itemFilter);
         if (!selection.begin(tick, false)) failure = "item_not_available";
         if (menu != null) menu.begin(tick, outputAllowed);
     }

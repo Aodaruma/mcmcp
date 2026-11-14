@@ -4,8 +4,11 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 class FixtureV2PrioritiesTest {
     @Test void onlyFixedCasesWithAnExplicitNewRequestNumberAreAccepted() {
+        for (var suffix : java.util.List.of("", "_full", "_bow", "_shield", "_water", "_flight", "_cancel", "_locked"))
+            assertThat(FixtureV2PrioritiesConfig.validRequest("8:recovery_equipment" + suffix)).isTrue();
+        assertThat(FixtureV2PrioritiesConfig.validRequest("8:recovery_equipment_command")).isFalse();
         for (String kind : java.util.List.of("recovery_bucket", "recovery_web", "recovery_boat", "recovery_slime", "recovery_hay",
-                "recovery_bed", "recovery_water", "recovery_elytra", "recovery_mob", "recovery_neutral", "recovery_returning_mob",
+                "recovery_bed", "recovery_water", "recovery_elytra", "recovery_elytra_pool", "recovery_elytra_edge", "recovery_mob", "recovery_neutral", "recovery_returning_mob",
                 "recovery_trader_near", "recovery_trader_push", "recovery_floor_offset", "recovery_floor_push", "recovery_floor_clear", "recovery_torch_edge", "recovery_torch_chain", "recovery_torch_graze", "recovery_bench_row", "recovery_bench_first", "recovery_bench_existing", "recovery_bench_existing_hidden", "recovery_bench_existing_mismatch", "recovery_place_mob", "recovery_build_flight", "flight_open", "flight_wall", "flight_boost", "flight_boost_wall"))
             assertThat(FixtureV2PrioritiesConfig.validRequest("7:" + kind)).isTrue();
         assertThat(FixtureV2PrioritiesConfig.validRequest("7:recovery_command")).isFalse();

@@ -17,6 +17,8 @@ final class FlightObservation {
     private final Vec3 eye;
     private final double radius;
     private final Map<BlockPos, Boolean> cells = new HashMap<>();
+    private final Map<String, Integer> rejections = new java.util.LinkedHashMap<>();
+    private Map<String, Object> firstRejection;
     FlightObservation(Minecraft minecraft) {
         this.minecraft = minecraft;
         eye = minecraft.player.getEyePosition();
@@ -24,13 +26,15 @@ final class FlightObservation {
                 Math.max(8, minecraft.options.getEffectiveRenderDistance() * 16 - 16));
     }
     boolean clear(AABB box) {
-        if (box.getSize() > radius || box.getCenter().distanceTo(eye) + box.getSize() > radius) return false;
-        if (!minecraft.level.getEntities(minecraft.player, box, entity -> entity.isAlive() && entity.isPickable()).isEmpty()) return false;
+        if (box.getSize() > radius || box.getCenter().distanceTo(eye) + box.getSize() > radius)
+            return reject("range", BlockPos.containing(box.getCenter()));
+        if (!minecraft.level.getEntities(minecraft.player, box, entity -> entity.isAlive() && entity.isPickable()).isEmpty())
+            return reject("entity", BlockPos.containing(box.getCenter()));
         for (BlockPos pos : BlockPos.betweenClosed(BlockPos.containing(box.minX, box.minY, box.minZ),
                 BlockPos.containing(box.maxX, box.maxY, box.maxZ))) {
             Boolean known = cells.get(pos);
             if (known == null) {
-                if (cells.size() >= MAX_CELLS) return false;
+                if (cells.size() >= MAX_CELLS) return reject("cell_budget", pos);
                 known = witness(pos);
                 cells.put(pos.immutable(), known);
             }
@@ -93,16 +97,29 @@ final class FlightObservation {
     }
     private boolean witness(BlockPos pos) {
         var level = minecraft.level;
-        if (!level.isLoaded(pos) || !level.getWorldBorder().isWithinBounds(pos)) return false;
+        if (!level.isLoaded(pos)) return reject("unloaded", pos);
+        if (!level.getWorldBorder().isWithinBounds(pos)) return reject("world_border", pos);
         var end = Vec3.atCenterOf(pos);
-        if (eye.distanceToSqr(end) > radius * radius) return false;
+        if (eye.distanceToSqr(end) > radius * radius) return reject("range", pos);
         var hit = level.clip(new ClipContext(eye, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.ANY, minecraft.player));
-        if (hit.getType() != HitResult.Type.MISS) return false;
+        if (hit.getType() != HitResult.Type.MISS) return reject("occluded", hit.getBlockPos());
         var state = level.getBlockState(pos);
-        return state.getCollisionShape(level, pos).isEmpty() && state.getFluidState().isEmpty()
-                && !dev.aod.mcmcp.routine.MinecraftSemanticActionPort.isNavigationHazard(state)
-                && !state.is(net.minecraft.world.level.block.Blocks.COBWEB)
-                && !state.is(net.minecraft.world.level.block.Blocks.POWDER_SNOW);
+        if (!state.getCollisionShape(level, pos).isEmpty()) return reject("collision", pos);
+        if (!state.getFluidState().isEmpty()) return reject("fluid", pos);
+        if (dev.aod.mcmcp.routine.MinecraftSemanticActionPort.isNavigationHazard(state)
+                || state.is(net.minecraft.world.level.block.Blocks.COBWEB)
+                || state.is(net.minecraft.world.level.block.Blocks.POWDER_SNOW)) return reject("hazard", pos);
+        return true;
+    }
+    private boolean reject(String reason, BlockPos pos) {
+        rejections.merge(reason, 1, Integer::sum);
+        if (firstRejection == null) firstRejection = Map.of("reason", reason,
+                "x", pos.getX(), "y", pos.getY(), "z", pos.getZ());
+        return false;
+    }
+    Map<String, Object> diagnostic() {
+        return Map.of("rejections", Map.copyOf(rejections), "first_rejection",
+                firstRejection == null ? Map.of() : firstRejection);
     }
     int sampledCells() { return cells.size(); }
     double radius() { return radius; }

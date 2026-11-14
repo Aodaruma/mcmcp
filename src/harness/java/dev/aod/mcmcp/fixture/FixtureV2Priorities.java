@@ -26,8 +26,13 @@ final class FixtureV2Priorities {
             var fixture = new FixtureV2Priorities();
             net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(fixture::tick);
             net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(fixture::driftStorage);
+            net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(fixture::shieldBlock);
             LOGGER.warn("MCMCP v2 priorities fixture enabled; fixed setup cases only");
         }
+    }
+
+    private void shieldBlock(net.neoforged.neoforge.event.entity.living.LivingShieldBlockEvent event) {
+        if (emergencyFixture != null) emergencyFixture.shieldBlock(event);
     }
 
     private void driftStorage(net.neoforged.neoforge.event.tick.ServerTickEvent.Post event) {
@@ -82,9 +87,11 @@ final class FixtureV2Priorities {
             var server = minecraft.getSingleplayerServer();
             UUID playerId = minecraft.player.getUUID();
             var buildProfile = value.endsWith(":report") ? BuildPhaseProfiler.finish() : Map.of();
+            var flightProfile = value.endsWith(":report") ? FlightRecoveryProfiler.finish() : Map.of();
             server.execute(() -> {
                 var report = new LinkedHashMap<String, Object>();
                 if (!buildProfile.isEmpty()) report.put("build_profile", buildProfile);
+                if (!flightProfile.isEmpty()) report.put("flight_profile", flightProfile);
                 report.put("request", value);
                 try {
                     var player = server.getPlayerList().getPlayer(playerId);
@@ -132,8 +139,11 @@ final class FixtureV2Priorities {
                         if (emergency) emergencyFixture = new FixtureEmergencyScenario(decision.context(), kind);
                         if (kind.startsWith("recovery_bench_") || kind.equals("floor_refill"))
                             minecraft.execute(() -> BuildPhaseProfiler.start(kind));
+                        if (kind.startsWith("recovery_elytra") || kind.equals("recovery_build_flight"))
+                            minecraft.execute(() -> FlightRecoveryProfiler.start(kind));
                         if (kind.equals("water_air")) player.setAirSupply(120);
                         if (kind.startsWith("storage_")) prepareBackpack(player, kind);
+                        if (kind.startsWith("recovery_equipment")) prepareEquipmentBackpack(player);
                         if (kind.equals("floor_refill")) prepareFloorRefill(player);
                         storageDriftApplied = false;
                         storageCursorDrift = kind.equals("storage_cursor_drift");
@@ -340,6 +350,19 @@ final class FixtureV2Priorities {
         player.inventoryMenu.broadcastChanges();
     }
 
+    private static void prepareEquipmentBackpack(net.minecraft.server.level.ServerPlayer player)
+            throws ReflectiveOperationException {
+        var wrapper = backpackWrapper(player.getInventory().getItem(6));
+        var inventory = wrapper.getClass().getMethod("getInventoryHandler").invoke(wrapper);
+        var armor = new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.DIAMOND_CHESTPLATE);
+        armor.set(net.minecraft.core.component.DataComponents.CUSTOM_NAME,
+                net.minecraft.network.chat.Component.literal("Fixture return armor"));
+        armor.setDamageValue(17);
+        inventory.getClass().getMethod("setStackInSlot", int.class, net.minecraft.world.item.ItemStack.class)
+                .invoke(inventory, 0, armor);
+        player.inventoryMenu.broadcastChanges();
+    }
+
     private static Map<String, Object> backpackReport(net.minecraft.world.item.ItemStack stack)
             throws ReflectiveOperationException {
         Object wrapper = backpackWrapper(stack);
@@ -435,8 +458,11 @@ final class FixtureV2Priorities {
                 "tp @s 305.5 101 305.5 180 0", "setblock 305 101 303 minecraft:crafting_table",
                 "recipe give @s *", "time set noon", "weather clear"));
         switch (kind) {
+            case "recovery_equipment", "recovery_equipment_full", "recovery_equipment_bow", "recovery_equipment_shield",
+                    "recovery_equipment_water", "recovery_equipment_flight", "recovery_equipment_cancel", "recovery_equipment_locked" ->
+                    result.addAll(FixtureEmergencyScenario.commands(kind));
             case "recovery_bucket", "recovery_web", "recovery_boat", "recovery_slime", "recovery_hay", "recovery_bed",
-                    "recovery_water", "recovery_elytra", "recovery_mob", "recovery_neutral", "recovery_returning_mob",
+                    "recovery_water", "recovery_elytra", "recovery_elytra_pool", "recovery_elytra_edge", "recovery_mob", "recovery_neutral", "recovery_returning_mob",
                     "recovery_trader_near", "recovery_trader_push", "recovery_floor_offset", "recovery_floor_push", "recovery_floor_clear", "recovery_torch_edge", "recovery_torch_chain", "recovery_torch_graze", "recovery_bench_row", "recovery_bench_first", "recovery_bench_existing", "recovery_bench_existing_hidden", "recovery_bench_existing_mismatch", "recovery_place_mob", "recovery_build_flight", "flight_open", "flight_wall", "flight_boost", "flight_boost_wall" ->
                     result.addAll(FixtureEmergencyScenario.commands(kind));
             case "floor_east", "floor_west", "floor_north", "floor_south", "floor_offset", "floor_shortage", "floor_obstructed", "floor_refill" -> {

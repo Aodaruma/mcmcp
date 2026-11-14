@@ -50,6 +50,7 @@ final class MinecraftEmergencyRecovery implements AutoCloseable {
     private int stableTicks;
     private MovementInputLease movement;
     private MinecraftEmergencyCombat combat;
+    private MinecraftEmergencyEquipment equipment;
     private MinecraftEmergencyClutch clutch;
     private MinecraftElytraFlight flight;
     private MinecraftEmergencyWaystone warp;
@@ -58,6 +59,11 @@ final class MinecraftEmergencyRecovery implements AutoCloseable {
     private boolean clutchDispatched;
     private int flightUses, clutchUses, warpUses;
     private EmergencyRecoveryPolicy.Danger reason;
+    private final EmergencyRecoveryPolicy.Danger initialReason;
+    private EmergencyRecoveryPolicy.Danger currentDanger;
+    private final java.util.ArrayList<Map<String, Object>> hazardTransitions = new java.util.ArrayList<>();
+    private int hazardTransitionCount;
+    private Map<String, Object> retreat;
     private String strategy = "starting", failure;
     private final Map<String, Object> history = new LinkedHashMap<>();
 
@@ -67,6 +73,8 @@ final class MinecraftEmergencyRecovery implements AutoCloseable {
         this.sessions = sessions;
         this.safeAnchor = safeAnchor == null ? minecraft.player.position().add(8, 6, 0) : safeAnchor;
         player = minecraft.player; level = minecraft.level; previous = player.position(); reason = hazard.danger();
+        initialReason = reason;
+        recordHazard(hazard, tick);
         maxTicks = McmcpClientConfig.recoveryMaxTicks(); maxInteractions = McmcpClientConfig.recoveryMaxInteractions();
         maxDistance = McmcpClientConfig.recoveryMaxDistance(); maxCamera = McmcpClientConfig.recoveryMaxCameraDegrees();
         previousYaw = player.getYRot(); previousPitch = player.getXRot();
@@ -124,6 +132,7 @@ final class MinecraftEmergencyRecovery implements AutoCloseable {
             failure = "recovery_context_changed"; return State.EXHAUSTED;
         }
         travelled += player.position().distanceTo(previous); previous = player.position();
+        recordHazard(hazard, tick);
         cameraTravel += Math.abs(net.minecraft.util.Mth.wrapDegrees(player.getYRot() - previousYaw))
                 + Math.abs(player.getXRot() - previousPitch);
         previousYaw = player.getYRot(); previousPitch = player.getXRot();
@@ -134,6 +143,13 @@ final class MinecraftEmergencyRecovery implements AutoCloseable {
         if (hazard.threat() != null) threatOrigin = hazard.threat().position();
         if (hazard.danger() == EmergencyRecoveryPolicy.Danger.MOB_INTERFERENCE) contactObstruction = hazard.threat();
         if (hazard.danger() != EmergencyRecoveryPolicy.Danger.NONE) reason = hazard.danger();
+        if (equipment != null && equipment.pending()) {
+            stopMovement();
+            boolean pending = equipment.tick(tick, revision, hazard.danger() == EmergencyRecoveryPolicy.Danger.NONE,
+                    0, maxTicks - (tick - started), allowed);
+            history.put("equipment", equipment.result());
+            if (pending) { strategy = "restoring_chest_armor"; return State.RECOVERING; }
+        }
         if ((reason == EmergencyRecoveryPolicy.Danger.PLAYER_ATTACK || reason == EmergencyRecoveryPolicy.Danger.PLAYER_INTERFERENCE)
                 && !chatAttempted) {
             chatAttempted = true;
@@ -154,7 +170,7 @@ final class MinecraftEmergencyRecovery implements AutoCloseable {
         if (flight != null) {
             stopMovement();
             var result = flight.tick(safeAnchor, hazard.threat() == null ? null : hazard.threat().position(), tick,
-                    Math.max(0, Math.min(4, maxInteractions - flightUses - clutchUses - warpUses - combatUses() - 1)),
+                    Math.max(0, Math.min(4, maxInteractions - flightUses - clutchUses - warpUses - combatUses() - equipmentUses() - 1)),
                     true, maxTicks - (tick - started) - McmcpClientConfig.recoverySafeTicks(),
                     maxDistance - travelled, maxCamera - cameraTravel, allowed);
             history.put("flight", flight.result());
@@ -169,7 +185,7 @@ final class MinecraftEmergencyRecovery implements AutoCloseable {
             if (!stack.isEmpty()) items.add(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString());
         }
         items.removeAll(unavailableItems);
-        int remainingUses = maxInteractions - flightUses - clutchUses - warpUses - combatUses();
+        int remainingUses = maxInteractions - flightUses - clutchUses - warpUses - combatUses() - equipmentUses();
         if (remainingUses < 2) items.removeIf(EmergencyRecoveryPolicy::boat);
         var state = new EmergencyRecoveryPolicy.Situation(hazard.danger(), !flightRejected && MinecraftElytraFlight.available(player),
                 MinecraftElytraFlight.rocketsAvailable(player), hazard.waterBelow(),
@@ -211,7 +227,7 @@ final class MinecraftEmergencyRecovery implements AutoCloseable {
         }
         if (choice.response() == EmergencyRecoveryPolicy.Response.RETALIATE && hazard.threat() instanceof Mob mob) {
             if (combat == null) combat = new MinecraftEmergencyCombat(minecraft, session);
-            combat.tick(mob, tick, Math.max(0, maxInteractions - flightUses - clutchUses - warpUses),
+            combat.tick(mob, tick, Math.max(0, maxInteractions - flightUses - clutchUses - warpUses - equipmentUses()),
                     Math.max(0, maxCamera - cameraTravel), allowed);
             history.put("combat", combat.result());
             if (combat.cameraBlocked()) strategy = "retreat_camera_budget";
@@ -245,13 +261,34 @@ final class MinecraftEmergencyRecovery implements AutoCloseable {
                 && (player.onGround() && !player.isInWater() || settledBoat)
                 && !player.isOnFire() && player.getHealth() > 6;
         stableTicks = stable ? stableTicks + 1 : 0;
+        if (equipment != null || stableTicks >= 10 && McmcpClientConfig.emergencyItemUse()) {
+            stopMovement();
+            if (equipment == null) equipment = new MinecraftEmergencyEquipment(minecraft, session);
+            boolean pending = equipment.tick(tick, revision, stable && stableTicks >= 10,
+                    maxInteractions - flightUses - clutchUses - warpUses - combatUses() - equipmentUses(),
+                    maxTicks - (tick - started), allowed);
+            history.put("equipment", equipment.result());
+            if (pending) { strategy = "restoring_chest_armor"; return State.RECOVERING; }
+        }
         if (stableTicks >= McmcpClientConfig.recoverySafeTicks()) return State.STABLE;
         if (stable || choice.response() == EmergencyRecoveryPolicy.Response.LAND_IN_WATER) { stopMovement(); return State.RECOVERING; }
-        var candidate = candidates.get().stream().filter(MinecraftRecoveryGovernor.Candidate::knownNonWorsening)
+        var available = candidates.get();
+        var candidate = available.stream().filter(MinecraftRecoveryGovernor.Candidate::knownNonWorsening)
                 .filter(option -> hazard.danger() != EmergencyRecoveryPolicy.Danger.WATER
                         || option.kind() == MinecraftRecoveryGovernor.CandidateKind.REACH_BREATHING_SPACE)
                 .sorted(Comparator.comparingInt((MinecraftRecoveryGovernor.Candidate option) -> option.reachesStableState() ? 0 : 1)
                         .thenComparingDouble(MinecraftRecoveryGovernor.Candidate::goalDeviation)).findFirst().orElse(null);
+        var detail = new LinkedHashMap<String, Object>();
+        detail.put("tick", tick); detail.put("candidate_count", available.size());
+        detail.put("in_water", player.isInWater()); detail.put("underwater", player.isUnderWater());
+        detail.put("air", player.getAirSupply());
+        detail.put("position", Map.of("x", player.getX(), "y", player.getY(), "z", player.getZ()));
+        if (candidate != null) {
+            detail.put("kind", candidate.kind().name().toLowerCase(java.util.Locale.ROOT));
+            detail.put("target", Map.of("x", candidate.intent().target().x,
+                    "y", candidate.intent().target().y, "z", candidate.intent().target().z));
+        }
+        retreat = Map.copyOf(detail);
         if (candidate == null) { stopMovement(); strategy = "waiting_for_observed_retreat"; return State.RECOVERING; }
         if (movement == null) movement = MovementInputLease.acquire(minecraft, owner, System.nanoTime(), HORIZON);
         movement.setDesired(owner, candidate.movement());
@@ -261,15 +298,34 @@ final class MinecraftEmergencyRecovery implements AutoCloseable {
         return State.RECOVERING;
     }
     Vec3 threatOrigin() { return threatOrigin; }
-    private int combatUses() { return combat == null ? 0 : combat.attacksDispatched(); }
+    private void recordHazard(Hazard hazard, long tick) {
+        if (currentDanger == hazard.danger()) return;
+        currentDanger = hazard.danger();
+        hazardTransitionCount++;
+        if (hazardTransitions.size() >= 8) return;
+        hazardTransitions.add(Map.of("elapsed_ticks", tick - started,
+                "danger", currentDanger.name().toLowerCase(java.util.Locale.ROOT),
+                "position", Map.of("x", player.getX(), "y", player.getY(), "z", player.getZ()),
+                "in_water", player.isInWater(), "fall_flying", player.isFallFlying(), "health", player.getHealth(),
+                "threat", hazard.threat() == null ? "none" : BuiltInRegistries.ENTITY_TYPE.getKey(hazard.threat().getType()).toString()));
+    }
+    private int combatUses() { return combat == null ? 0 : combat.interactionsDispatched(); }
+    private int equipmentUses() { return equipment == null ? 0 : equipment.reservedUses(); }
     boolean allowsScreenChange() { return warp != null; }
     Map<String, Object> result(long tick, String status) {
         var result = new LinkedHashMap<String, Object>(history);
+        if (equipment != null) result.put("equipment", equipment.result());
+        if (combat != null) result.put("combat", combat.result());
         result.put("status", status); result.put("reason", reason.name().toLowerCase(java.util.Locale.ROOT));
         result.put("strategy", strategy); result.put("elapsed_ticks", tick - started);
+        result.put("initial_reason", initialReason.name().toLowerCase(java.util.Locale.ROOT));
+        result.put("current_danger", currentDanger.name().toLowerCase(java.util.Locale.ROOT));
+        result.put("hazard_transitions", List.copyOf(hazardTransitions));
+        result.put("hazard_transitions_truncated", hazardTransitionCount > hazardTransitions.size());
+        if (retreat != null) result.put("retreat", retreat);
         result.put("distance", travelled); result.put("stable_ticks", stableTicks);
         result.put("camera_degrees", cameraTravel);
-        result.put("interactions_dispatched_or_reserved", flightUses + clutchUses + warpUses + combatUses()
+        result.put("interactions_dispatched_or_reserved", flightUses + clutchUses + warpUses + combatUses() + equipmentUses()
                 + (flight == null ? 0 : flight.usesDispatched()) + (clutch == null ? 0 : clutch.usesDispatched()));
         if (failure != null) result.put("failure", failure);
         return Map.copyOf(result);
@@ -278,6 +334,7 @@ final class MinecraftEmergencyRecovery implements AutoCloseable {
     @Override public void close() {
         stopMovement();
         if (combat != null) { combat.close(); }
+        if (equipment != null) { equipment.close(); }
         if (clutch != null) { clutch.close(); clutch = null; }
         if (flight != null) { flight.close(); flight = null; }
         if (warp != null) { warp.close(); warp = null; }

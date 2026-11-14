@@ -19,6 +19,8 @@ final class FixtureEmergencyScenario {
     private float minHealth;
     private double maxSpeed;
     private int flyingTicks;
+    private int waterTicks;
+    private final List<Map<String, Object>> rescueSamples = new ArrayList<>();
     private boolean rescueLanded, postFlightThreat;
     private net.minecraft.world.entity.monster.zombie.Zombie returningMob;
     private int hiddenAt = -1, returnedAt = -1, returnHitAt = -1, returnHurtAt = -1;
@@ -26,20 +28,37 @@ final class FixtureEmergencyScenario {
     private net.minecraft.world.entity.npc.wanderingtrader.WanderingTrader floorTrader;
     private int traderLeavesAt = -1;
     private boolean traderCleared;
+    private Map<String, Object> landingVolumeAtStart;
+    private final FixtureEmergencyEquipment equipment;
 
     FixtureEmergencyScenario(FixtureSecurity.Context context, String kind) {
         this.context = context; this.kind = kind;
         deadline = context.server().getTickCount() + 2400;
         minHealth = context.player().getHealth();
+        equipment = kind.startsWith("recovery_equipment") ? new FixtureEmergencyEquipment(context, kind) : null;
+    }
+
+    void shieldBlock(net.neoforged.neoforge.event.entity.living.LivingShieldBlockEvent event) {
+        if (equipment != null && context.server().getTickCount() <= deadline
+                && FixtureSecurity.reauthorize(context).allowed()) equipment.shieldBlock(event);
     }
 
     void tick(net.minecraft.server.MinecraftServer server) {
         if (server != context.server() || server.getTickCount() > deadline
                 || !FixtureSecurity.reauthorize(context).allowed()) return;
+        if (equipment != null) { equipment.tick(); return; }
         var player = context.player();
         minHealth = Math.min(minHealth, player.getHealth());
         maxSpeed = Math.max(maxSpeed, player.getDeltaMovement().length());
         if (player.isFallFlying()) flyingTicks++;
+        if (player.isInWater()) waterTicks++;
+        if (kind.startsWith("recovery_elytra_") && injected && rescueSamples.size() < 800) {
+            rescueSamples.add(Map.of("tick", server.getTickCount(), "position",
+                    List.of(player.getX(), player.getY(), player.getZ()), "velocity",
+                    List.of(player.getDeltaMovement().x, player.getDeltaMovement().y, player.getDeltaMovement().z),
+                    "health", player.getHealth(), "flying", player.isFallFlying(),
+                    "water", player.isInWater(), "underwater", player.isUnderWater(), "on_ground", player.onGround()));
+        }
         if (floorTrader != null && kind.equals("recovery_floor_clear") && !traderCleared
                 && server.getTickCount() >= traderLeavesAt) {
             floorTrader.teleportTo(309.5, 121, 313.5);
@@ -88,9 +107,10 @@ final class FixtureEmergencyScenario {
             return;
         }
         var input = AgentInputState.global().inputOwnershipSnapshot();
-        double startX = kind.startsWith("recovery_floor_") ? 314.5 : 310.5;
+        double startX = kind.startsWith("recovery_floor_") || kind.equals("recovery_elytra_edge") ? 314.5 : 310.5;
         if (!input.movementOwned() || !player.onGround() || player.distanceToSqr(startX, 121, 310.5) > 9) return;
         injected = true;
+        if (kind.startsWith("recovery_elytra_")) landingVolumeAtStart = landingVolume();
         if (kind.equals("recovery_mob") || kind.equals("recovery_returning_mob")) {
             var mob = new net.minecraft.world.entity.monster.zombie.Zombie(net.minecraft.world.entity.EntityTypes.ZOMBIE, context.level());
             mob.setPos(312, 121, 310.5); mob.addTag("mcmcp_v2_fixture");
@@ -116,6 +136,7 @@ final class FixtureEmergencyScenario {
     }
 
     Map<String, Object> report() {
+        if (equipment != null) return equipment.report();
         var blocks = new ArrayList<Object>();
         for (int x = 307; x <= 315; x++) for (int z = 307; z <= 315; z++) {
             var pos = new BlockPos(x, 101, z);
@@ -141,11 +162,37 @@ final class FixtureEmergencyScenario {
                 blocks.add(Map.of("x", x, "y", y, "z", z, "block", BuiltInRegistries.BLOCK.getKey(
                         context.level().getBlockState(new BlockPos(x, y, z)).getBlock()).toString()));
         }
-        return Map.of("case", kind, "hazard_injected", injected, "minimum_health", minHealth,
+        var report = new java.util.LinkedHashMap<String, Object>(Map.of("case", kind, "hazard_injected", injected, "minimum_health", minHealth,
                 "maximum_speed", maxSpeed, "flying_ticks", flyingTicks, "landing_blocks", blocks, "mobs", entities,
                 "flight_return", Map.of("landed", rescueLanded, "threat_spawned", postFlightThreat),
                 "trader_cleared", traderCleared, "returning_mob", Map.of("hidden_at", hiddenAt, "returned_at", returnedAt,
-                        "hit_after_return_at", returnHitAt, "player_hurt_after_return_at", returnHurtAt));
+                        "hit_after_return_at", returnHitAt, "player_hurt_after_return_at", returnHurtAt)));
+        if (kind.startsWith("recovery_elytra_")) {
+            report.put("water_ticks", waterTicks); report.put("samples", List.copyOf(rescueSamples));
+            report.put("landing_volume", landingVolume());
+            if (landingVolumeAtStart != null) report.put("landing_volume_at_start", landingVolumeAtStart);
+        }
+        return Map.copyOf(report);
+    }
+
+    private Map<String, Object> landingVolume() {
+        var layers = new ArrayList<Object>();
+        for (int y = 100; y <= 104; y++) {
+            var rows = new ArrayList<String>();
+            for (int z = 290; z <= 330; z++) {
+                var row = new StringBuilder();
+                for (int x = 290; x <= 350; x++) {
+                    var pos = new BlockPos(x, y, z);
+                    var state = context.level().getBlockState(pos);
+                    row.append(!state.getFluidState().isEmpty() ? (char) ('0' + Math.round(9 * state.getFluidState().getHeight(context.level(), pos)))
+                            : !state.getCollisionShape(context.level(), pos).isEmpty() ? '#' : '.');
+                }
+                rows.add(row.toString());
+            }
+            layers.add(Map.of("y", y, "rows", List.copyOf(rows)));
+        }
+        return Map.of("origin", List.of(290, 100, 290), "size", List.of(61, 5, 41), "fluid_height_ninths", true,
+                "tick", context.server().getTickCount(), "layers", layers);
     }
 
     static List<String> commands(String kind) {
@@ -159,6 +206,10 @@ final class FixtureEmergencyScenario {
             commands.add("fill 290 " + y + " 290 " + endX + " " + (y + 4) + " 330 minecraft:air");
         commands.add("fill 308 120 308 314 120 314 minecraft:stone");
         commands.add("tp @s 310.5 121 310.5 -90 45");
+        if (kind.startsWith("recovery_equipment")) {
+            commands.addAll(FixtureEmergencyEquipment.commands(kind));
+            return List.copyOf(commands);
+        }
         String item = switch (kind) {
             case "recovery_bucket" -> "minecraft:water_bucket";
             case "recovery_web" -> "minecraft:cobweb";
@@ -244,10 +295,16 @@ final class FixtureEmergencyScenario {
             commands.add("fill 320 101 312 320 120 312 minecraft:ladder[facing=west]");
             commands.add("tp @s 310.5 121 310.5 -90 0");
         }
-        if (kind.equals("recovery_elytra") || kind.startsWith("flight_")) {
+        if (kind.startsWith("recovery_elytra") || kind.startsWith("flight_")) {
             commands.add("item replace entity @s armor.chest with minecraft:elytra");
             commands.add("item replace entity @s hotbar.0 with minecraft:firework_rocket 8");
             commands.add("tp @s 310.5 121 310.5 -90 0");
+        }
+        if (kind.startsWith("recovery_elytra_")) {
+            commands.add("fill 298 101 298 348 103 322 minecraft:water");
+            commands.add("fill 315 120 308 340 120 314 minecraft:stone");
+            commands.add("fill 308 120 307 340 120 307 minecraft:stone");
+            if (kind.equals("recovery_elytra_edge")) commands.add("tp @s 314.65 121 310.5 -90 0");
         }
         if (kind.equals("flight_wall")) commands.add("fill 318 101 300 318 145 320 minecraft:stone");
         if (kind.equals("flight_boost_wall")) commands.add("fill 360 101 290 360 170 330 minecraft:stone");

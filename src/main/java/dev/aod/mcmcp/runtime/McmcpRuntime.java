@@ -3647,6 +3647,13 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
             v2Emergency.close();
             if (!boundedActionInputRelease(() -> releaseAllAndConfirmNoInputOwner(Minecraft.getInstance())))
                 throw new IllegalStateException("emergency input release unconfirmed");
+            // Preserve flight totals captured before close, but publish equipment/use release outcomes.
+            var released = new java.util.LinkedHashMap<String, Object>(result);
+            var afterClose = v2Emergency.result(sessions.snapshot().clientTick(), reason);
+            for (String key : java.util.List.of("equipment", "combat"))
+                if (afterClose.containsKey(key)) released.put(key, afterClose.get(key));
+            v2Jobs.recordRecovery(v2EmergencyJob, released);
+            scriptJobs.active().ifPresent(parent -> scriptJobs.recordRecovery(parent.actionId(), released));
         } catch (RuntimeException | LinkageError failure) {
             pendingAgentInputRelease = true;
             arming.lock("recovery_release_failed");

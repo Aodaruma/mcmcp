@@ -107,30 +107,39 @@ final class ElytraFlightPlanner {
                 // Immediate client steering and delayed server steering must both fit the observation.
                 Vec3 immediateAt = position, immediateVelocity = motion;
                 float immediateYaw = yaw, immediatePitch = pitch;
+                boolean immediateLanded = false, delayedLanded = false;
                 for (int tick = 0; tick < horizon; tick++) {
-                    immediateYaw += Mth.clamp(Mth.wrapDegrees(targetYaw - immediateYaw), -8, 8);
-                    immediatePitch += Mth.clamp(desiredPitch - immediatePitch, -8, 8);
-                    immediateVelocity = velocity(immediateVelocity, immediateYaw, immediatePitch, gravity, tick < boostTicks);
-                    var immediateBody = new AABB(immediateAt.x - 0.3, immediateAt.y, immediateAt.z - 0.3,
-                            immediateAt.x + 0.3, immediateAt.y + 0.6, immediateAt.z + 0.3);
-                    boolean immediateClear = witnessed.test(immediateBody.expandTowards(immediateVelocity).inflate(0.2));
-                    // Include delayed steering rather than assuming an instantaneous camera change.
-                    if (tick >= latencyTicks) {
-                        actualYaw += Mth.clamp(Mth.wrapDegrees(targetYaw - actualYaw), -8, 8);
-                        actualPitch += Mth.clamp(desiredPitch - actualPitch, -8, 8);
+                    if (!immediateLanded) {
+                        immediateYaw += Mth.clamp(Mth.wrapDegrees(targetYaw - immediateYaw), -8, 8);
+                        immediatePitch += Mth.clamp(desiredPitch - immediatePitch, -8, 8);
+                        immediateVelocity = velocity(immediateVelocity, immediateYaw, immediatePitch, gravity, tick < boostTicks);
+                        var body = new AABB(immediateAt.x - 0.3, immediateAt.y, immediateAt.z - 0.3,
+                                immediateAt.x + 0.3, immediateAt.y + 0.6, immediateAt.z + 0.3);
+                        if (!witnessed.test(body.expandTowards(immediateVelocity).inflate(0.2))) {
+                            immediateLanded = !newBoost && tick >= boostTicks && immediateAt.distanceTo(goal) < 8
+                                    && landingWitness.test(body.move(immediateVelocity), immediateVelocity);
+                            if (!immediateLanded) break;
+                        }
+                        immediateAt = immediateAt.add(immediateVelocity);
                     }
-                    velocity = velocity(velocity, actualYaw, actualPitch, gravity, tick < boostTicks);
-                    var body = new AABB(at.x - 0.3, at.y, at.z - 0.3, at.x + 0.3, at.y + 0.6, at.z + 0.3);
-                    if (!immediateClear || !witnessed.test(body.expandTowards(velocity).inflate(0.2))) {
-                        landing = !newBoost && tick >= boostTicks && at.distanceTo(goal) < 8
-                                && landingWitness.test(body.move(velocity), velocity)
-                                && landingWitness.test(immediateBody.move(immediateVelocity), immediateVelocity);
-                        if (landing) verified++;
-                        break;
+                    if (!delayedLanded) {
+                        // A delayed path must also reach its own witnessed landing, possibly on a later tick.
+                        if (tick >= latencyTicks) {
+                            actualYaw += Mth.clamp(Mth.wrapDegrees(targetYaw - actualYaw), -8, 8);
+                            actualPitch += Mth.clamp(desiredPitch - actualPitch, -8, 8);
+                        }
+                        velocity = velocity(velocity, actualYaw, actualPitch, gravity, tick < boostTicks);
+                        var body = new AABB(at.x - 0.3, at.y, at.z - 0.3, at.x + 0.3, at.y + 0.6, at.z + 0.3);
+                        if (!witnessed.test(body.expandTowards(velocity).inflate(0.2))) {
+                            delayedLanded = !newBoost && tick >= boostTicks && at.distanceTo(goal) < 8
+                                    && landingWitness.test(body.move(velocity), velocity);
+                            if (!delayedLanded) break;
+                        }
+                        at = at.add(velocity);
                     }
-                    at = at.add(velocity);
-                    immediateAt = immediateAt.add(immediateVelocity);
                     verified++;
+                    landing = immediateLanded && delayedLanded;
+                    if (landing) break;
                 }
                 // Partial evidence may guide an already-flying player, but may never authorize a new boost.
                 if (verified == 0 || newBoost && verified != horizon) continue;

@@ -5,6 +5,28 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ElytraFlightPlannerTest {
+    @Test void independentlyWitnessedClientAndDelayedLandingsMayOccurOnDifferentTicks() {
+        var plan = ElytraFlightPlanner.plan(new Vec3(0, 2, 0), new Vec3(0, -.1, .6),
+                0, -25, new Vec3(0, 0, 8), .08, 0, false, 4, box -> box.minY > 0,
+                (box, speed) -> box.minY >= -.4 && box.minY <= .3
+                        && box.minZ >= 5 && box.maxZ <= 30 && box.minX >= -4 && box.maxX <= 4
+                        && speed.y >= -.6 && speed.y <= 0 && speed.horizontalDistance() <= .65);
+        assertThat(plan).isNotNull();
+        assertThat(plan.landing()).isTrue();
+        assertThat(plan.boost()).isFalse();
+    }
+    @Test void oneWitnessedLandingDoesNotAuthorizeTheOtherPathToOvershootABank() {
+        var plan = ElytraFlightPlanner.plan(new Vec3(0, 2, 0), new Vec3(0, -.1, .6),
+                0, -25, new Vec3(0, 0, 8), .08, 0, false, 4, box -> box.minY > 0,
+                (box, speed) -> box.minY >= -.4 && box.minY <= .3
+                        && box.minZ >= 5 && box.maxZ <= 8.5 && box.minX >= -4 && box.maxX <= 4
+                        && speed.y >= -.6 && speed.y <= 0 && speed.horizontalDistance() <= .65);
+        assertThat(plan).isNotNull();
+        // The -70 degree approach touches down near z=7.34 and z=9.27; only its first path fits this bank.
+        assertThat(plan.landing() && plan.yaw() == 0 && plan.pitch() == -70)
+                .as("Selected approach: %s", plan).isFalse();
+        assertThat(plan.boost()).isFalse();
+    }
     @Test void exhaustedCameraCanKeepAnObservedCoastWithoutTurningBackToAnOvershotLanding() {
         var plan = ElytraFlightPlanner.plan(new Vec3(0, 5, 0), new Vec3(0, -.1, .4),
                 0, -25, new Vec3(0, 0, -5), .08, 0, false, 4,

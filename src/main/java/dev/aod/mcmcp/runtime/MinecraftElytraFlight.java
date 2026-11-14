@@ -39,6 +39,8 @@ final class MinecraftElytraFlight implements AutoCloseable {
     private int observationCells;
     private Vec3 landingTarget;
     private boolean landingReserved;
+    private int observedFlyingTicks, plannedFlyingTicks, noPlanTicks;
+    private Map<String, Object> lastNoPlan;
 
     MinecraftElytraFlight(Minecraft minecraft, UUID session) {
         this.minecraft = minecraft; this.session = session;
@@ -147,6 +149,7 @@ final class MinecraftElytraFlight implements AutoCloseable {
             return Result.RUNNING;
         }
         deployed = true;
+        observedFlyingTicks++;
         lastFlyingTick = tick;
         if (jump != null) { jump.close(owner); jump = null; }
         AgentInputState.global().clearElytraDeployment(player);
@@ -169,6 +172,12 @@ final class MinecraftElytraFlight implements AutoCloseable {
                 observation::clear, observation::landing, Math.max(0, remainingCamera - 16));
         observationRadius = observation.radius(); observationCells = observation.sampledCells();
         lastPlan = plan;
+        if (plan == null) {
+            noPlanTicks++;
+            lastNoPlan = Map.of("tick", tick, "position", vector(player.position()),
+                    "velocity", vector(player.getDeltaMovement()), "in_water", player.isInWater(),
+                    "underwater", player.isUnderWater(), "observation", observation.diagnostic());
+        } else plannedFlyingTicks++;
         // A short launch can settle back onto its platform before clearing the edge.
         // Permit only a witnessed low-speed landing, then retry from that supported position.
         if (plan == null && boostedTicks == 0
@@ -176,6 +185,8 @@ final class MinecraftElytraFlight implements AutoCloseable {
                     || player.onGround() && player.getDeltaMovement().length() < .65
                         && observation.clear(player.getBoundingBox().move(0, .21, 0))))
             return Result.RUNNING;
+        // Gliding continues physically after a rejected corridor; reobserve within the rescue budget without turning or boosting.
+        if (plan == null && rescue) return Result.RUNNING;
         if (plan == null) return fail("flight_no_observed_escape_corridor");
         if (view == null) view = NavigationViewLease.acquire(player, owner);
         if (!view.matches(owner)) return fail("flight_view_changed");
@@ -220,8 +231,15 @@ final class MinecraftElytraFlight implements AutoCloseable {
                 "prediction_horizon_ticks", lastPlan == null ? 0 : lastPlan.horizon(),
                 "failure", failure == null ? "none" : failure));
         result.put("landing_reserved", landingReserved);
+        result.put("observed_flying_ticks", observedFlyingTicks);
+        result.put("planned_flying_ticks", plannedFlyingTicks);
+        result.put("no_plan_ticks", noPlanTicks);
+        if (lastNoPlan != null) result.put("last_no_plan", lastNoPlan);
         if (landingTarget != null) result.put("landing_target", Map.of("x", landingTarget.x, "y", landingTarget.y, "z", landingTarget.z));
         return Map.copyOf(result);
+    }
+    private static Map<String, Double> vector(Vec3 value) {
+        return Map.of("x", value.x, "y", value.y, "z", value.z);
     }
     private void releaseSelection() {
         if (view != null) { view.close(owner); view = null; }
