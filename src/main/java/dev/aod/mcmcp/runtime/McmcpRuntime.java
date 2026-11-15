@@ -338,6 +338,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         transientMultiplayerConsentAddress = null;
         evaluationControl.terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
+        recipeCatalog.syncedRecipes().clear();
         clearAgentSessionState();
         stopForLifecycle(minecraft, "disconnect");
         routines.clearSession("disconnect");
@@ -381,6 +382,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         memory.detachSession();
         arming.lock("player_respawn");
         publishSession();
+    }
+
+    public void onRecipesReceived(Minecraft minecraft,
+            net.neoforged.neoforge.client.event.RecipesReceivedEvent event) {
+        assertClientThread(minecraft);
+        recipeCatalog.syncedRecipes().receive(minecraft.getConnection(), event);
     }
 
     public void onPauseChanged(boolean paused) {
@@ -907,6 +914,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         evaluationControl.terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.CLIENT_SHUTDOWN);
         shutdown = true;
+        recipeCatalog.syncedRecipes().clear();
         entityAttackConsent.clear();
         clearAgentSessionState();
         sessions.stopping();
