@@ -37,12 +37,38 @@ collision、loaded、fluid、hazard、落下予測、各tickのresolved movement
 - focused: 関連Java123/123、harness3/3 PASS。
 - full: Java1997/1997、harness18/18、admin29/29、`verifyHarnessIsolation`／`build` PASS。Gradle daemon停止済み。
 - `tools/check-source.ps1 -SkipJava -PythonExecutable python`: transport／building／capability gate等のmock回帰PASS。
-- 実機: 未実行・未合格。公開前に版付き製品とharnessの組で受入を行う。
+- CI: 実ビルドsource `7410c78` と、記録2docsだけを追従した `21407ac` はともに成功。
+- 実機: 下記のこのPCでの5連続move受入がPASS。元profile全288hashの復旧照合は全実機試験終了後に親担当が行うため、まだ未完了。
 
-公開前には同fixtureの北→南／南→北、通常gap、梯子・支柱欠損と障害物による停止、損傷・入力解放・READY復帰を候補JARで確認する。
+今回のnative受入は長い上下・北床への移動・北→南の再現に限定する。南→北、通常gap、梯子・支柱欠損や追加障害物のnative試験は今回の5連続moveに含まれず、純粋幾何・経路回帰の範囲と区別する。#81全体や旧PR #83の完了とは扱わない。
 
 ## native用の固定fixture
 
 dev-only harness の `mcmcp.fixture.v2Priorities` に `N:ladder_side` を追加する。上記の壁・梯子・3床を固定し、開始位置は `(202.5,201,199.5)`。初期化は x=199..205、y=201..216、z=197..203 の空間と、指定した床・壁・梯子だけを扱う。既存の300番台arenaは初期化しない。
 
 所有者・非公開singleplayer・Overworld・server threadの既存認可とinputIdle確認後、対象の1 chunk `(12,12)` をpreloadする。最大fillは784block、固定16 commandを既存の再認可ループで実行し、reportと終了処理は共通のものを使う。任意座標・任意commandを受け付けない。whitelist、命令数・範囲、認可→inputIdle→preload→command再認可の接続契約に追加した2回帰もPASS。
+
+## このPCでのnative受入（2026-11-15）
+
+親担当が同じ製品／harness pairで実施し、終了済みartifact `20261115-local-acceptance/ladder-side-120422` のみを後から解析した。fixtureは開始前の固定配置と終了後のoracleだけに使い、T0→terminalは公開MCPだけで進めた。実行中のUI介入はない。
+
+- 実ビルドsource: `7410c78a3187a0175f4df7b4f586fa6f4a988e6e`、version `0.2.0-rc.1`。
+- 製品SHA-256: `aa0e63d65a5471ccf2fdde1f6c868434a7d574966cef8f0c6b56677b38b11832`。
+- harness SHA-256: `1feedca25a1b29af01c01df0f6dbdb39cb59948e079b50806dd6bdac0ff9c3ec`。
+- 5回とも `clear_path:false`、`auto_replan:true`、`max_ticks:1600`、`max_distance:64`。製品の予算契約を変更したものではない。旧失敗の引数800／32とは区別する。
+
+| 区間／目標feet | 結果 | tick | 到着座標（x,y,z） | jump/drop |
+| --- | --- | ---: | --- | --- |
+| 開始→上床 (201,213,200) | succeeded/completed | 156 | (201.364725,213,200.505950) | 0/0 |
+| 上床→下床 (202,201,199) | succeeded/completed | 126 | (202.428916,201,199.505063) | 0/0 |
+| 下床→上床 (201,213,200) | succeeded/completed | 155 | (201.364725,213,200.478349) | 0/0 |
+| 上床→北床 (202,208,199) | succeeded/completed | 80 | (202.428916,208,199.367361) | 0/0 |
+| 北床→南床 (202,208,201) | succeeded/completed | 27 | (202.428916,208,201.501943) | 1/0 |
+
+合計544 tick、61 tool calls（action取得48回）。全結果の `max_fall_damage`、`fall_damage_observed`、`fall_damage_budget_used` は0。全48取得に `path_replans`／`last_replan_reason` はなく、記録された再計画はない。公開結果に内部edge列や実経路長は出ないため、それらの実測値とは扱わない。
+
+北→南は開始x=202.42891572207378を保ち、11 tickで `(202.42891572207378,208.72675925718283,200.5057918186922)`、23 tickで南床へ接地し、27 tickで成功した。不要な中心整列をせず安全な実poseのarcを使う修正と整合する。
+
+最終公開statusはREADY、`running_action_id:null`。公開stateはHP20、air300、非水没・非炎上。終了後oracleは `on_ground:true`、`on_climbable:false`、`fall_flying:false`。入力所有guard付きの固定 `report` が `prepared` となり、終点座標も一致した。入力解放の受入証拠はこの最終statusとreportであり、各move途中の非公開所有状態を読み取ったものではない。
+
+受入資料 `summary.json` のSHA-256は `60183a44fa92c6a9cd262f707b0da5bc670d161461143d3a4715e2ae4a0a795d`、`fixture-report.json` は `687b73c9556573c3c18137e1f8556f47054311d12e3cbe3a162b06ca5a719803`。元profile復旧の全288hash照合は、この受入とは別の最終作業としてpendingを維持する。
