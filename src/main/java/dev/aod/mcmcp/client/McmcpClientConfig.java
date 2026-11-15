@@ -31,6 +31,11 @@ public final class McmcpClientConfig {
     private static final ModConfigSpec.ConfigValue<String> AGENT_CHAT_SUFFIX = BUILDER
             .comment("Spaces are literal; the entire formatted message must fit 256 UTF-16 units")
             .define("agent_chat_suffix", AgentChatSettings.DEFAULT_SUFFIX, AgentChatSettings::validFragment);
+    private static final ModConfigSpec.EnumValue<dev.aod.mcmcp.observation.RecipeScope> RECIPE_SCOPE = BUILDER
+            .comment("UNLOCKED: 解放済みのレシピのみ（既定）",
+                    "ALL_CRAFTABLE: すべての作成可能なレシピ。既存MODが同期した公開client情報の範囲に限定。",
+                    "全件取得・材料充足・自動craft対応を保証せず、解放状態を変更しません。")
+            .defineEnum("recipe_scope", dev.aod.mcmcp.observation.RecipeScope.UNLOCKED);
     private static final ModConfigSpec.BooleanValue ENDPOINT_ENABLED = BUILDER
             .comment("Start the loopback-only embedded MCP endpoint")
             .define("endpoint_enabled", true);
@@ -166,6 +171,10 @@ public final class McmcpClientConfig {
     public static void setAgentChatSuffixEnabled(boolean enabled) { AGENT_CHAT_SUFFIX_ENABLED.set(enabled); SPEC.save(); }
     public static void setAgentChatPrefix(String text) { AGENT_CHAT_PREFIX.set(text); SPEC.save(); }
     public static void setAgentChatSuffix(String text) { AGENT_CHAT_SUFFIX.set(text); SPEC.save(); }
+
+    public static dev.aod.mcmcp.observation.RecipeScope recipeScope() {
+        return RECIPE_SCOPE.get();
+    }
 
     public static boolean endpointEnabled() {
         return ENDPOINT_ENABLED.get();

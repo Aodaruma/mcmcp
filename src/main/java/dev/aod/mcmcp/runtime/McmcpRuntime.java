@@ -447,6 +447,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         evaluationControl.terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
         stopPendingPortal("disconnect");
+        recipeCatalog.syncedRecipes().clear();
         clearAgentSessionState();
         stopForLifecycle(minecraft, "disconnect");
         routines.clearSession("disconnect");
@@ -494,6 +495,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         arming.lock("player_respawn");
         worldTransitionControl.suspend(handoff, stopped, arming.peek(), inbox.safetyEpoch(), !automationActivityPending(true));
         publishSession();
+    }
+
+    public void onRecipesReceived(Minecraft minecraft,
+            net.neoforged.neoforge.client.event.RecipesReceivedEvent event) {
+        assertClientThread(minecraft);
+        recipeCatalog.syncedRecipes().receive(minecraft.getConnection(), event);
     }
 
     public void onPauseChanged(boolean paused) {
@@ -1098,6 +1105,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         evaluationControl.terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.CLIENT_SHUTDOWN);
         shutdown = true;
+        recipeCatalog.syncedRecipes().clear();
         entityAttackConsent.clear();
         clearAgentSessionState();
         sessions.stopping();
