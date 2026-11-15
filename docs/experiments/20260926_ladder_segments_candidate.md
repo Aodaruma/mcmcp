@@ -31,3 +31,11 @@
 3. cancel・Esc、手動移動、明示OFF、死亡・disconnect、欠損・水・低天井で所有権と結果を確認する。
 
 バッグの共通収納対応は別の[PR #82](https://github.com/Aodaruma/mcmcp/pull/82)。後日の仕様見直しでは、こちらの表と#82の比較表を合わせて扱う。
+
+## 2026-11-15の再確認と長下降の補強候補
+
+`09a63b6`の隔離Dockerで、201→206→211→213の区間上昇と各停止の`ladder_hold=true`を確認した。一方、213から観測済み208への下降は20tickで`RECOVERING`、64tickで`SAFETY_RECOVERED`となり、体力20で下床へ救助された。205→204の短下降、取消後の保持と再開は成功した。長下降は不合格としてmain統合を止めている。
+
+`RecoveryDescentTracker`はground/水以外の下降をすべて加算し、梯子の毎tick約0.15blockの下降でも3blockを超えると通常の危険落下としていた。現在bodyのloaded・存続rung/支柱・clearance・液体/危険物なしを`canHoldLadder`で証明できたtickだけ、落下距離の累積を解除する候補を追加した。onGroundやhazardを置換せず、接触喪失後の実落下は新たに累積する。
+
+回帰には40tick/6blockの梯子下降、rung喪失後の1/4block落下、再接触による停止と再喪失を追加した。新sourceのfocused118件と全Java1,380件（main1,340・harness13・admin27）、`verifyHarnessIsolation build`は成功した。新製品SHA-256は`8fd3da0cc6e52b48019ce086b5f8082ceb9339751ecb56a134488cbc8499b183`。実機試験は未実施。別件として同じfixtureの横床移動が14tickで`unverified_actual_movement`、15tickで`replanned_route_remaining_occurrence`となったため、こちらの原因調査と再確認も残る。予算上限や安全gateの緩和は本候補に含めない。

@@ -1284,13 +1284,36 @@ class McmcpRuntimeHardeningTest {
         var level = new Object();
         var session = UUID.randomUUID();
 
-        assertThat(tracker.update(player, level, session, 70, false, false, 0)).isZero();
-        assertThat(tracker.update(player, level, session, 68, false, false, 0)).isEqualTo(2);
-        assertThat(tracker.update(player, level, session, 69, false, false, 0)).isEqualTo(2);
-        assertThat(tracker.update(player, level, session, 50, false, false, 1)).isEqualTo(2);
-        assertThat(tracker.update(player, level, session, 49, false, false, 1)).isEqualTo(3);
+        assertThat(tracker.update(player, level, session, 70, false, false, false, 0)).isZero();
+        assertThat(tracker.update(player, level, session, 68, false, false, false, 0)).isEqualTo(2);
+        assertThat(tracker.update(player, level, session, 69, false, false, false, 0)).isEqualTo(2);
+        assertThat(tracker.update(player, level, session, 50, false, false, false, 1)).isEqualTo(2);
+        assertThat(tracker.update(player, level, session, 49, false, false, false, 1)).isEqualTo(3);
         assertThat(tracker.current(player, level, session)).isEqualTo(3);
-        assertThat(tracker.update(player, level, session, 48, true, false, 1)).isZero();
+        assertThat(tracker.update(player, level, session, 48, true, false, false, 1)).isZero();
+    }
+
+    @Test
+    void provenLadderDescentIsNotAFreeFallAndLosingTheRungStartsANewDrop() {
+        var tracker = new RecoveryPlanning.RecoveryDescentTracker();
+        var player = new Object();
+        var level = new Object();
+        var session = UUID.randomUUID();
+        double y = 213.21449622092544;
+
+        // Vanilla permits a deliberate ladder descent at 0.15 blocks/tick. Its total
+        // distance can exceed the governor's three-block fall threshold without a fall.
+        for (int tick = 0; tick <= 40; tick++) {
+            assertThat(tracker.update(player, level, session, y, false, false, true, 0)).isZero();
+            y -= .15D;
+        }
+        y += .15D;
+        assertThat(tracker.update(player, level, session, y - 1, false, false, false, 0)).isEqualTo(1);
+        assertThat(tracker.update(player, level, session, y - 4, false, false, false, 0)).isEqualTo(4);
+        // Reacquiring a currently proven rung stops that fall; an unknown/broken rung
+        // must supply false and cannot erase the accumulated evidence.
+        assertThat(tracker.update(player, level, session, y - 4, false, false, true, 0)).isZero();
+        assertThat(tracker.update(player, level, session, y - 8, false, false, false, 0)).isEqualTo(4);
     }
 
     @Test

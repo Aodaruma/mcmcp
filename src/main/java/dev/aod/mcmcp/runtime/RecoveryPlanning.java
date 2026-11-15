@@ -95,6 +95,7 @@ final class RecoveryPlanning {
                 double y,
                 boolean onGround,
                 boolean safeWater,
+                boolean safeLadder,
                 long currentCorrectionRevision) {
             Objects.requireNonNull(player, "player");
             Objects.requireNonNull(level, "level");
@@ -118,7 +119,9 @@ final class RecoveryPlanning {
                 lastY = y;
                 correctionRevision = currentCorrectionRevision;
             }
-            if (onGround || safeWater) {
+            // A currently proven ladder arrests a fall, including deliberate rung descent.
+            // Once that contact is lost, only the subsequent real drop is accumulated.
+            if (onGround || safeWater || safeLadder) {
                 descent = 0.0D;
             }
             return descent;
