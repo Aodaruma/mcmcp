@@ -150,6 +150,7 @@ public final class ObservationFrameStore {
                         "No completed observation frame has been published");
             }
             frameId = latest.frameId();
+            touchAnnounced(latest, now);
         } else {
             ObservationFrame.requireFrameId(frameId);
         }
