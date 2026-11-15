@@ -48,28 +48,70 @@ class ElytraLandingCourseTest {
                 new Vec3(349.33973759412766, 101, 290.5072178429525));
     }
 
-    private static void reachesBank(Vec3 start, Vec3 initialMotion, Vec3 goal) throws Exception {
-        var witness = new Witness(start);
-        var course = ElytraLandingCourse.select(start, initialMotion, -90, 0, goal, .08, 4,
+    @Test void nativePoolCourseKeepsItsCompleteStoppingProofWhileTheIntentPointIsHidden() throws Exception {
+        reachesBank(new Vec3(313.80585704457116, 116.93588034947514, 310.9449298222381),
+                new Vec3(.26631392605976606, -.1702227658014497, .02266135378820751),
+                new Vec3(350.01772676121544, 101, 293.9572138626892),
+                -97.99646f, -25, 122.64, 294.99646, true);
+    }
+
+    @Test void onlyACurrentCompleteProofCanRetainADescendingGoalAwayFromAThreat() throws Exception {
+        var witness = new Witness(START);
+        var selected = ElytraLandingCourse.select(START, MOTION, -90, 0, GOAL, .08, 4,
                 600, 128, 344, witness::clear, witness::stoppedLanding, () -> true);
-        assertThat(course).isNotNull();
+        assertThat(selected).isNotNull();
+        assertThat(ElytraLandingCourse.retainsProvenGoal(START, GOAL, null, selected.verifiedTicks())).isTrue();
+        witness = new Witness(START);
+        int invalidated = selected.course().verifiedTicks(START, MOTION, -90, 0, .08, 0, 4,
+                600, 128, 344, witness::clear, (body, motion) -> false, () -> true);
+        assertThat(invalidated).isZero();
+        assertThat(ElytraLandingCourse.retainsProvenGoal(START, GOAL, null, invalidated)).isFalse();
+        assertThat(ElytraLandingCourse.retainsProvenGoal(START, START.add(0, 1, 0), null,
+                selected.verifiedTicks())).isFalse();
+        assertThat(ElytraLandingCourse.retainsProvenGoal(START, GOAL, GOAL.add(1, 0, 0),
+                selected.verifiedTicks())).isFalse();
+    }
+
+    private static void reachesBank(Vec3 start, Vec3 initialMotion, Vec3 goal) throws Exception {
+        reachesBank(start, initialMotion, goal, -90, 0, 128, 344, false);
+    }
+
+    private static void reachesBank(Vec3 start, Vec3 initialMotion, Vec3 goal, float initialYaw, float initialPitch,
+            double distanceBudget, double cameraBudget, boolean requireHiddenIntent) throws Exception {
+        var witness = new Witness(start);
+        var selected = ElytraLandingCourse.select(start, initialMotion, initialYaw, initialPitch, goal, .08, 4,
+                600, distanceBudget, cameraBudget, witness::clear, witness::stoppedLanding, () -> true);
+        assertThat(selected).isNotNull();
+        var course = selected.course();
         assertThat(witness.cells.size() + witness.supports.size()).isLessThanOrEqualTo(2048);
         var position = start;
         var motion = initialMotion;
-        float yaw = -90, pitch = 0;
+        float yaw = initialYaw, pitch = initialPitch;
         double camera = 0, distance = 0;
         int started = 0;
+        int hiddenIntentProofTicks = 0;
         for (int tick = 0; tick < 160; tick++) {
-            witness = new Witness(position);
-            int verified = course.verifiedTicks(position, motion, yaw, pitch, .08, tick - started, 4,
-                    600 - tick, 128 - distance, 344 - camera, witness::clear, witness::stoppedLanding, () -> true);
+            if (tick > 0) witness = new Witness(position);
+            int verified = tick == 0 ? selected.verifiedTicks()
+                    : course.verifiedTicks(position, motion, yaw, pitch, .08, tick - started, 4,
+                        600 - tick, distanceBudget - distance, cameraBudget - camera,
+                        witness::clear, witness::stoppedLanding, () -> true);
             if (verified == 0) {
-                course = course.replan(position, motion, yaw, pitch, .08, tick - started, 4,
-                        600 - tick, 128 - distance, 344 - camera, witness::clear, witness::stoppedLanding, () -> true);
-                if (course == null) course = ElytraLandingCourse.select(position, motion, yaw, pitch, goal, .08, 4,
-                            600 - tick, 128 - distance, 344 - camera, witness::clear, witness::stoppedLanding, () -> true);
+                selected = course.replan(position, motion, yaw, pitch, .08, tick - started, 4,
+                        600 - tick, distanceBudget - distance, cameraBudget - camera,
+                        witness::clear, witness::stoppedLanding, () -> true);
+                if (selected == null) selected = ElytraLandingCourse.select(position, motion, yaw, pitch, goal, .08, 4,
+                            600 - tick, distanceBudget - distance, cameraBudget - camera,
+                            witness::clear, witness::stoppedLanding, () -> true);
                 started = tick;
-                assertThat(course).as("fresh replacement at tick %s: %s, rejected=%s", tick, position, witness.rejection).isNotNull();
+                assertThat(selected).as("fresh replacement at tick %s: %s, rejected=%s", tick, position, witness.rejection).isNotNull();
+                course = selected.course();
+                verified = selected.verifiedTicks();
+            }
+            if (requireHiddenIntent && !new Witness(position).clear(new AABB(
+                    goal.x - .4, 101.01, goal.z - .4, goal.x + .4, 102.8, goal.z + .4))) {
+                assertThat(ElytraLandingCourse.retainsProvenGoal(position, goal, null, verified)).isTrue();
+                hiddenIntentProofTicks++;
             }
             float dy = Mth.clamp(Mth.wrapDegrees(course.yaw() - yaw), -8, 8);
             float dp = Mth.clamp(course.pitch(tick - started) - pitch, -8, 8);
@@ -80,8 +122,9 @@ class ElytraLandingCourseTest {
             if (position.y <= goal.y) {
                 assertThat(witness.stoppedLanding(body(position), motion)).isTrue();
                 assertThat(position.distanceTo(goal)).isLessThan(8);
-                assertThat(camera).isLessThan(344);
-                assertThat(distance).isLessThan(128);
+                assertThat(camera).isLessThan(cameraBudget);
+                assertThat(distance).isLessThan(distanceBudget);
+                if (requireHiddenIntent) assertThat(hiddenIntentProofTicks).isGreaterThanOrEqualTo(10);
                 return;
             }
         }

@@ -17,6 +17,13 @@ record ElytraLandingCourse(Vec3 goal, float yaw, int approachTicks, int flareTic
         return goal != null && goal.y < position.y;
     }
 
+    static boolean retainsProvenGoal(Vec3 position, Vec3 goal, Vec3 threat, int verifiedTicks) {
+        return verifiedTicks > 0 && descendingGoal(position, goal)
+                && (threat == null || goal.distanceToSqr(threat) >= 36);
+    }
+
+    record Selection(ElytraLandingCourse course, int verifiedTicks) { }
+
     static BooleanSupplier boundedSearch(BooleanSupplier allowed) {
         long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(20);
         return () -> allowed.getAsBoolean() && System.nanoTime() - deadline < 0;
@@ -27,26 +34,27 @@ record ElytraLandingCourse(Vec3 goal, float yaw, int approachTicks, int flareTic
                 : elapsed < approachTicks + flareTicks + coastTicks ? 0 : finalPitch;
     }
 
-    static ElytraLandingCourse select(Vec3 position, Vec3 motion, float yaw, float pitch, Vec3 goal,
+    static Selection select(Vec3 position, Vec3 motion, float yaw, float pitch, Vec3 goal,
             double gravity, int latency, long remainingTicks, double remainingDistance, double remainingCamera,
             Predicate<AABB> clear, BiPredicate<AABB, Vec3> stoppedLanding, BooleanSupplier allowed) {
         if (!descendingGoal(position, goal) || latency > 20) return null;
         float bearing = (float) Math.toDegrees(Math.atan2(position.x - goal.x, goal.z - position.z));
         // These are control intervals, not destinations or a guarantee that a landing exists.
-        for (int offset : new int[] {0, -15, 15})
+        for (int offset : new int[] {0, -5, 5, -15, 15})
             for (int approach : new int[] {0, 8, 16})
                 for (int flare : new int[] {16, 32, 48, 64})
                     for (int coast : new int[] {8, 20, 24, 32})
                         for (float finalPitch : new float[] {-45, -50, -55, -60, -65, -70}) {
                             if (!allowed.getAsBoolean()) return null;
                             var course = new ElytraLandingCourse(goal, bearing + offset, approach, flare, coast, finalPitch);
-                            if (course.verifiedTicks(position, motion, yaw, pitch, gravity, 0, latency,
-                                    remainingTicks, remainingDistance, remainingCamera, clear, stoppedLanding, allowed) > 0) return course;
+                            int verified = course.verifiedTicks(position, motion, yaw, pitch, gravity, 0, latency,
+                                    remainingTicks, remainingDistance, remainingCamera, clear, stoppedLanding, allowed);
+                            if (verified > 0) return new Selection(course, verified);
                         }
         return null;
     }
 
-    ElytraLandingCourse replan(Vec3 position, Vec3 motion, float yaw, float pitch, double gravity, int elapsed,
+    Selection replan(Vec3 position, Vec3 motion, float yaw, float pitch, double gravity, int elapsed,
             int latency, long remainingTicks, double remainingDistance, double remainingCamera,
             Predicate<AABB> clear, BiPredicate<AABB, Vec3> stoppedLanding, BooleanSupplier allowed) {
         var attempted = new java.util.HashSet<ElytraLandingCourse>();
@@ -60,8 +68,9 @@ record ElytraLandingCourse(Vec3 goal, float yaw, int approachTicks, int flareTic
                         int c = Math.max(b, approachTicks + flareTicks + coastTicks + third - elapsed);
                         var course = new ElytraLandingCourse(goal, this.yaw, a, b - a, c - b, finalPitch);
                         if (!attempted.add(course)) continue;
-                        if (course.verifiedTicks(position, motion, yaw, pitch, gravity, 0, latency,
-                                remainingTicks, remainingDistance, remainingCamera, clear, stoppedLanding, allowed) > 0) return course;
+                        int verified = course.verifiedTicks(position, motion, yaw, pitch, gravity, 0, latency,
+                                remainingTicks, remainingDistance, remainingCamera, clear, stoppedLanding, allowed);
+                        if (verified > 0) return new Selection(course, verified);
                     }
         return null;
     }

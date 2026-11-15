@@ -75,3 +75,27 @@ nativeの1326tickでは現在のbody+0.2余裕が頭上platformへ届くため�
 この結果から、救助用の下降着地では現在位置以上の高さの目標を失効させ、新規候補からも除外する。通常の非救助飛行は変更しない。床の支持・視認条件を緩めず、同じ候補選択と元予算を使う。上段床・同じ高さ・下側岸・欠測の高さ境界回帰を追加した。
 
 再修正のfocused24件と製品jar生成は成功。候補SHA-256は`5240b704b55b50906de35c1b31a816b828f7c356114e73fd2b4486cf02c4c653`。初回の失敗を成功へ読み替えず、この候補の実機を別に確認する。
+
+## r4 nativeの実測とpool残件（2026-11-15）
+
+r4のsourceは`1ccd1c03d36b76e453b1c8ad6534d5c925c6185a`、製品SHA-256は`722de853464906080a6567e3dd5d5294dcd8ad0af27ff3cb755654b5d100173f`、harnessは`06e0293ec654168eeb1d5f1a951385d07c10e506a05071d56bd41a234314ea90`。
+
+| native case | artifact | 判定 |
+| --- | --- | --- |
+| cold edge | `20261115-local-acceptance/recovery_elytra_edge-101947` | 単独PASS。救助stable100tick、HP20、乾いた床y101、READY。 |
+| pool | `20261115-local-acceptance/recovery_elytra_pool-102033` | FAIL。水へ入り、床外へ落下。terminal後の落下死を親担当が確認。配布blocker。 |
+| r5 edge/pool・wide・取消 | 新候補で再確認 | PENDING。r4 edge成功だけでPR全体を受け入れない。 |
+
+cold edgeの元Action`5d97f510-6a83-4b86-87bf-ee7d1f5b0c94`は救助への移譲で`failed/preempted_for_recovery`となり、救助自体は`status=stable`・`stable_ticks=100`で完了した。終点は(348.716,101,291.906)、体力/minimum health20、water_ticks0、cursor empty。最後の105server samplesは同一位置で乾いた接地を保った。移動46.38block、camera133.09度、救助238tickで元の予算内。
+
+完全な`plan.landing=true`はplayer tick513でhorizon110として成立し、120profile samplesで更新された。fog256で、視認できない支持は実際に手前の流水へrayが当たって拒否された。全138profile samplesのflight処理は中央値4.40ms・p95 11.04ms、cold初回38.95ms。tick512は26.49msでfallback、次の513は10.91msで完全courseに移った。tick579は完全courseの再証明を含め28.21msだった。20msは検索の協調期限であり、flight処理全体の上限とは区別する。
+
+poolの元Action`819ef850-c9ac-4037-841d-ced61e6a96d7`では完全landing planが0件。開始から79tickで水へ入り、171tickで床外へ出た。救助は`exhausted/recovery_budget_exhausted`、stable0、移動130.54blockで終了し、oracle時点でy6.209・非接地、続いて落下死した。最終flightの`flight_deploy_camera_budget`はその後段の失敗で、最初の乾いたcourseを選べなかった問題と分ける。
+
+## r5 pool向けの最小補強
+
+poolの保存済み開始・終了の流水5層は既存回帰resourceと全cell一致した。native1420の実stateで、bearing-5度のcourse（approach0/flare48/coast24/final pitch-70）が全4遅延・全停止域の現在視認を証明する。一方、course中のtick7～23はraw intent点周辺のairが隠れ、既存の先行goal検査が有効なcourseを捨てていた。独立モデルでは全証明を更新して115tick・移動42.97block・camera52.14度で乾いた停止域へ到達した。
+
+yaw候補へ±5度を補い、既存courseの完全証明をraw intent点の再検査より先に行う。証明成立時だけその結果を同tick/pose/cacheで再利用し、proof失効・上方goal・近いthreatでは特例保持しない。`Selection(course,verifiedTicks)`でselect/replanの証明結果も返し、callerでの二重verifyを除く。同じ20ms期限をpreverify・replan・selectへ通し、予算・期待ground・全支持LOSは変更しない。waterescape処理への変更はない。
+
+strict focused28件・全Java1,955件（通常1,913・harness14・admin28）、`verifyHarnessIsolation build`は成功。r5製品SHA-256は`8f0acfce83f5d0cb7209fa8e27d964f9f90dac355366824cde33832ba737f8b6`、harnessは`06e0293ec654168eeb1d5f1a951385d07c10e506a05071d56bd41a234314ea90`。source/JAR/XML/logを`artifacts/issue91-safe-landing-20261115-r5`へ凍結する。実機はPENDING、installable=falseを維持する。
