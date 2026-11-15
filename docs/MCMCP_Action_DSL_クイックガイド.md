@@ -47,7 +47,11 @@ side-effect profileをitem IDだけから推測せず、trusted Runtimeが実sta
 
 ## 観測を絞る
 
+最初のpageは`frame_id=null,cursor=null`で呼ぶと、呼出し時点で最新のpublish済みimmutable frameを原子的に選べます。responseの具体的な`frame_id`を保持し、`next_cursor`がある続きpageでは両方をそのまま渡してください。frame未生成は`NO_FRAME`、保持外の具体IDは`FRAME_EXPIRED`、不正なcursorは`INVALID_CURSOR`です。この選択は観測時刻やTTLを更新しません。
+
 `agent_get_observation.filter`は、既にpolicy-visibleな同一frameから不要なrecordを削るdelivery-only filterです。record kindに適用可能な複数条件はANDで適用され、観測範囲やAction認可を拡張しません。
+
+`next_cursor`があるqueryを途中で打ち切るときは、`agent_get_observation`へ`{"schema_version":1,"release_cursor":"<next_cursor>"}`だけを渡します。`release_status=released`なら未完了leaseを解放済み、`completed`なら既に最終pageまで完了しており変更なしです。不明・期限切れ・別world sessionのcursorはすべて`INVALID_CURSOR`になります。解放呼出しは観測配送としてACKされず、以前に配送済みの認可やTTLも更新しません。
 
 - 作物: `block_ids=["minecraft:wheat"]`と`crop_mature=true|false`
 - 面: `faces=["up","north"]`（`down/up/north/south/west/east`。同一blockの代表面を選ぶ前に適用）
@@ -193,6 +197,16 @@ entry IDと変換後targetはplan内で一意、処理順は`entries`の入力�
 `operate_known_menu`は、ユーザーが現在開いているexactなVanilla `generic_9x1`〜`generic_9x6`純storage画面、または`Sophisticated Backpacks 3.25.90 + Sophisticated Core 1.4.99`の通常`backpack`画面について、同じ`agent_get_state.known_menu.operations`から1件の`operation_ref`を無変換コピーして使います。MOD profileは起動時に両jarのSHA-256、Menu / Screen class、必要methodを固定値と照合し、未知buildでは現れません。現在のoperationは`transfer_to_player`だけで、1 stack全量を通常のQUICK_MOVE経路で移し、fresh server slot差分、他storageと全upgrade/protected slot不変、player inventoryの完全multisetとcomponent-exact個数を確認してから画面を閉じます。
 
 このnodeはtop-level bodyの最後に1回だけ置き、30秒、600 ticks、1 interactionを確保します。raw slot / GUI座標を推測せず、refが期限切れ、別画面、別revision、source変更なら新しいstateを取得します。Sophisticated Backpacksではopen upgrade tab、extra slot、inaccessible / oversized stackを受理しません。player 2x2、専用workstation、backpack内craft/smelt、widget / canvas操作はまだこのsliceに含みません。
+
+## 既設レバーのON/OFF
+
+`set_known_lever`はActionの唯一のtop-level nodeとし、移動や待機を同じActionへ含めません。元の配送leaseを受付から通常use直前まで維持します。描画情報の欠測時は元の期限・予算内だけ待機し、復帰後に元の面・state・現在のfog/LOSを再検証します。配送期限切れや不一致は操作せず失敗します。この検証は操作不要の成功にも適用し、送信済みのACK待機・cleanupには逆適用しません。
+
+`set_known_lever:{id,op,target,expected_state,powered}`は可視のVanilla lever 1個を指定状態にします。`target`と完全な`expected_state`（`face`、`facing`、文字列の`powered`）は最新の`visible_surface`からコピーし、希望値の`powered`だけbooleanで指定します。位置・完全state・現在のfog/LOS/reachを受付・JIT・通常use直前に検証し、既存の安全な空MAIN_HAND準備と通常useを1回だけ使います。すでに希望状態ならクリックしません。leverの可視state公開は建築材料の許可には転用しません。
+
+予算は15,000 ms、300 ticks、360 camera degrees、1 interactionを確保し、移動・破壊・設置は0にします。サーバーACKと完全な希望stateを確認してから成功とし、`block_interact` effectへ直前の可視stateとserver確認後のstateを残します。送信後の取消・期限切れ・例外はafterを捏造せず`unknown`を1回だけ残します。未知結果を再送せず、必ず再観測してください。
+
+接続された装置全体の安全性・出力は保証しません。Action終了や取消は自動OFFを意味しないため、装置から離れる前に最新stateを再取得して別のOFF Actionを実行し、停止を確認してください。長時間の機械運転は停止手段・回収容量・帰還経路を別に確認してから行います。
 
 ## レッドストーンの最小slice
 

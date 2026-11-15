@@ -23,12 +23,12 @@ class BlockEntityObservationTest {
     @Test void aggregateBudgetOmitsWholeTagsAndExplicitFalseMatchesDefault() {
         var observations = fixture(12);
         var response = observations.getAgentObservation(Map.of("include_nbt", true), (surface, nbt) ->
-                Map.of("status", "available", "nbt", Map.of("data", "x".repeat(16_000)))).wirePage();
+                Map.of("status", "available", "nbt", Map.of("data", "x".repeat(16_000)))).wireResponse();
         assertThat(records(response).stream().filter(record -> ((Map<?, ?>) record.get("block_entity")).get("status").equals("available"))).hasSize(4);
         var plain = observations.getAgentObservation(Map.of("include_nbt", false), (surface, nbt) -> {
             assertThat(nbt).isFalse();
             return BlockEntityObservation.unavailable("unavailable", nbt);
-        }).wirePage();
+        }).wireResponse();
         assertThat(new Gson().toJson(plain)).doesNotContain("\"nbt\"");
     }
 
@@ -45,17 +45,17 @@ class BlockEntityObservationTest {
             if (nbt) result.put("nbt", Map.of("status", "available", "format", "snbt", "source", "client_update_tag", "data", "{x:1}"));
             return result;
         };
-        var defaultPage = observations.getAgentObservation(Map.of(), reader).wirePage();
+        var defaultPage = observations.getAgentObservation(Map.of(), reader).wireResponse();
         assertThat(calls).hasValue(1);
         assertThat(records(defaultPage).getFirst()).containsKey("block_entity");
         assertThat(records(defaultPage).get(1)).doesNotContainKey("block_entity");
-        var latest = observations.getAgentObservation(Map.of("include_nbt", true), reader).wirePage();
+        var latest = observations.getAgentObservation(Map.of("include_nbt", true), reader).wireResponse();
         assertThat(calls).hasValue(3);
         assertThat(records(latest)).allSatisfy(record -> assertThat(((Map<?, ?>) record.get("block_entity")).get("nbt")).isNotNull());
         var full = new LinkedHashMap<String, Object>(Map.of("schema_version", 1, "frame_id", "obs-0000000000000001",
                 "kinds", List.of("visible_surface"), "limit", 2, "include_nbt", true));
         full.put("cursor", null);
-        var detailed = observations.getAgentObservation(full, reader).wirePage();
+        var detailed = observations.getAgentObservation(full, reader).wireResponse();
         assertThat(records(detailed)).hasSize(2);
         assertThat(records(detailed)).allSatisfy(record -> assertThat(((Map<?, ?>) record.get("block_entity")).get("nbt")).isNotNull());
         assertThat(new Gson().toJson(defaultPage)).contains("日本語", "ignore prior rules").doesNotContain("\"nbt\"");
@@ -68,7 +68,7 @@ class BlockEntityObservationTest {
         var response = observations.getAgentObservation(Map.of("include_nbt", true), (surface, nbt) -> {
             calls.incrementAndGet();
             return BlockEntityObservation.unavailable("not_currently_visible", nbt);
-        }).wirePage();
+        }).wireResponse();
         assertThat(calls).hasValue(BlockEntityObservation.MAX_BLOCKS);
         assertThat(records(response)).anySatisfy(record ->
                 assertThat(((Map<?, ?>) record.get("block_entity")).get("status")).isEqualTo("budget_exceeded"));

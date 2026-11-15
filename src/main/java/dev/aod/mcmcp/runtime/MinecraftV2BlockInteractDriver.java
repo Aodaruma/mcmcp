@@ -120,16 +120,6 @@ final class MinecraftV2BlockInteractDriver
                 || !player.isWithinBlockInteractionRange(position, 0.0D)) {
             return V2BlockJobExecution.BeginResult.WAITING;
         }
-        if (request.sneak() && sneakLease == null) {
-            if (!outputAllowed.getAsBoolean()) return V2BlockJobExecution.BeginResult.FAILED;
-            this.target = next;
-            this.request = request;
-            postureStartedTick = session.clientTick();
-            sneakLease = dev.aod.mcmcp.routine.MovementInputLease.acquire(minecraft, sneakOwner,
-                    System.nanoTime(), java.time.Duration.ofMillis(500));
-            stage = Stage.POSTURE;
-            return V2BlockJobExecution.BeginResult.STARTED;
-        }
         var frame = observations.latestInternalFrame();
         if (frame.isEmpty()) return V2BlockJobExecution.BeginResult.WAITING;
         var reconciliation = reconciliationSignals.bindAndSnapshot(level, session.worldSessionId());
@@ -145,6 +135,28 @@ final class MinecraftV2BlockInteractDriver
         }
         if (!request.accepts(current.blockId()) || state.isAir()) {
             return V2BlockJobExecution.BeginResult.SKIPPED;
+        }
+        var desiredLever = desiredLeverState(request, current);
+        if (current.blockId().equals("minecraft:lever") && request.itemId() == null
+                && request.expectedAfterProperties().containsKey("powered") && desiredLever == null)
+            return V2BlockJobExecution.BeginResult.FAILED;
+        if (desiredLever != null) {
+            if (!new BlockStateFingerprint(desiredLever.blockId(), request.expectedAfterProperties())
+                    .matches(desiredLever)) return V2BlockJobExecution.BeginResult.FAILED;
+            if (desiredLever.equals(current)) {
+                confirmedChange = new V2BlockJobExecution.ConfirmedChange(current, current);
+                return V2BlockJobExecution.BeginResult.SKIPPED;
+            }
+        }
+        if (request.sneak() && sneakLease == null) {
+            if (!outputAllowed.getAsBoolean()) return V2BlockJobExecution.BeginResult.FAILED;
+            this.target = next;
+            this.request = request;
+            postureStartedTick = session.clientTick();
+            sneakLease = dev.aod.mcmcp.routine.MovementInputLease.acquire(minecraft, sneakOwner,
+                    System.nanoTime(), java.time.Duration.ofMillis(500));
+            stage = Stage.POSTURE;
+            return V2BlockJobExecution.BeginResult.STARTED;
         }
         int slot = findHotbarSlot(request.itemId());
         if (slot < 0 || !outputAllowed.getAsBoolean()) {
@@ -218,6 +230,14 @@ final class MinecraftV2BlockInteractDriver
             if (!crosshairOnTarget() || !freshTargetMatchesBefore()) {
                 if (crosshairWaitTicks % 5 == 1) refreshObservedAim();
                 return V2BlockJobExecution.StepResult.RUNNING;
+            }
+            var desiredLever = desiredLeverState(request, before);
+            if (desiredLever != null && !new BlockStateFingerprint(
+                    desiredLever.blockId(), request.expectedAfterProperties()).matches(desiredLever))
+                return V2BlockJobExecution.StepResult.FAILED;
+            if (desiredLever != null && desiredLever.equals(before)) {
+                confirmedChange = new V2BlockJobExecution.ConfirmedChange(before, before);
+                return V2BlockJobExecution.StepResult.SKIPPED;
             }
             if (!dispatch(clientTick, outputAllowed)) {
                 return V2BlockJobExecution.StepResult.FAILED;
@@ -434,12 +454,26 @@ final class MinecraftV2BlockInteractDriver
     static boolean matchesExpected(V2BlockInteractArguments request,
             BlockStateFingerprint before, BlockStateFingerprint actual) {
         if (before.equals(actual)) return false;
+        var desiredLever = desiredLeverState(request, before);
+        if (desiredLever != null && !desiredLever.equals(actual)) return false;
         String desiredId = request.expectedAfterBlockId() == null
                 ? before.blockId() : request.expectedAfterBlockId();
         if (request.expectedAfterBlockId() == null
                 && request.expectedAfterProperties().isEmpty()) return true;
         return new BlockStateFingerprint(desiredId,
                 request.expectedAfterProperties()).matches(actual);
+    }
+
+    static BlockStateFingerprint desiredLeverState(V2BlockInteractArguments request,
+            BlockStateFingerprint before) {
+        String powered = request.expectedAfterProperties().get("powered");
+        if (!before.blockId().equals("minecraft:lever") || request.itemId() != null
+                || request.expectedAfterBlockId() != null
+                        && !request.expectedAfterBlockId().equals("minecraft:lever")
+                || !("true".equals(powered) || "false".equals(powered))) return null;
+        var properties = new LinkedHashMap<>(before.properties());
+        properties.put("powered", powered);
+        return new BlockStateFingerprint(before.blockId(), properties);
     }
 
     private static BlockPos blockPos(NavCell cell) {

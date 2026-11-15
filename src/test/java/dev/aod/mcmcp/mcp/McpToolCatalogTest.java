@@ -84,6 +84,51 @@ class McpToolCatalogTest {
     }
 
     @Test
+    void observationSchemaKeepsCompactNbtAndAtomicLatestSeparateFromCursorRelease() {
+        var catalog = new McpToolCatalog();
+        var input = catalog.inputSchema("agent_get_observation");
+        for (String value : List.of("{}", "{\"include_nbt\":true}",
+                "{\"schema_version\":1,\"frame_id\":null,\"kinds\":[\"visible_surface\"],\"cursor\":null,\"limit\":1,\"include_nbt\":true}",
+                "{\"schema_version\":1,\"release_cursor\":\"opaque\"}")) {
+            assertThat(CatalogSchemaValidator.matches(input, JsonParser.parseString(value))).as(value).isTrue();
+        }
+        for (String value : List.of(
+                "{\"schema_version\":1,\"release_cursor\":\"opaque\",\"include_nbt\":true}",
+                "{\"schema_version\":1,\"release_cursor\":\"opaque\",\"frame_id\":null}",
+                "{\"schema_version\":1,\"frame_id\":null,\"kinds\":[\"visible_surface\"],\"cursor\":\"opaque\",\"limit\":1}")) {
+            assertThat(CatalogSchemaValidator.matches(input, JsonParser.parseString(value))).as(value).isFalse();
+        }
+        var released = JsonParser.parseString("{\"schema_version\":1,\"release_status\":\"released\"}");
+        assertThat(CatalogSchemaValidator.matches(catalog.outputSchema("agent_get_observation"), released)).isTrue();
+        released.getAsJsonObject().addProperty("frame_id", "obs-0000000000000001");
+        assertThat(CatalogSchemaValidator.matches(catalog.outputSchema("agent_get_observation"), released)).isFalse();
+    }
+
+    @Test
+    void leverSchemaIsClosedAndDocumentsIdempotencyAndMachineStopResponsibility() {
+        var catalog = new McpToolCatalog();
+        var interact = catalog.listResult().getAsJsonArray("tools").asList().stream()
+                .map(JsonElement::getAsJsonObject)
+                .filter(tool -> tool.get("name").getAsString().equals("agent_interact"))
+                .findFirst().orElseThrow();
+        assertThat(interact.get("description").getAsString())
+                .contains("Already satisfied", "confirmed_count", "server ACK", "No automatic OFF", "Unknown");
+        var definitions = LegacyActionSchema.inputSchema().getAsJsonObject("$defs");
+        var node = definitions.getAsJsonObject("setKnownLeverNode");
+        var state = node.getAsJsonObject("properties").getAsJsonObject("expected_state");
+        var valid = JsonParser.parseString("""
+                {"block":"minecraft:lever","properties":{"face":"wall","facing":"north","powered":"false"}}
+                """).getAsJsonObject();
+        assertThat(CatalogSchemaValidator.matches(state, valid)).isTrue();
+        valid.getAsJsonObject("properties").remove("face");
+        assertThat(CatalogSchemaValidator.matches(state, valid)).isFalse();
+        assertThat(node.get("description").getAsString())
+                .contains("Already satisfied", "15000 ms", "server ACK", "No automatic OFF", "Unknown");
+        assertThat(node.getAsJsonObject("properties").getAsJsonObject("powered").get("type").getAsString())
+                .isEqualTo("boolean");
+    }
+
+    @Test
     void exactContainerQuantityIsOptionalBoundedAndDiscoverable() {
         var definitions = LegacyActionSchema.inputSchema().getAsJsonObject("$defs");
         for (String name : List.of("takeContainerStackNode", "storeContainerStackNode")) {

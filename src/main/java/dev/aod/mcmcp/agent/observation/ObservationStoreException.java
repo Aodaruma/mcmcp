@@ -16,6 +16,7 @@ public final class ObservationStoreException extends Exception {
     }
 
     public enum Code {
+        NO_FRAME,
         FRAME_EXPIRED,
         INVALID_CURSOR,
         SERVER_BUSY
