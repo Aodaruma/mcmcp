@@ -52,11 +52,12 @@ public final class McpClientAutoConfigurator {
             Files.createDirectories(file.getParent());
             Path lockPath = file.resolveSibling(file.getFileName() + ".mcmcp.lock");
             if (Files.isSymbolicLink(lockPath)) return new Result(false, "write_failed", file);
-            // The persistent sidecar lock serializes separate Minecraft processes. Recheck
-            // ownership while holding it; atomic replacement alone does not protect read-modify-write.
+            // Recheck ownership under the persistent cross-process lock. This is called on the
+            // client thread: another process must not make the confirmation screen wait for it.
             try (FileChannel channel = FileChannel.open(lockPath,
                     StandardOpenOption.CREATE, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
-                    FileLock ignored = channel.lock()) {
+                    FileLock lock = channel.tryLock()) {
+                if (lock == null) return new Result(false, "config_busy", file);
                 var registration = readRegistration(target, file);
                 Path helperPath = helperPath(token.getParent());
                 String conflict = registrationConflict(registration, helperPath);

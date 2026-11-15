@@ -110,13 +110,15 @@ class McpClientAutoConfiguratorTest {
     }
 
     @Test
-    void separateJvmRegistrationsWaitForTheSameConfigLock() throws Exception {
+    void separateJvmRegistrationsReturnWhileAnotherProcessStillOwnsTheConfigLock() throws Exception {
         Path first = gameWithToken("process/first");
         Path second = gameWithToken("process/second");
         Path home = temporary.resolve("process-home");
         Path config = McpClientAutoConfigurator.configPath(
                 McpClientAutoConfigurator.Target.CODEX, first, home);
         Files.createDirectories(config.getParent());
+        String original = "model = \"keep-this-value\"\n";
+        Files.writeString(config, original);
         Path lockPath = config.resolveSibling(config.getFileName() + ".mcmcp.lock");
         Path gate = temporary.resolve("process-start");
         Path firstReady = temporary.resolve("process-first-ready");
@@ -136,18 +138,22 @@ class McpClientAutoConfiguratorTest {
                 Files.writeString(gate, "go");
                 waitForFile(firstAttempt);
                 waitForFile(secondAttempt);
-                Thread.sleep(1_000);
-                assertThat(a.isAlive()).isTrue();
-                assertThat(b.isAlive()).isTrue();
-                assertThat(firstResult).doesNotExist();
-                assertThat(secondResult).doesNotExist();
+                // Both calls must return before this process releases the lock. A blocking
+                // channel.lock() would keep the in-game confirmation and client tick frozen.
+                assertThat(a.waitFor(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(b.waitFor(5, TimeUnit.SECONDS)).isTrue();
+                assertThat(a.exitValue()).as(new String(a.getInputStream().readAllBytes())).isZero();
+                assertThat(b.exitValue()).as(new String(b.getInputStream().readAllBytes())).isZero();
+                assertThat(List.of(Files.readString(firstResult), Files.readString(secondResult)))
+                        .containsOnly("config_busy");
+                assertThat(Files.readString(config)).isEqualTo(original);
+                assertThat(config.resolveSibling(config.getFileName() + ".mcmcp.bak")).doesNotExist();
             }
-            assertThat(a.waitFor(20, TimeUnit.SECONDS)).isTrue();
-            assertThat(b.waitFor(20, TimeUnit.SECONDS)).isTrue();
-            assertThat(a.exitValue()).as(new String(a.getInputStream().readAllBytes())).isZero();
-            assertThat(b.exitValue()).as(new String(b.getInputStream().readAllBytes())).isZero();
-            assertThat(List.of(Files.readString(firstResult), Files.readString(secondResult)))
-                    .containsExactlyInAnyOrder("configured", "another_profile");
+            assertThat(McpClientAutoConfigurator.configure(
+                    McpClientAutoConfigurator.Target.CODEX, first, home, 8765).success()).isTrue();
+            assertThat(McpClientAutoConfigurator.configure(
+                    McpClientAutoConfigurator.Target.CODEX, second, home, 8765).code())
+                    .isEqualTo("another_profile");
             assertThat(lockPath).isRegularFile();
         } finally {
             if (a.isAlive()) a.destroyForcibly();
