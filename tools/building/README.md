@@ -1,4 +1,10 @@
+# 建築データの計画・保存・再開
+
+v2のJSON/CSV／palette設計図は`compile_v2_blueprint.py`で材料集計・分割し、`Invoke-McmcpV2Blueprint.ps1`で再開できます。128×128×9を含む[入力形式・実行手順](../../docs/PUBLIC_API_V2_PRIORITIES_20261009.md#1281289の設計図と再開)を参照してください。以下は従来v1 runnerの案内です。
+
 # 平面建築の保存・補充・再開
+
+> この施工runnerはv1のJSON Action DSL専用です。v2ではその開始ツールを廃止したため、実行には対応するv1タグのcheckoutとJARが必要です。[v2の公開ツール案内](../../docs/MCMCP_Public_API_v2_クイックガイド.md)を参照してください。
 
 PowerShell 7.4以上で使う施工runnerです。最大128×128の床を蛇行順に1セルずつ施工し、指定したセルの上へ松明を置きます。MCMCPの固定5 Toolと既存の検証済みtransportを使います。MinecraftのMCP操作を手動でONにし、Survivalで開始してください。
 

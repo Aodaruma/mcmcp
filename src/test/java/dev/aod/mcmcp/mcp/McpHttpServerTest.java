@@ -41,6 +41,107 @@ class McpHttpServerTest {
             .build();
     private McpHttpServer server;
 
+    @Test void shortActionsReturnTerminalResultsOnModernAndLegacyTransports() throws Exception {
+        for (boolean legacy : new boolean[] {false, true}) for (String state : List.of("succeeded", "failed")) {
+            UUID id = UUID.randomUUID();
+            var confirmed = new java.util.concurrent.atomic.AtomicBoolean();
+            start((command, context) -> {
+                if (command instanceof McpRuntimePort.StartMove move) {
+                    assertThat(move.arguments()).doesNotContainKey("wait_timeout_ms");
+                    return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of(
+                            "schema_version", 2, "action_id", id.toString(), "state", "queued")));
+                }
+                if (command instanceof McpRuntimePort.ConfirmActionDelivery) confirmed.set(true);
+                if (command instanceof McpRuntimePort.GetAction) {
+                    assertThat(confirmed).isTrue();
+                    return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(completion(id, state)));
+                }
+                return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
+            }, config("complete-" + legacy + state).rateLimit(100, 100).build());
+            var params = legacy ? new JsonObject() : metaParams();
+            params.addProperty("name", "agent_move");
+            params.add("arguments", JsonParser.parseString("{\"x\":1.8,\"y\":64,\"z\":2.2,\"wait_timeout_ms\":1000}"));
+            var response = send(legacy ? codexLegacyPost(requestBody("tools/call", params),
+                    McpHttpServer.CODEX_LEGACY_PROTOCOL_VERSION, null, null, null)
+                    : request("tools/call", "agent_move", params, McpTestFixtures.TOKEN));
+            var result = json(response).getAsJsonObject("result");
+            assertThat(result.get("isError").getAsBoolean()).isEqualTo(state.equals("failed"));
+            var data = result.getAsJsonObject("structuredContent");
+            assertThat(data.get("state").getAsString()).isEqualTo(state);
+            assertThat(data.getAsJsonObject("result").get("gap_jumps").getAsInt()).isEqualTo(1);
+            assertThat(CatalogSchemaValidator.matches(new McpToolCatalog().outputSchema("agent_move"), data)).isTrue();
+        }
+    }
+
+    @Test void completionTimeoutReturnsProgressAndZeroKeepsImmediateReceipt() throws Exception {
+        UUID id = UUID.randomUUID();
+        var polls = new AtomicInteger();
+        start((command, context) -> {
+            if (command instanceof McpRuntimePort.StartMove) return CompletableFuture.completedFuture(
+                    McpRuntimePort.RuntimeReply.success(Map.of("schema_version", 2, "action_id", id.toString(), "state", "queued")));
+            if (command instanceof McpRuntimePort.GetAction) {
+                polls.incrementAndGet();
+                return CompletableFuture.supplyAsync(() -> McpRuntimePort.RuntimeReply.success(completion(id, "running")),
+                        CompletableFuture.delayedExecutor(50, TimeUnit.MILLISECONDS));
+            }
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
+        }, config("timeout").rateLimit(100, 100).build());
+        for (int wait : new int[] {0, 10}) {
+            var params = metaParams(); params.addProperty("name", "agent_move");
+            params.add("arguments", JsonParser.parseString("{\"x\":1,\"y\":64,\"z\":2,\"wait_timeout_ms\":" + wait + "}"));
+            var data = json(send(request("tools/call", "agent_move", params, McpTestFixtures.TOKEN)))
+                    .getAsJsonObject("result").getAsJsonObject("structuredContent");
+            assertThat(data.get("state").getAsString()).isEqualTo(wait == 0 ? "queued" : "running");
+            assertThat(polls.get()).isEqualTo(wait == 0 ? 0 : 1);
+        }
+    }
+
+    @Test void disconnectAfterStartingRequestsCancellationOfOnlyThatJob() throws Exception {
+        UUID id = UUID.randomUUID();
+        var cancelled = new CountDownLatch(1);
+        start((command, context) -> {
+            if (command instanceof McpRuntimePort.StartMove) return CompletableFuture.completedFuture(
+                    McpRuntimePort.RuntimeReply.success(Map.of("schema_version", 2, "action_id", id.toString(), "state", "queued")));
+            if (command instanceof McpRuntimePort.GetAction) return CompletableFuture.supplyAsync(
+                    () -> McpRuntimePort.RuntimeReply.success(completion(id, "running")),
+                    CompletableFuture.delayedExecutor(50, TimeUnit.MILLISECONDS));
+            if (command instanceof McpRuntimePort.CancelAction cancel) {
+                assertThat(cancel.arguments().get("action_id")).isEqualTo(id.toString()); cancelled.countDown();
+            }
+            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of()));
+        }, config("disconnect").rateLimit(100, 100).build());
+        var params = metaParams(); params.addProperty("name", "agent_move");
+        params.add("arguments", JsonParser.parseString("{\"x\":1,\"y\":64,\"z\":2}"));
+        byte[] body = requestBody("tools/call", params).getBytes(StandardCharsets.UTF_8);
+        try (var socket = new Socket("127.0.0.1", server.localPort())) {
+            socket.setSoTimeout(2000); socket.setSoLinger(true, 0);
+            String headers = "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:" + server.localPort()
+                    + "\r\nAuthorization: Bearer " + McpTestFixtures.TOKEN
+                    + "\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\n"
+                    + McpHttpServer.PROTOCOL_HEADER + ": " + McpHttpServer.PROTOCOL_VERSION + "\r\n"
+                    + McpHttpServer.METHOD_HEADER + ": tools/call\r\n" + McpHttpServer.NAME_HEADER + ": agent_move\r\n"
+                    + "Content-Length: " + body.length + "\r\n\r\n";
+            socket.getOutputStream().write(headers.getBytes(StandardCharsets.UTF_8));
+            socket.getOutputStream().write(body); socket.getOutputStream().flush();
+            var reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+            assertThat(reader.readLine()).contains("200");
+            String line;
+            do { line = reader.readLine(); } while (line != null && !line.isEmpty());
+            assertThat(reader.readLine()).isEqualTo("1"); // Initial accepted chunk, before the final result.
+            assertThat(reader.read()).isEqualTo(' ');
+        }
+        assertThat(cancelled.await(3, TimeUnit.SECONDS)).isTrue();
+    }
+
+    private static Map<String, Object> completion(UUID id, String state) {
+        var result = new java.util.LinkedHashMap<String, Object>();
+        result.putAll(Map.of("schema_version", 2, "action_id", id.toString(), "kind", "move", "state", state,
+                "progress", Map.of("completed_operations", 2, "max_operations", 100), "cancel_requested", false,
+                "result", Map.of("gap_jumps", 1)));
+        result.put("failure", state.equals("failed") ? "test_failure" : null);
+        return result;
+    }
+
     @AfterEach
     void closeServer() throws Exception {
         if (server != null) {
@@ -91,134 +192,20 @@ class McpHttpServerTest {
     }
 
     @Test
-    void modernFormElicitationCarriesKillZoneApprovalWithoutMinecraftPrompt() throws Exception {
-        var seen = new AtomicReference<RuntimeCallContext.ElicitationInput>();
-        String binding = "sha256:" + "a".repeat(64);
-        McpRuntimePort runtime = (command, context) -> {
-            if (!command.toolName().equals("agent_start_action")) {
-                return CompletableFuture.completedFuture(
-                        McpRuntimePort.RuntimeReply.success(Map.of("schema_version", 1)));
-            }
-            seen.set(context.elicitationInput());
-            if (context.elicitationInput().acceptedAndConfirmed()) {
-                return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of(
-                        "schema_version", 1,
-                        "action_id", "00000000-0000-4000-8000-000000000001",
-                        "state", "queued",
-                        "accepted_at", "2026-09-05T00:00:00Z")));
-            }
-            return CompletableFuture.completedFuture(McpRuntimePort.RuntimeReply.success(Map.of(
-                    "schema_version", 1,
-                    "state", "AWAITING_CONSENT",
-                    "policy_binding_hash", binding,
-                    "approval_request_state", "r_" + "b".repeat(22),
-                    "approval_scope_summary",
-                            "ディメンション minecraft:overworld、対象区域 X=2.000〜3.000 / "
-                                    + "Y=60.000〜62.000 / Z=0.000〜1.000、待機位置 "
-                                    + "X=0.100〜0.900 / Y=60.000〜61.900 / Z=0.100〜0.900",
-                    "action_reserved", false,
-                    "input_acquired", false)));
-        };
-        start(runtime, config("mrtr-kill-zone").rateLimit(100, 100).build());
-
-        JsonObject arguments = JsonParser.parseString("""
-                {"schema_version":1,"program":{"dsl_version":1,
-                 "capabilities":["entity_attack"],"body":[{
-                   "id":"operate","op":"operate_kill_zone",
-                   "target_kill_zone_bounds":{"dimension":"minecraft:overworld",
-                     "min":{"x":2,"y":60,"z":0},
-                     "max":{"x":3,"y":62,"z":1}},
-                   "entity_type_allowlist":["minecraft:armor_stand"],
-                   "main_hand_item":"minecraft:iron_sword","consent_ref":null,
-                   "max_attacks":12,"minimum_interval_ticks":10,
-                   "max_operation_duration_ticks":3600}]},
-                 "budget":{"max_duration_ms":180500,"max_ticks":3610,
-                   "max_distance_blocks":0,"max_camera_degrees":0,"max_interactions":12,
-                   "max_blocks_broken":0,"max_blocks_placed":0}}
-                """).getAsJsonObject();
-        JsonObject first = metaParams();
-        JsonObject capabilities = first.getAsJsonObject("_meta")
-                .getAsJsonObject("io.modelcontextprotocol/clientCapabilities");
-        JsonObject elicitation = new JsonObject();
-        elicitation.add("form", new JsonObject());
-        capabilities.add("elicitation", elicitation);
-        first.addProperty("name", "agent_start_action");
-        first.add("arguments", arguments);
-
-        HttpResponse<String> initial = send(request(
-                "tools/call", "agent_start_action", first, McpTestFixtures.TOKEN));
-        JsonObject required = json(initial).getAsJsonObject("result");
-        assertThat(required.get("resultType").getAsString())
-                .withFailMessage(initial.body()).isEqualTo("input_required");
-        assertThat(required.getAsJsonObject("_meta").toString()).contains("mcmcp");
-        assertThat(required.has("structuredContent")).isFalse();
-        String requestState = required.get("requestState").getAsString();
-        assertThat(requestState).startsWith("kz1.").doesNotContain(binding);
-        JsonObject inputRequest = required.getAsJsonObject("inputRequests")
-                .getAsJsonObject("kill_zone_operation_approval");
-        assertThat(inputRequest.get("method").getAsString()).isEqualTo("elicitation/create");
-        assertThat(inputRequest.getAsJsonObject("params").get("message").getAsString())
-                .contains("特定個体の指定ではありません", "防具立て", "鉄の剣",
-                        "上限12回", "最短間隔10tick", "最長180秒",
-                        "ディメンション minecraft:overworld", "対象区域 X=2.000〜3.000",
-                        "待機位置 X=0.100〜0.900")
-                .doesNotContain("armor_stand");
-        assertThat(seen.get().formSupported()).isTrue();
-        assertThat(seen.get().responded()).isFalse();
-
-        JsonObject retry = first.deepCopy();
-        retry.addProperty("requestState", requestState);
-        JsonObject content = new JsonObject();
-        content.addProperty("approve", true);
-        JsonObject approval = new JsonObject();
-        approval.addProperty("action", "accept");
-        approval.add("content", content);
-        JsonObject responses = new JsonObject();
-        responses.add("kill_zone_operation_approval", approval);
-        retry.add("inputResponses", responses);
-
-        JsonObject tampered = retry.deepCopy();
-        tampered.addProperty(
-                "requestState",
-                requestState.substring(0, requestState.length() - 1)
-                        + (requestState.endsWith("A") ? "B" : "A"));
-        assertThat(send(requestWithId(
-                2, "tools/call", "agent_start_action", tampered,
-                McpTestFixtures.TOKEN)).statusCode()).isEqualTo(400);
-
-        // SHA-256 leaves two unused bits in the last Base64 character. Java's decoder
-        // accepts aliases, so construct one deterministically rather than relying on luck.
-        String alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-        int lastIndex = alphabet.indexOf(requestState.charAt(requestState.length() - 1));
-        String alias = requestState.substring(0, requestState.length() - 1)
-                + alphabet.charAt(lastIndex | 1);
-        assertThat(Base64.getUrlDecoder().decode(alias.substring(alias.lastIndexOf('.') + 1)))
-                .isEqualTo(Base64.getUrlDecoder().decode(
-                        requestState.substring(requestState.lastIndexOf('.') + 1)));
-        for (String noncanonical : List.of(alias, requestState + "=")) {
-            JsonObject invalidEncoding = retry.deepCopy();
-            invalidEncoding.addProperty("requestState", noncanonical);
-            assertThat(send(requestWithId(
-                    20, "tools/call", "agent_start_action", invalidEncoding,
-                    McpTestFixtures.TOKEN)).statusCode()).isEqualTo(400);
-        }
-
-        JsonObject capabilityRemoved = retry.deepCopy();
-        capabilityRemoved.getAsJsonObject("_meta")
-                .getAsJsonObject("io.modelcontextprotocol/clientCapabilities")
-                .remove("elicitation");
-        assertThat(send(requestWithId(
-                3, "tools/call", "agent_start_action", capabilityRemoved,
-                McpTestFixtures.TOKEN)).statusCode()).isEqualTo(400);
-
-        HttpResponse<String> accepted = send(requestWithId(
-                4, "tools/call", "agent_start_action", retry, McpTestFixtures.TOKEN));
-        JsonObject completed = json(accepted).getAsJsonObject("result");
-        assertThat(completed.get("resultType").getAsString()).isEqualTo("complete");
-        assertThat(completed.getAsJsonObject("structuredContent").get("state").getAsString())
-                .isEqualTo("queued");
-        assertThat(seen.get().acceptedAndConfirmed()).isTrue();
-        assertThat(seen.get().requestState()).isEqualTo("r_" + "b".repeat(22));
+    void retiredJsonDslIsRejectedBeforeRuntimeDispatch() throws Exception {
+        var calls = new AtomicInteger();
+        start((command, context) -> {
+            calls.incrementAndGet();
+            throw new AssertionError("removed DSL must not reach the runtime");
+        }, config("retired-dsl").build());
+        JsonObject params = metaParams();
+        params.addProperty("name", "agent_start_action");
+        params.add("arguments", LegacyActionSchema.inputSchema().getAsJsonArray("examples").get(0));
+        var response = send(request("tools/call", "agent_start_action", params, McpTestFixtures.TOKEN));
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(json(response).getAsJsonObject("error").get("code").getAsInt()).isEqualTo(-32602);
+        assertThat(response.body()).contains("Unknown tool");
+        assertThat(calls).hasValue(0);
     }
 
     @Test
@@ -656,7 +643,7 @@ class McpHttpServerTest {
 
         HttpResponse<String> list = send(request(
                 "tools/list", null, metaParams(), McpTestFixtures.TOKEN));
-        assertThat(json(list).getAsJsonObject("result").getAsJsonArray("tools")).hasSize(5);
+        assertThat(json(list).getAsJsonObject("result").getAsJsonArray("tools")).hasSize(McpToolCatalog.REQUIRED_NAMES.size());
         assertThat(list.body()).doesNotContain(
                 "evaluation_turn", "evaluation_lease", McpHttpServer.EVALUATION_TURN_PATH);
     }

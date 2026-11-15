@@ -231,8 +231,7 @@ public final class MinecraftFrameItemPort implements FrameItemPort {
             return "frame_hand_selection_changed";
         }
         boolean threat = levelIdentity.getEntities(player, player.getBoundingBox().inflate(8.0D),
-                        entity -> entity.isAlive() && (entity instanceof Enemy
-                                || entity instanceof Mob mob && mob.getTarget() == player))
+                        entity -> entity.isAlive() && (dev.aod.mcmcp.agent.safety.ObservedThreats.attacking(entity, player)))
                 .stream().anyMatch(entity -> observations.isEntityCurrentlyVisible(minecraft, entity, 8.0D));
         return threat ? "frame_visible_threat" : null;
     }

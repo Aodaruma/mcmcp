@@ -1,0 +1,17 @@
+{
+  "algorithm": "SHA-256",
+  "files": {
+    "background-invalid.json": "920436896045e3912772beb92a9fdd6b932220b9d50920c87bf320d2cf1758a5",
+    "background.json": "5e8aeb33209bc4679826f3c0dd94cc311398a164e28cbdc8d41c6b0fadcc1559",
+    "cancel.json": "d28de045628231c540885b95483e7ee2ce2f6d3d6917c5b3a81c5523861617e8",
+    "deployment.json": "d1dd50c182c33ff21e16b493756ee2034934ecd5d3b22272c9e9b93fd8be71a3",
+    "detached.json": "cf2b2f9cabf57ede4233fe5780d8a6052fe759da70398a5dc44db3ea8543da55",
+    "duration.json": "82f51e595866b6c30489efa40ce9a692e2705124ef8e84b38bb70da07786e5e3",
+    "extended.json": "6deebf55f4907294510f94a169fbc5dbc287be0f02e2a42f8fb68699e0d2a819",
+    "final-handoff.json": "9cad1c11cbf4178e1dd5fa7bf4608c786479bef86e00833d11a8e8b815393a8f",
+    "late.json": "e5284de1c9e4cbebb0bd80b72199148559816b15cd726d5fe55980e5a8347238",
+    "refill.json": "2fca432c3b85124cd811c44dbf99e6d6dcd9c56a36500189a8e7045d4888b9cc",
+    "summary.json": "8c1a353e12a30d6099cc6097d635575c542f6ac15e3126d915d5969e40d8bf31",
+    "wrong.json": "27633b150d5ca268f950b1298bc3d5fefd4e23c6635418e34afb61791a750550"
+  }
+}

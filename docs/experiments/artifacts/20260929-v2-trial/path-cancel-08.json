@@ -1,0 +1,161 @@
+{
+  "events": [
+    {
+      "tool": "agent_move",
+      "receipt": {
+        "schema_version": 2,
+        "action_id": "9a0e8592-7e02-49ef-9667-13b500fefd1f",
+        "state": "queued"
+      },
+      "arguments": {
+        "x": 200,
+        "y": 201,
+        "z": 207,
+        "max_distance": 20,
+        "clear_path": true
+      }
+    },
+    {
+      "before_cancel": {
+        "schema_version": 2,
+        "action_id": "9a0e8592-7e02-49ef-9667-13b500fefd1f",
+        "kind": "move",
+        "state": "running",
+        "progress": {
+          "completed_operations": 62,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "unconfirmed_path_target": {
+            "y": 201,
+            "z": 203,
+            "operation": "break",
+            "x": 200
+          },
+          "path_changes": [],
+          "path_changed_count": 0
+        }
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "9a0e8592-7e02-49ef-9667-13b500fefd1f",
+        "kind": "move",
+        "state": "cancelled",
+        "progress": {
+          "completed_operations": 65,
+          "max_operations": 1200
+        },
+        "cancel_requested": true,
+        "failure": "client_request",
+        "result": {
+          "unconfirmed_path_target": {
+            "y": 201,
+            "z": 203,
+            "operation": "break",
+            "x": 200
+          },
+          "path_changes": [],
+          "path_changed_count": 0
+        }
+      }
+    },
+    {
+      "after": {
+        "schema_version": 2,
+        "player": {
+          "hunger": 20,
+          "submerged": false,
+          "on_fire": false,
+          "yaw": -153.00002,
+          "pitch": 22.598885,
+          "position": {
+            "y": 201.0,
+            "z": 201.48508765512096,
+            "x": 200.4999384663981
+          },
+          "air": 300,
+          "status_effects": [],
+          "dimension": "minecraft:overworld",
+          "absorption": 0.0,
+          "max_air": 300,
+          "health": 20.0
+        },
+        "hotbar": {
+          "slots": [
+            {
+              "slot": 0,
+              "selected": true,
+              "item": "minecraft:bucket",
+              "count": 1
+            },
+            {
+              "slot": 1,
+              "selected": false,
+              "item": "minecraft:netherite_pickaxe",
+              "count": 1
+            },
+            {
+              "slot": 2,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 3,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 4,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 5,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 6,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 7,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 8,
+              "selected": false,
+              "item": null,
+              "count": 0
+            }
+          ],
+          "selected_slot": 0
+        }
+      },
+      "control": {
+        "schema_version": 2,
+        "control_mode": "ready",
+        "game_paused": false,
+        "ready_expires_at": null,
+        "world_session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+        "latest_frame_id": "obs-b66aafcedd1ab889",
+        "running_action_id": null
+      }
+    }
+  ],
+  "passed": true,
+  "world_session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+  "phase": "PathCancel"
+}

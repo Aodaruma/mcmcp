@@ -18,6 +18,22 @@ final class FixtureSecurity {
     }
 
     static Decision authorize(CommandSourceStack source) {
+        return authorize(source, false);
+    }
+
+    /** Only the fixed v2 dimension-return case may use this entry point. */
+    static Decision authorizeReturnFromEnd(CommandSourceStack source) {
+        return authorize(source, true);
+    }
+
+    /** Fixed dimension return/report for the isolated vanilla portal fixtures only. */
+    static Decision authorizePortalReturn(CommandSourceStack source) { return authorize(source, true, true); }
+
+    private static Decision authorize(CommandSourceStack source, boolean allowEndReturn) {
+        return authorize(source, allowEndReturn, false);
+    }
+
+    private static Decision authorize(CommandSourceStack source, boolean allowEndReturn, boolean allowNetherReturn) {
         if (!Boolean.getBoolean(McmcpTestFixtureMod.ENABLE_PROPERTY)) {
             return Decision.reject("-D" + McmcpTestFixtureMod.ENABLE_PROPERTY + "=true is required");
         }
@@ -50,7 +66,9 @@ final class FixtureSecurity {
         }
 
         ServerLevel level = player.level();
-        if (source.getLevel() != level || !Level.OVERWORLD.equals(level.dimension())) {
+        if (source.getLevel() != level || !(Level.OVERWORLD.equals(level.dimension())
+                || allowEndReturn && Level.END.equals(level.dimension())
+                || allowNetherReturn && Level.NETHER.equals(level.dimension()))) {
             return Decision.reject("run the fixture as the owner in the Overworld");
         }
 

@@ -14,6 +14,21 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class FixtureScriptLoaderTest {
     @Test
+    void v2SmokeFixturesUseTheExistingBoundedCommandGrammar() throws Exception {
+        var loader = new FixtureScriptLoader(Path.of("tools/eval/fixtures"));
+        var core = loader.load("public-api-v2");
+        assertThat(core.commands()).hasSize(9);
+        assertThat(core.commands().stream().mapToLong(RestrictedCommandPolicy.ValidatedCommand::changedBlocks).sum())
+                .isLessThanOrEqualTo(core.manifest().maxChangedBlocks());
+        var hazard = loader.load("public-api-v2-water-stop");
+        assertThat(hazard.commands()).singleElement()
+                .satisfies(command -> assertThat(command.source()).isEqualTo("setblock 207 201 200 minecraft:water"));
+        // Entity/inventory preparation is deliberately outside the restricted loader.
+        assertThat(core.commands().stream().map(RestrictedCommandPolicy.ValidatedCommand::root))
+                .doesNotContain("summon");
+    }
+
+    @Test
     void releaseContainersKeepNormalAndPartialCasesWithinTheSameEnvelope() throws Exception {
         for (String mode : new String[] {"normal", "partial"}) {
             var fixture = new FixtureScriptLoader(Path.of("tools/eval/fixtures"))

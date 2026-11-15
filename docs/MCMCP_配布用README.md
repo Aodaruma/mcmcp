@@ -11,11 +11,13 @@ MCPサーバーはMinecraft内で動くため、サーバー側MODや別の中�
 
 - Minecraft **26.2** / NeoForge **26.2.0.59** / Java **25**
 - Minecraftと同じPCで動作するCodex・Claude CodeなどのMCPクライアント
-- MODの配布版：**0.1.0-rc.2**
+- MODの配布版：**0.2.0-rc.1**
 
 **読み方：** そのまま読む場合は **README.pdf** を開いてください。
 
-**同梱物：** MOD本体のJAR、`README.pdf`、`README.md`、画像フォルダー `assets/readme/`、Action DSLガイド、ライセンス・出典・ソース取得先、チェックサム。Markdown版を移動するときは画像フォルダーも一緒に置いてください。
+**同梱物：** MOD本体のJAR、`README.pdf`、`README.md`、画像フォルダー `assets/readme/`、公開API v2ガイド、ライセンス・出典・ソース取得先、チェックサム。Markdown版を移動するときは画像フォルダーも一緒に置いてください。
+
+**0.1系から更新する方へ：** 公開API v2は座標・数量を指定する17ツールへ変更しています。旧`agent_start_action`／JSON Action DSL用の依頼やrunnerはそのまま使えません。更新後はクライアントを再起動し、同梱`PUBLIC_API.md`の例から始めてください。
 
 ## 目次
 
@@ -48,7 +50,7 @@ MCPサーバーはMinecraft内で動くため、サーバー側MODや別の中�
 
 1. **Minecraftを終了**し、配布ZIPを展開します。
 2. CurseForgeの **Minecraft → My Modpacks** で使うプロフィールを開き、**「⋮」→「Open Folder」**を選びます。
-3. 開いたフォルダーの **`mods`** に、同梱の `mcmcp-neoforge-26.2-0.1.0-rc.2.jar` をコピーします。
+3. 開いたフォルダーの **`mods`** に、同梱の `mcmcp-neoforge-26.2-0.2.0-rc.1.jar` をコピーします。
 4. CurseForgeに戻り、**Play** で起動します。
 
 **更新時：** 古いMCMCP JARを `mods` の外へバックアップしてから差し替えます。
@@ -74,7 +76,7 @@ Prismを使っている方はこちらの手順です。CurseForgeで追加済�
 
 1. **Minecraftを終了**し、配布ZIPを展開します。
 2. Prism Launcherで使う起動構成を選び、**「編集」→「Mod」→「ファイルを追加」**へ進みます。
-3. 同梱の `mcmcp-neoforge-26.2-0.1.0-rc.2.jar` を追加し、Minecraftを起動します。
+3. 同梱の `mcmcp-neoforge-26.2-0.2.0-rc.1.jar` を追加し、Minecraftを起動します。
 
 **更新時：** 古いMCMCP JARを `mods` の外へバックアップしてから差し替えます。同じMODを2つ入れないでください。既存の設定・認証情報は引き継げます。
 
@@ -111,6 +113,8 @@ Prismを使っている方はこちらの手順です。CurseForgeで追加済�
 - **② Claude Codeを自動設定：** Claude CodeのMCP接続設定を追加する確認画面を開きます。
 
 表示された確認画面で変更先を確認して、**「OK」**を押します。
+
+参照診断の`configured`は設定先の確認であり、通信・認証の成功までは保証しません。別の起動構成を参照している場合は上書きせず、検証用には「Codexの分離設定」を使えます。生成先の`codex-home`を`CODEX_HOME`に指定したクライアントだけに適用され、通常のCodex設定は変わりません。
 
 ### 2.3 MCPクライアントを再起動する
 
@@ -190,7 +194,7 @@ Prism Launcher・Minecraftの画像は実際に撮影した画面に枠と番号
 | 症状 | 確認すること |
 | --- | --- |
 | ツールが表示されない／接続拒否 | Minecraftを先に起動し、MCPクライアントを再起動します。複数の起動構成で同じポートを同時に使うことはできません。 |
-| `401 Unauthorized` | 別の起動構成の認証情報を参照していないか確認します。現在のゲームから接続設定をやり直してください。 |
+| `401 Unauthorized` | 別の起動構成の認証情報を参照していないか確認します。確認画面の変更先・参照診断を照合し、別profileの登録を上書きせず、必要なら分離設定を使います。 |
 | `InvalidToolCall` | 古いMCMCP JARを外し、このZIPのJARに差し替えてMinecraftを再起動します。 |
 | タイトル画面にボタンがない | ワールドへ入ってからEscを押します。 |
 | 自動設定で競合が表示される | 手動登録した `mcmcp` 設定を確認します。既存設定をバックアップし、接続先を確認してください。 |

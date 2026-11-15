@@ -35,12 +35,28 @@ class KnownStorageRefsTest {
     }
 
     private static final class Target implements StorageAccess.Target {
+        private final int slot;
+        Target() { this(2); }
+        Target(int slot) { this.slot = slot; }
         public String profileHash() { return "sha256:" + "a".repeat(64); }
         public Object identityKey() { return this; }
+        public int inventorySlot() { return slot; }
         public String location() { return "inventory"; }
         public ItemStack item() { return ItemStack.EMPTY; }
         public boolean stillPresent(Minecraft minecraft) { return true; }
         public void open(Minecraft minecraft) { throw new AssertionError("reference resolution must not open"); }
         public boolean matches(KnownMenuProfileSupport.Context context) { return false; }
+        public boolean matchesOpenedMenu(net.minecraft.world.inventory.AbstractContainerMenu menu,
+                net.minecraft.world.entity.player.Player player) { return false; }
+    }
+
+    @Test
+    void slotSelectionRejectsMissingAndAmbiguousProviders() {
+        var first = new Target(2);
+        var second = new Target(38);
+        assertThat(KnownStorageRefs.selectSlot(List.of(first, second), 2)).containsSame(first);
+        assertThat(KnownStorageRefs.selectSlot(List.of(first, second), 38)).containsSame(second);
+        assertThat(KnownStorageRefs.selectSlot(List.of(first, second), 40)).isEmpty();
+        assertThat(KnownStorageRefs.selectSlot(List.of(first, new Target(2)), 2)).isEmpty();
     }
 }

@@ -54,6 +54,9 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
     private long lastClientTick = -1;
     private long tickStartedNanos;
     private long lastMovementHeartbeatTick = -1;
+    private boolean sneakWhileMoving;
+
+    public void sneakWhileMoving(boolean enabled) { sneakWhileMoving = enabled; }
 
     /** @param maxCameraDegreesPerTick configured degrees/second divided by 20 client ticks */
     public MinecraftActionPrimitiveExecutor(float maxCameraDegreesPerTick) {
@@ -161,6 +164,13 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 || !state.route.dimension().equals(snapshot.dimension())) {
             return finish(Status.FAILED, Reason.WORLD_BOUNDARY_CHANGED);
         }
+        if (Locomotion.aerialMode(player).aerial() && (player.getAbilities().flying
+                || state.route.edges().stream().anyMatch(e -> e.locomotion().aerial()))) {
+            return tickAerialNavigation(minecraft, player, snapshot, movementSafety,
+                    remainingDistance, clientTick, outputAllowed);
+        }
+        if (state.route.edges().stream().anyMatch(e -> e.locomotion().aerial()))
+            return finish(Status.FAILED, Reason.UNSUPPORTED_LOCOMOTION);
         if (player.isPassenger() || player.isInLava()
                 || player.isFallFlying() || player.getAbilities().flying) {
             return finish(Status.REPLAN_REQUIRED, Reason.UNSUPPORTED_LOCOMOTION);
@@ -240,6 +250,11 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             state.edgeIndex++;
             state.resetProgress();
             if (state.edgeIndex == state.route.edges().size()) {
+                if (state.route.endsOnClimbableTransit() && player.onClimbable()) {
+                    boolean changed = edgeDecision(state.route, state.edgeIndex - 1, snapshot) == EdgeDecision.REPLAN;
+                    return finish(changed ? Status.REPLAN_REQUIRED : Status.SUCCEEDED,
+                            changed ? Reason.ROUTE_EDGE_CHANGED : Reason.NONE);
+                }
                 state.beginSettlement();
                 return tickNavigationSettlement(
                         minecraft, player, snapshot, movementSafety,
@@ -299,22 +314,39 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         }
         // navigate_to_known owns movement only. Relative steering preserves the player's view;
         // a caller that wants camera motion must declare and execute face_known_position.
-        double brakingTicks = locomotion == Locomotion.WATER && player.isInWater() ? 3.0D : 0.0D;
+        double brakingTicks = locomotion.aerial() ? 11.0D
+                : locomotion == Locomotion.WATER && player.isInWater() ? 3.0D : 0.0D;
+        var target = new Vec3(waypoint.x() + 0.5D,
+                waypoint.y() + player.getBbHeight() * 0.5D + (locomotion.aerial() ? Locomotion.FLIGHT_FEET_OFFSET : 0.0D),
+                waypoint.z() + 0.5D);
+        var ladder = locomotion == Locomotion.LADDER
+                ? movementSafety.ladderSteering(player, target, snapshot.worldRevision())
+                : java.util.Optional.<LocalObservationVolume.LadderSteering>empty();
+        if (ladder.isPresent()) target = ladder.orElseThrow().target();
+        var steeringTarget = ladder.map(LocalObservationVolume.LadderSteering::steeringTarget).orElse(target);
         Set<MovementInputLease.MovementKey> desired = steering(
                 player.getX() + brakingTicks * player.getDeltaMovement().x,
                 player.getZ() + brakingTicks * player.getDeltaMovement().z,
-                player.getYRot(), waypoint, waypointTolerance);
+                player.getYRot(), steeringTarget.x, steeringTarget.z,
+                ladder.isPresent() ? Math.min(waypointTolerance, 0.08D) : waypointTolerance);
+        if (locomotion.aerial() && Math.hypot(
+                waypoint.x() + 0.5D - player.getX() - brakingTicks * player.getDeltaMovement().x,
+                waypoint.z() + 0.5D - player.getZ() - brakingTicks * player.getDeltaMovement().z) <= waypointTolerance)
+            desired = Set.of();
         desired = withVerticalInput(
                 desired,
                 verticalDelta,
-                waypoint.y() - player.getY(),
+                waypoint.y() + (locomotion.aerial() ? Locomotion.FLIGHT_FEET_OFFSET : 0.0D) - player.getY(),
                 player.maxUpStep(),
                 locomotion,
                 player.isInWater(),
                 player.getDeltaMovement().y);
         // Direct diagonal support is traversed slowly; actual per-tick collision/support guards remain active.
-        if (!state.route.edges().isEmpty() && state.edgeIndex < state.route.edges().size()
-                && state.route.edges().get(state.edgeIndex).supportedDiagonal()) {
+        if (locomotion.aerial()) desired = state.flightInputs.apply(desired, clientTick);
+        if (locomotion != Locomotion.WATER && !locomotion.aerial()
+                && !LocalObservationVolume.crouchDescendsScaffolding(player)
+                && (sneakWhileMoving || !state.route.edges().isEmpty() && state.edgeIndex < state.route.edges().size()
+                && state.route.edges().get(state.edgeIndex).supportedDiagonal())) {
             var crouched = desired.isEmpty() ? EnumSet.noneOf(MovementInputLease.MovementKey.class)
                     : EnumSet.copyOf(desired);
             crouched.add(MovementInputLease.MovementKey.CROUCH);
@@ -363,15 +395,76 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                     snapshot.worldRevision(),
                     remainingDistance,
                     new AgentInputState.NavigationIntent(
-                            new Vec3(
-                                    waypoint.x() + 0.5D,
-                                    waypoint.y() + player.getBbHeight() * 0.5D,
-                                    waypoint.z() + 0.5D),
+                            target,
                             verticalDelta,
                             locomotion,
                             waypointTolerance));
         }
         return runningNavigationResult(edge, !desired.isEmpty());
+    }
+
+    private TickResult tickAerialNavigation(Minecraft minecraft, LocalPlayer player,
+            KnownTraversabilitySnapshot map, LocalObservationVolume safety, double remaining,
+            long tick, BooleanSupplier allowed) {
+        var state = navigation;
+        var mode = Locomotion.aerialMode(player);
+        if (player.isPassenger() || player.isFallFlying()
+                || state.route.edges().stream().anyMatch(e -> e.locomotion() != mode))
+            return finish(Status.FAILED, Reason.UNSUPPORTED_LOCOMOTION);
+        var edges = state.route.edges();
+        if (edges.isEmpty()) {
+            if (!map.containsDestination(state.route.cells().getLast()))
+                return finish(Status.REPLAN_REQUIRED, Reason.ROUTE_EDGE_CHANGED);
+        } else if (edgeDecision(state.route, state.edgeIndex, map) == EdgeDecision.REPLAN) {
+            return finish(Status.REPLAN_REQUIRED, Reason.ROUTE_EDGE_CHANGED);
+        }
+        var target = edges.isEmpty() ? state.route.cells().getLast() : edges.get(state.edgeIndex).key().to();
+        boolean finalEdge = edges.isEmpty() || state.edgeIndex == edges.size() - 1;
+        double tolerance = finalEdge ? state.tolerance : INTERMEDIATE_WAYPOINT_TOLERANCE;
+        boolean reached = aerialWaypointReached(player.position(), target, tolerance);
+        if (reached && !finalEdge) {
+            state.edgeIndex++;
+            state.resetProgress();
+            target = edges.get(state.edgeIndex).key().to();
+            if (edgeDecision(state.route, state.edgeIndex, map) == EdgeDecision.REPLAN)
+                return finish(Status.REPLAN_REQUIRED, Reason.ROUTE_EDGE_CHANGED);
+        } else if (finalEdge) {
+            if (reached) state.resetProgress(); // Bounded settling is progress, even while inertia decays.
+            boolean current = safety.latestFor(player).filter(s -> s.worldRevision() == map.worldRevision()
+                    && s.current().loaded() == ObservationRecord.LoadedState.LOADED
+                    && s.current().hazard() == ObservationRecord.Hazard.NONE).isPresent();
+            // Confirm actual settled positions, as for ground movement. Vanilla may retain a
+            // velocity component that collision/input guards do not apply to the body.
+            boolean stable = state.lastSettlePosition != null
+                    && player.position().distanceToSqr(state.lastSettlePosition) <= SETTLE_DRIFT_EPSILON_SQUARED;
+            state.lastSettlePosition = player.position();
+            state.safeTicks = reached && current && stable
+                    ? state.safeTicks + 1 : 0;
+            if (state.safeTicks >= SETTLE_SAFETY_TICKS) return finish(Status.SUCCEEDED, Reason.NONE);
+            if (reached && current) {
+                // End owned motion before confirming arrival. Spectator's coarse horizontal
+                // impulses otherwise keep reversing around a target narrower than one impulse.
+                // Neutralize before releasing the lease, so the remaining tracked velocity
+                // does not become stale while natural drag settles external motion.
+                AgentInputState.global().neutralizeTrackedAgentVelocity(player);
+                releaseMovement();
+                if (!navigationOutputAllowed(++state.activeTicks, state.route.tickUpperBound()))
+                    return finish(Status.REPLAN_REQUIRED, Reason.PRIMITIVE_TICK_BUDGET_EXHAUSTED);
+                if (!allowed.getAsBoolean()) return finish(Status.REPLAN_REQUIRED, Reason.HARD_DEADLINE);
+                return TickResult.running(Reason.NONE);
+            }
+        }
+        if (!edges.isEmpty() && !insideRouteCorridor(player, edges.get(state.edgeIndex).key()))
+            return finish(Status.REPLAN_REQUIRED, Reason.PLAYER_OFF_ROUTE);
+        if (!player.getAbilities().flying && !reached)
+            return finish(Status.REPLAN_REQUIRED, Reason.UNSUPPORTED_LOCOMOTION);
+        return driveNavigationWaypoint(minecraft, player, map, safety, remaining, tick, allowed,
+                target, tolerance, Integer.compare(target.y(), Mth.floor(player.getY())), mode, EdgeDecision.PROBE);
+    }
+
+    static boolean aerialWaypointReached(Vec3 position, NavCell target, double tolerance) {
+        return Math.hypot(target.x() + 0.5D - position.x, target.z() + 0.5D - position.z) <= tolerance
+                && Math.abs(target.y() + Locomotion.FLIGHT_FEET_OFFSET - position.y) <= 0.19D;
     }
 
     private TickResult tickWaterDestination(Minecraft minecraft, LocalPlayer player,
@@ -383,7 +476,11 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
                 && s.current().fluid() == ObservationRecord.Fluid.WATER
                 && s.current().hazard() == ObservationRecord.Hazard.NONE
                 && !s.current().suffocation()).isPresent();
-        navigation.safeTicks = current && waterWaypointReached(player.getX(), player.getY(), player.getZ(),
+        // Keep the normal swim input at an exposed surface until oxygen recovers;
+        // releasing after position alone immediately lets vanilla sink the player again.
+        boolean breathingReady = waterBreathingRecovered(player.isEyeInFluid(net.minecraft.tags.FluidTags.WATER),
+                player.getAirSupply(), player.getMaxAirSupply());
+        navigation.safeTicks = current && breathingReady && waterWaypointReached(player.getX(), player.getY(), player.getZ(),
                 target, navigation.tolerance) ? navigation.safeTicks + 1 : 0;
         if (navigation.safeTicks >= SETTLE_SAFETY_TICKS) return finish(Status.SUCCEEDED, Reason.NONE);
         return driveNavigationWaypoint(minecraft, player, snapshot, safety, remaining, tick, allowed,
@@ -394,6 +491,9 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
     static boolean waterWaypointReached(double x, double y, double z, NavCell target, double tolerance) {
         return Math.hypot(target.x() + 0.5D - x, target.z() + 0.5D - z) <= tolerance
                 && Math.abs(target.y() - y) <= 0.20D;
+    }
+    public static boolean waterBreathingRecovered(boolean submerged, int air, int maximumAir) {
+        return submerged || air >= maximumAir;
     }
 
     /**
@@ -872,7 +972,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
             Locomotion locomotion) {
         double horizontal = Math.hypot(cell.x() + 0.5D - playerX, cell.z() + 0.5D - playerZ);
         return locomotion == Locomotion.GROUND
-                ? horizontal : Math.hypot(horizontal, cell.y() - playerY);
+                ? horizontal : Math.hypot(horizontal, cell.y() + (locomotion.aerial() ? Locomotion.FLIGHT_FEET_OFFSET : 0.0D) - playerY);
     }
 
     private static double navigationDistance(
@@ -894,7 +994,13 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
         var result = horizontal.isEmpty()
                 ? EnumSet.noneOf(MovementInputLease.MovementKey.class)
                 : EnumSet.copyOf(horizontal);
-        if (locomotion == Locomotion.WATER) {
+        if (locomotion.aerial()) {
+            // Vanilla's 0.15 vertical impulse and 0.6 drag settle in ~0.375-block increments.
+            // A smaller dead band can oscillate forever between the two nearest heights.
+            double error = remainingHeight - 2.5D * verticalVelocity;
+            if (error > 0.19D) result.add(MovementInputLease.MovementKey.JUMP);
+            else if (error < -0.19D) result.add(MovementInputLease.MovementKey.CROUCH);
+        } else if (locomotion == Locomotion.WATER) {
             // Brake the current water velocity before crossing the requested depth.
             double depthError = remainingHeight - (immersed ? 3.0D * verticalVelocity : 0.0D);
             if (depthError > 0.03D) result.add(MovementInputLease.MovementKey.JUMP);
@@ -1218,6 +1324,7 @@ public final class MinecraftActionPrimitiveExecutor implements AutoCloseable {
     }
 
     private static final class NavigateState extends ProgressState {
+        private final FlightInputSequence flightInputs = new FlightInputSequence();
         private final RoutePlan route;
         private final double tolerance;
         private int edgeIndex;

@@ -15,6 +15,17 @@ import java.util.Optional;
  * release can suppress output immediately; only a later lease heartbeat may drive it again.</p>
  */
 public final class AgentInputState {
+    private Object elytraPlayer, elytraLevel;
+    private long elytraUntil;
+    public synchronized void allowElytraDeployment(Object player, Object level, long until) {
+        elytraPlayer = player; elytraLevel = level; elytraUntil = until;
+    }
+    public synchronized boolean elytraDeploymentAllowed(Object player, Object level) {
+        return elytraPlayer == player && elytraLevel == level && System.nanoTime() - elytraUntil < 0;
+    }
+    public synchronized void clearElytraDeployment(Object player) {
+        if (elytraPlayer == player) { elytraPlayer = null; elytraLevel = null; elytraUntil = 0; }
+    }
     private static final AgentInputState GLOBAL = new AgentInputState();
 
     private MovementSnapshot movement = MovementSnapshot.unowned();
@@ -29,6 +40,7 @@ public final class AgentInputState {
     private NavigationIntent goalNavigationIntent;
     private boolean goalMovementCycleActive;
     private boolean goalMovementRejected;
+    private dev.aod.mcmcp.agent.safety.PortalEntryGeometry goalPortalIntent;
     private Vec3 agentVelocityContribution = Vec3.ZERO;
     private Object agentVelocityPlayerIdentity;
     private Object agentVelocityLevelIdentity;
@@ -40,8 +52,28 @@ public final class AgentInputState {
     private long attackValidUntilNanos;
     private boolean useOwned;
     private boolean useSuppressed;
+    private boolean useRestartSuppressed;
     private boolean useExpiryRequired;
     private long useValidUntilNanos;
+    private boolean pickOwned;
+    private boolean pickSuppressed;
+    private long pickValidUntilNanos;
+    private boolean actionDeadlineSet;
+    private long actionDeadlineNanos;
+
+    public synchronized void setActionDeadline(long deadlineNanos) {
+        actionDeadlineSet = true;
+        actionDeadlineNanos = deadlineNanos;
+    }
+
+    public synchronized void clearActionDeadline() {
+        actionDeadlineSet = false;
+    }
+
+    private boolean actionExpired(long nowNanos) {
+        return actionDeadlineSet && nowNanos - actionDeadlineNanos >= 0L;
+    }
+
     private boolean paused;
     private long pauseStartedAtNanos;
     private long accumulatedPauseNanos;
@@ -135,7 +167,14 @@ public final class AgentInputState {
         goalMovementAllowance = distanceAllowance;
         goalRecoveryIntent = null;
         goalNavigationIntent = null;
+        goalPortalIntent = null;
         goalMovementCycleActive = true;
+    }
+
+    public synchronized void requirePortalMovementSafety(Object player, Object level,
+            long revision, double allowance, dev.aod.mcmcp.agent.safety.PortalEntryGeometry intent) {
+        requireGoalMovementSafety(player, level, revision, allowance);
+        goalPortalIntent = Objects.requireNonNull(intent);
     }
 
     public synchronized void requireNavigationMovementSafety(
@@ -167,7 +206,8 @@ public final class AgentInputState {
                 goalMovementWorldRevision,
                 goalMovementAllowance,
                 goalRecoveryIntent,
-                goalNavigationIntent);
+                goalNavigationIntent,
+                goalPortalIntent);
     }
 
     public synchronized Optional<GoalMovementProof> goalMovementProofFor(
@@ -187,8 +227,9 @@ public final class AgentInputState {
     /** Captures expired Agent motion before Entity.move recomputes the external-only delta. */
     public synchronized MovementBoundary movementBoundary(LocalPlayer player) {
         Objects.requireNonNull(player, "player");
-        boolean expired = movement.owned() && movementExpiryRequired && !paused
-                && watchdogTime(System.nanoTime()) - movementValidUntilNanos >= 0L;
+        boolean expired = movement.owned() && (actionExpired(System.nanoTime())
+                || movementExpiryRequired && !paused
+                && watchdogTime(System.nanoTime()) - movementValidUntilNanos >= 0L);
         if (!expired) {
             return new MovementBoundary(goalMovementOutputActive(), false, Vec3.ZERO, false);
         }
@@ -230,6 +271,9 @@ public final class AgentInputState {
                         || agentVelocityLevelIdentity != levelIdentity)) {
             clearAgentVelocityContribution();
         }
+        // Idle vanilla ticks must not recreate an Agent owner after verified release.
+        if (!goalMovementOutputActive() && agentVelocityPlayerIdentity == null
+                && agentVelocityLevelIdentity == null) return;
         agentVelocityPlayerIdentity = Objects.requireNonNull(playerIdentity, "playerIdentity");
         agentVelocityLevelIdentity = Objects.requireNonNull(levelIdentity, "levelIdentity");
         agentMoveContribution = agentVelocityContribution;
@@ -340,6 +384,7 @@ public final class AgentInputState {
 
     /** Releases ownership. Physical input is left untouched once the lease no longer owns it. */
     public synchronized void releaseMovement() {
+        elytraPlayer = null; elytraLevel = null; elytraUntil = 0;
         movement = MovementSnapshot.unowned();
         movementSuppressed = false;
         movementExpiryRequired = false;
@@ -469,6 +514,7 @@ public final class AgentInputState {
     }
 
     public synchronized void publishUse(long validUntilNanos) {
+        if (!useOwned) useRestartSuppressed = false;
         useOwned = true;
         useSuppressed = false;
         useExpiryRequired = true;
@@ -478,8 +524,21 @@ public final class AgentInputState {
     public synchronized void releaseUse() {
         useOwned = false;
         useSuppressed = false;
+        useRestartSuppressed = false;
         useExpiryRequired = false;
         useValidUntilNanos = 0L;
+    }
+
+    public synchronized void publishPick(long validUntilNanos) {
+        pickOwned = true;
+        pickSuppressed = false;
+        pickValidUntilNanos = validUntilNanos;
+    }
+
+    public synchronized void releasePick() {
+        pickOwned = false;
+        pickSuppressed = false;
+        pickValidUntilNanos = 0L;
     }
 
     /** Neutralizes all agent channels until their owning leases explicitly publish again. */
@@ -490,6 +549,9 @@ public final class AgentInputState {
         }
         if (useOwned) {
             useSuppressed = true;
+        }
+        if (pickOwned) {
+            pickSuppressed = true;
         }
     }
 
@@ -509,6 +571,9 @@ public final class AgentInputState {
         if (useOwned) {
             useSuppressed = true;
         }
+        if (pickOwned) {
+            pickSuppressed = true;
+        }
     }
 
     /** A measured snapshot used before publishing any terminal input-release receipt. */
@@ -525,7 +590,8 @@ public final class AgentInputState {
                 || agentMoveContribution.lengthSqr() > 0.0D
                 || agentVelocityReset;
         return new InputOwnershipSnapshot(
-                movement.owned(), attackOwned, useOwned, goalProofRetained, velocityTracked);
+                movement.owned(), attackOwned, useOwned, pickOwned,
+                goalProofRetained, velocityTracked);
     }
 
     public synchronized boolean inputOwnerNone() {
@@ -542,6 +608,21 @@ public final class AgentInputState {
         return useOwned && !useSuppressed && !paused;
     }
 
+    /** Keep an already-started item held without triggering another use when it finishes. */
+    public synchronized void suppressUseRestart() {
+        if (!useOwned) throw new IllegalStateException("single use requires an owned lease");
+        useRestartSuppressed = true;
+    }
+
+    public synchronized boolean useMayStart() {
+        return useActive() && !useRestartSuppressed;
+    }
+
+    public synchronized boolean pickActive() {
+        expireButtonsIfNeeded(System.nanoTime());
+        return pickOwned && !pickSuppressed && !paused;
+    }
+
     public synchronized MovementSnapshot movementSnapshot() {
         return movementSnapshot(System.nanoTime());
     }
@@ -549,8 +630,9 @@ public final class AgentInputState {
     /** Enforces the watchdog at the real input boundary and removes any stale Agent inertia. */
     public synchronized MovementSnapshot movementSnapshot(LocalPlayer player) {
         Objects.requireNonNull(player, "player");
-        boolean expired = movement.owned() && movementExpiryRequired && !paused
-                && watchdogTime(System.nanoTime()) - movementValidUntilNanos >= 0L;
+        boolean expired = movement.owned() && (actionExpired(System.nanoTime())
+                || movementExpiryRequired && !paused
+                && watchdogTime(System.nanoTime()) - movementValidUntilNanos >= 0L);
         if (expired) {
             boolean rejectGoal = goalMovementCycleActive;
             neutralizeTrackedAgentVelocity(player);
@@ -579,8 +661,9 @@ public final class AgentInputState {
     }
 
     private void expireMovementIfNeeded(long nowNanos) {
-        if (!movement.owned() || !movementExpiryRequired || paused
-                || watchdogTime(nowNanos) - movementValidUntilNanos < 0L) {
+        if (!movement.owned() || !actionExpired(nowNanos)
+                && (!movementExpiryRequired || paused
+                || watchdogTime(nowNanos) - movementValidUntilNanos < 0L)) {
             return;
         }
         boolean rejectGoal = goalMovementCycleActive;
@@ -591,6 +674,10 @@ public final class AgentInputState {
     }
 
     private void expireButtonsIfNeeded(long nowNanos) {
+        if (actionExpired(nowNanos)) {
+            suppressAllRetainingTrackedVelocity();
+            return;
+        }
         long watchdogNow = watchdogTime(nowNanos);
         if (attackOwned && attackExpiryRequired && !paused
                 && watchdogNow - attackValidUntilNanos >= 0L) {
@@ -599,6 +686,9 @@ public final class AgentInputState {
         if (useOwned && useExpiryRequired && !paused
                 && watchdogNow - useValidUntilNanos >= 0L) {
             useSuppressed = true;
+        }
+        if (pickOwned && !paused && watchdogNow - pickValidUntilNanos >= 0L) {
+            pickSuppressed = true;
         }
     }
 
@@ -654,6 +744,7 @@ public final class AgentInputState {
         goalMovementAllowance = 0.0D;
         goalRecoveryIntent = null;
         goalNavigationIntent = null;
+        goalPortalIntent = null;
     }
 
     private void invalidateGoalMovementCycle() {
@@ -725,13 +816,14 @@ public final class AgentInputState {
             long worldRevision,
             double distanceAllowance,
             RecoveryIntent recoveryIntent,
-            NavigationIntent navigationIntent) {
+            NavigationIntent navigationIntent,
+            dev.aod.mcmcp.agent.safety.PortalEntryGeometry portalIntent) {
         public GoalMovementProof(
                 Object playerIdentity,
                 Object levelIdentity,
                 long worldRevision,
                 double distanceAllowance) {
-            this(playerIdentity, levelIdentity, worldRevision, distanceAllowance, null, null);
+            this(playerIdentity, levelIdentity, worldRevision, distanceAllowance, null, null, null);
         }
 
         public GoalMovementProof(
@@ -746,11 +838,13 @@ public final class AgentInputState {
                     worldRevision,
                     distanceAllowance,
                     recoveryIntent,
+                    null,
                     null);
         }
 
         public GoalMovementProof {
-            if (recoveryIntent != null && navigationIntent != null) {
+            if ((recoveryIntent == null ? 0 : 1) + (navigationIntent == null ? 0 : 1)
+                    + (portalIntent == null ? 0 : 1) > 1) {
                 throw new IllegalArgumentException("movement proof cannot have two intents");
             }
         }
@@ -764,7 +858,11 @@ public final class AgentInputState {
             Vec3 target,
             int verticalDelta,
             Locomotion locomotion,
-            double horizontalTolerance) {
+            double horizontalTolerance,
+            dev.aod.mcmcp.agent.safety.GroundTraversal groundTraversal) {
+        public NavigationIntent(Vec3 target, int verticalDelta, Locomotion locomotion, double tolerance) {
+            this(target, verticalDelta, locomotion, tolerance, null);
+        }
         public NavigationIntent(Vec3 target, int verticalDelta) {
             this(target, verticalDelta, Locomotion.GROUND);
         }
@@ -776,6 +874,9 @@ public final class AgentInputState {
         public NavigationIntent {
             target = finiteVector(Objects.requireNonNull(target, "target"));
             Objects.requireNonNull(locomotion, "locomotion");
+            if (locomotion.ballistic() != (groundTraversal != null)
+                    || groundTraversal != null && groundTraversal.mode() != locomotion)
+                throw new IllegalArgumentException("ballistic intent requires its exact corridor");
             if (verticalDelta < -1 || verticalDelta > 1) {
                 throw new IllegalArgumentException("vertical delta must be within -1..1");
             }
@@ -830,6 +931,7 @@ public final class AgentInputState {
             boolean movementOwned,
             boolean attackOwned,
             boolean useOwned,
+            boolean pickOwned,
             boolean goalProofRetained,
             boolean velocityTracked) {
         public InputOwnershipSnapshot(
@@ -837,11 +939,12 @@ public final class AgentInputState {
                 boolean attackOwned,
                 boolean goalProofRetained,
                 boolean velocityTracked) {
-            this(movementOwned, attackOwned, false, goalProofRetained, velocityTracked);
+            this(movementOwned, attackOwned, false, false,
+                    goalProofRetained, velocityTracked);
         }
 
         public boolean ownerNone() {
-            return !movementOwned && !attackOwned && !useOwned
+            return !movementOwned && !attackOwned && !useOwned && !pickOwned
                     && !goalProofRetained && !velocityTracked;
         }
     }

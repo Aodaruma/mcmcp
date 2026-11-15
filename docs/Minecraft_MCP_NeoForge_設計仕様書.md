@@ -1,5 +1,7 @@
 # MCMCP NeoForge — Minecraft MCP Client MOD 設計・仕様書
 
+> この文書の公開5 Tool・Action DSLに関する記述は、旧v1実装と既存試験の仕様記録です。0.2.0-rc.1の公開面は17ツールのv2へ移行し、[現行catalog](MCMCP_MCP_Tool_Catalog.json)・[公開API v2](PUBLIC_API_V2.md)・[クイックガイド](MCMCP_Public_API_v2_クイックガイド.md)を優先します。旧DSLを現行の公開機能として扱わず、[受入範囲と残件](experiments/20261115_release_rc1.md)を参照してください。
+
 - 文書版: 0.8
 - 作成日: 2026-08-26
 - 状態: 実装中、評価MCP hostはCodex CLI 0.146.1に固定
@@ -524,6 +526,8 @@ scoreboard、chat、看板、本を禁止した理由は、worldまたはserver�
 - bearer tokenやlocal fileの要求
 
 初版のMCP resultとaudit logにはこれらの本文を含めない。resource locationであるsound event IDもdataとしてのみ扱う。
+
+2026-10-11のv2拡張では、明示的な [チャット読取り](PUBLIC_API_V2_CHAT_20261011.md) と [可視看板文字・任意client NBT](PUBLIC_API_V2_SIGN_NBT_20261011.md) を上記初版制限の例外として公開する。originと未信頼属性を付けた有界データに限定し、文章からの権限変更・自動実行を引き続き禁止する。NBTは現在の可視性を再検証したブロックのclient update-tagだけで、server内部照会・NBT書込み・未観測ブロック検索は追加しない。看板とNBTは取得時点の補足であり、保存済みframeの地形情報の時刻を変更しない。
 
 ### 7.7 禁止する情報とAPI
 
@@ -1094,7 +1098,7 @@ agent_get_stateの返却対象:
 - 最新immutable observation frameのID、範囲、鮮度、coverage、kind別件数
 - 現在または直近action_idと終了理由
 
-生chunk、遮蔽されたentity、chat、看板、本、world seed、tokenはTool resultへ含めない。例外としてautomation-ownedな明示allowlist対象Vanilla chest / barrelを通常useで開いた直後のserver full-content packetから作るbounded item集計だけは、そのActionのtraceへ一時的に返せる。許可された観測recordだけを`agent_get_observation`で最大256件ずつ返す。Action traceはagent_get_actionで最大256件まで返す。既に行った移動、破壊、設置、攻撃、item消費はtransactionではなく、cancel時に自動rollbackしない。不可逆primitiveは実行直前にも観測、capability、budgetを再検証する。
+生chunk、遮蔽されたentity、本、world seed、tokenはTool resultへ含めない。chat・看板と任意client NBTは§7.6のv2拡張で定める有界な未信頼データとしてのみ公開する。例外としてautomation-ownedな明示allowlist対象Vanilla chest / barrelを通常useで開いた直後のserver full-content packetから作るbounded item集計だけは、そのActionのtraceへ一時的に返せる。許可された観測recordだけを`agent_get_observation`で最大256件ずつ返す。Action traceはagent_get_actionで最大256件まで返す。既に行った移動、破壊、設置、攻撃、item消費はtransactionではなく、cancel時に自動rollbackしない。不可逆primitiveは実行直前にも観測、capability、budgetを再検証する。
 
 #### 手持ちアイテムの公開情報
 
@@ -1388,6 +1392,8 @@ MOD menuは次の2種類に分ける。
 すべてのadapterは、通常use / menu openの因果ACK、exact menu ownership、cursorを変化させるclick直前のcursor証明失効とfresh server cursor証明、cursor-invariantなQUICK_MOVEでは直前のserver-confirmed empty cursor維持、絶対inventory差分、有限budget、Esc / UI OFF / world境界、terminal前のScreen・cursor・camera・slot解放を9.6と共通の必須条件とする。途中まで消費・生成されたitemをrollbackしたふりはせず、最初のterminal intentとauthoritative inventoryを保持する。cleanupが証明できない場合は成功・失敗を公開せず、入力隔離を維持してfail closedにする。
 
 #### 9.7.1 共通収納操作（#70候補・実機未検証）
+
+v2の公開経路は`agent_inventory(target="storage", storage_slot=...)`と座標収納操作であり、以下の旧DSL用`known_storages`／`storage_inspection` stateは公開しない。共通provider・移送・cleanup実行器を再利用し、v2のplaced bag・PICKUP容量・保護slot・R23の解放契約を維持する。
 
 利用者の方針変更を受け、[Issue #70](https://github.com/Aodaruma/mcmcp/issues/70)で既存の共通Menu基盤を拡張した。公開Toolは5本のまま、既存`operate_known_menu`へ汎用の`inspect` / `take` / `store`を追加する。MODごとの移送エンジンは作らず、Vanillaの`ExactInventoryTransfer`を両方向の数量計画・照合に再利用する。本節は候補実装の仕様であり、mainの配布版および実機合格とは区別する。
 

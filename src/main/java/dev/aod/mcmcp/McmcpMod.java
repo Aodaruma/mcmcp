@@ -5,6 +5,7 @@ import dev.aod.mcmcp.client.AutomationIndicatorController;
 import dev.aod.mcmcp.client.AgentBlockBreakChannel;
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.client.AgentMovementInput;
+import dev.aod.mcmcp.client.AgentPickInputChannel;
 import dev.aod.mcmcp.client.AgentUseInputChannel;
 import dev.aod.mcmcp.client.InputIsolationController;
 import dev.aod.mcmcp.client.McmcpClientConfig;
@@ -49,6 +50,7 @@ public final class McmcpMod {
     private final AgentInputState agentInput = AgentInputState.global();
     private final AgentBlockBreakChannel agentBlockBreak = new AgentBlockBreakChannel(agentInput);
     private final AgentUseInputChannel agentUse = new AgentUseInputChannel(agentInput);
+    private final AgentPickInputChannel agentPick = new AgentPickInputChannel(agentInput);
     private final ScreenOwnershipSignals screenOwnership = ScreenOwnershipSignals.global();
 
     public McmcpMod(IEventBus modEventBus, ModContainer modContainer) {
@@ -60,6 +62,8 @@ public final class McmcpMod {
         screenOwnership.setFailureHandler(runtime::onScreenOwnershipFailure);
 
         modContainer.registerConfig(ModConfig.Type.CLIENT, McmcpClientConfig.SPEC);
+        modContainer.registerExtensionPoint(net.neoforged.neoforge.client.gui.IConfigScreenFactory.class,
+                net.neoforged.neoforge.client.gui.ConfigurationScreen::new);
         modEventBus.addListener(automationIndicator::onRegisterGuiLayers);
         var eventBus = NeoForge.EVENT_BUS;
         eventBus.addListener(this::onClientStarted);
@@ -81,6 +85,7 @@ public final class McmcpMod {
         eventBus.addListener(this::onScreenOpening);
         eventBus.addListener(this::onScreenClosing);
         eventBus.addListener(automationIndicator::onScreenInit);
+        eventBus.addListener(dev.aod.mcmcp.client.AgentChatOptions::onScreenInit);
         eventBus.addListener(this::onClientStopping);
         eventBus.addListener(this::onClientStopped);
 
@@ -111,6 +116,7 @@ public final class McmcpMod {
         runtime.onPostTick(minecraft);
         // Use is emitted only after the runtime's current-tick target/item/safety reproof.
         agentUse.onClientPostTick(minecraft);
+        agentPick.onClientPostTick(minecraft);
     }
 
     private void onLoggingIn(ClientPlayerNetworkEvent.LoggingIn event) {
@@ -129,7 +135,7 @@ public final class McmcpMod {
 
     private void onPlayerClone(ClientPlayerNetworkEvent.Clone event) {
         AgentMovementInput.install(event.getNewPlayer(), Minecraft.getInstance().options);
-        runtime.onPlayerClone(Minecraft.getInstance());
+        runtime.onPlayerClone(Minecraft.getInstance(), event.getOldPlayer().getHealth() > 0);
     }
 
     private void onLevelUnload(LevelEvent.Unload event) {

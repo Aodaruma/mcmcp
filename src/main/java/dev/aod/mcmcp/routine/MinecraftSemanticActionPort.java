@@ -1253,8 +1253,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
 
     private boolean visibleThreatClear(Minecraft minecraft, LocalPlayer player, ClientLevel level) {
         return level.getEntities(player, player.getBoundingBox().inflate(THREAT_RADIUS),
-                        entity -> entity.isAlive() && (entity instanceof Enemy
-                                || entity instanceof Mob mob && mob.getTarget() == player))
+                        entity -> entity.isAlive() && (dev.aod.mcmcp.agent.safety.ObservedThreats.attacking(entity, player)))
                 .stream().noneMatch(entity -> observations.isEntityCurrentlyVisible(
                         minecraft, entity, THREAT_RADIUS));
     }
@@ -1448,7 +1447,7 @@ public final class MinecraftSemanticActionPort implements SemanticActionPort {
                         && sample.outcome() == BlockOutcome.CURRENT);
     }
 
-    static boolean isNavigationHazard(BlockState state) {
+    public static boolean isNavigationHazard(BlockState state) {
         var block = state.getBlock();
         return state.is(Blocks.LAVA) || state.is(Blocks.FIRE) || state.is(Blocks.SOUL_FIRE)
                 || state.is(Blocks.CACTUS) || state.is(Blocks.POWDER_SNOW)

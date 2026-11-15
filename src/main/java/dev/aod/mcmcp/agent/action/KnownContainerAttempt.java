@@ -28,6 +28,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
     private ContainerInspection.Contents pendingInspection;
     private boolean successReleased;
     private boolean closed;
+    private Map<String, Object> lastProgressEvidence = Map.of();
     private final ArrayList<EffectDelta> pendingEffects = new ArrayList<>(2);
     private boolean transferConfirmed;
     private boolean unknownTransferRecorded;
@@ -273,6 +274,34 @@ public final class KnownContainerAttempt implements AutoCloseable {
         }
     }
 
+    /** Small public diagnostics only; never expose the adapter's slot/target evidence wholesale. */
+    public Map<String, Object> progressEvidence() {
+        if (closed) {
+            var result = new java.util.LinkedHashMap<>(lastProgressEvidence);
+            result.putAll(Map.of("phase", "terminal", "release_pending", false,
+                    "release_confirmed", true, "release_fault", false));
+            return Map.copyOf(result);
+        }
+        if (attempt == null) return Map.of("phase", "not_started");
+        var basis = port.evidence(attempt).basis();
+        var result = new java.util.LinkedHashMap<String, Object>();
+        for (String key : List.of("phase", "awaiting_open_evidence", "wait_reason", "failure",
+                "release_pending", "release_confirmed", "release_fault", "release_reason",
+                "release_server_cursor", "cursor_return_sent")) {
+            Object value = basis.get(key);
+            if (value instanceof String || value instanceof Boolean) result.put(key, value);
+        }
+        for (String key : List.of("release_tick", "release_server_revision",
+                "release_cursor_revision", "release_dispatch_revision")) {
+            Object value = basis.get(key);
+            if ((value instanceof Long || value instanceof Integer) && ((Number) value).longValue() >= 0) {
+                result.put(key, ((Number) value).longValue());
+            }
+        }
+        lastProgressEvidence = Map.copyOf(result);
+        return lastProgressEvidence;
+    }
+
     @Override
     public void close() {
         if (closed) return;
@@ -280,6 +309,7 @@ public final class KnownContainerAttempt implements AutoCloseable {
         recordConfirmedPrefix();
         recordUnknownTransfer();
         if (attempt != null) port.release(attempt);
+        try { progressEvidence(); } catch (RuntimeException | LinkageError ignored) { }
         port.retire(request);
         closed = true;
     }

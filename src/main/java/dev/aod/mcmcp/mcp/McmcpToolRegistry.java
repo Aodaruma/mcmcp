@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.UUID;
 
-/** Fixed five-tool catalog plus the narrow bridge to the Minecraft client runtime. */
+/** Public tool catalog plus the narrow bridge to the Minecraft client runtime. */
 public final class McmcpToolRegistry {
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().serializeNulls().create();
     private static final Duration ACTION_WAIT_DISPATCH_HEADROOM = Duration.ofSeconds(2);
@@ -35,6 +35,9 @@ public final class McmcpToolRegistry {
     private final Duration runtimeDispatchTimeout;
     private final McpToolCatalog catalog = new McpToolCatalog();
     private final Semaphore terminalWaitAdmission = new Semaphore(1);
+    private static final Set<String> ACTION_TOOLS = Set.of("agent_move", "agent_look", "agent_break_block",
+            "agent_place_block", "agent_interact", "agent_chat", "agent_inventory", "agent_craft",
+            "agent_click", "agent_input_sequence", "agent_run_script", "agent_build");
 
     public McmcpToolRegistry(McpRuntimePort runtimePort, Duration runtimeDispatchTimeout) {
         this.runtimePort = Objects.requireNonNull(runtimePort, "runtimePort");
@@ -90,7 +93,33 @@ public final class McmcpToolRegistry {
                     true), null, evaluationLeaseExpectation);
         }
 
-        return dispatch(name, command(name, arguments), evaluationLeaseExpectation, elicitationInput);
+        JsonObject runtimeArguments = arguments;
+        if (ACTION_TOOLS.contains(name) && arguments.has("wait_timeout_ms")) {
+            runtimeArguments = arguments.deepCopy();
+            runtimeArguments.remove("wait_timeout_ms");
+        }
+        return dispatch(name, command(name, runtimeArguments), evaluationLeaseExpectation, elicitationInput);
+    }
+
+    static int completionWaitMillis(String name, JsonObject arguments, PreparedCall prepared) {
+        if (!ACTION_TOOLS.contains(name) || !(prepared.deliveryReceipt() instanceof McpRuntimePort.ActionDeliveryReceipt)) return 0;
+        if (arguments.has("wait_timeout_ms")) return arguments.get("wait_timeout_ms").getAsInt();
+        boolean region = java.util.stream.Stream.of("dx", "dy", "dz")
+                .anyMatch(key -> arguments.has(key) && arguments.get(key).getAsInt() != 0);
+        return name.equals("agent_run_script") || name.equals("agent_build") || region ? 0 : 20_000;
+    }
+
+    JsonObject pollCompletion(PreparedCall started, int waitMillis) {
+        var receipt = (McpRuntimePort.ActionDeliveryReceipt) started.deliveryReceipt();
+        return dispatch("agent_get_action", new McpRuntimePort.GetAction(Map.of(
+                "action_id", receipt.actionId().toString(), "include_result", true, "wait_timeout_ms", waitMillis)),
+                started.evaluationLeaseExpectation(), RuntimeCallContext.ElicitationInput.unsupported()).response();
+    }
+
+    void cancelDelivery(PreparedCall started) {
+        if (started.deliveryReceipt() instanceof McpRuntimePort.ActionDeliveryReceipt action)
+            submitDelivery(new McpRuntimePort.CancelAction(Map.of("action_id", action.actionId().toString())),
+                    started.evaluationLeaseExpectation());
     }
 
     private PreparedCall dispatch(
@@ -305,7 +334,18 @@ public final class McmcpToolRegistry {
     }
 
     private static UUID deliveryActionId(String toolName, Map<String, Object> data) {
-        if (!"agent_start_action".equals(toolName)) return null;
+        if (!"agent_move".equals(toolName)
+                && !"agent_look".equals(toolName)
+                && !"agent_break_block".equals(toolName)
+                && !"agent_place_block".equals(toolName)
+                && !"agent_interact".equals(toolName)
+                && !"agent_chat".equals(toolName)
+                && !"agent_inventory".equals(toolName)
+                && !"agent_craft".equals(toolName)
+                && !"agent_click".equals(toolName)
+                && !"agent_input_sequence".equals(toolName)
+                && !"agent_run_script".equals(toolName)
+                && !"agent_build".equals(toolName)) return null;
         Object value = data.get("action_id");
         if (!(value instanceof String actionId)) return null;
         try {
@@ -319,8 +359,20 @@ public final class McmcpToolRegistry {
         Map<String, Object> values = jsonMap(arguments);
         return switch (name) {
             case "agent_get_state" -> new McpRuntimePort.GetState(values);
+            case "agent_get_mcp_status" -> new McpRuntimePort.GetMcpStatus();
             case "agent_get_observation" -> new McpRuntimePort.GetObservation(values);
-            case "agent_start_action" -> new McpRuntimePort.StartAction(values);
+            case "agent_move" -> new McpRuntimePort.StartMove(values);
+            case "agent_look" -> new McpRuntimePort.StartLook(values);
+            case "agent_break_block" -> new McpRuntimePort.StartBreakBlock(values);
+            case "agent_place_block" -> new McpRuntimePort.StartPlaceBlock(values);
+            case "agent_chat" -> new McpRuntimePort.Chat(values);
+            case "agent_interact" -> new McpRuntimePort.StartInteract(values);
+            case "agent_inventory" -> new McpRuntimePort.StartInventory(values);
+            case "agent_craft" -> new McpRuntimePort.StartCraft(values);
+            case "agent_click" -> new McpRuntimePort.StartClick(values);
+            case "agent_input_sequence" -> new McpRuntimePort.StartInputSequence(values);
+            case "agent_run_script" -> new McpRuntimePort.StartScript(values);
+            case "agent_build" -> new McpRuntimePort.Build(values);
             case "agent_get_action" -> new McpRuntimePort.GetAction(values);
             case "agent_cancel_action" -> new McpRuntimePort.CancelAction(values);
             default -> throw new AssertionError("Catalog and dispatch table diverged");

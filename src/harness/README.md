@@ -1,5 +1,84 @@
 # MCMCP Phase 1–5 test fixture
 
+## v2 priorities fixture (2026-10-09)
+
+The additional `-Dmcmcp.fixture.v2Priorities=true` flag enables fixed test preparation through
+`config/mcmcp-v2-priorities/request.txt`. Write a fresh integer followed by a colon and one of
+`components`, `cake`, `cancel`, `blueprint`, `inventory`, `water`, `water_air`, `boat`, `minecart`, `horse`, `mod_break`,
+`trade`, `trade_full`, `trade_change`, `elytra_step`, `mechanisms`, `dimension_end`, `dimension_overworld`,
+`ladder_down`, `ladder_long`, `ladder_up`, `ladder_long_up`, `ladder_gap`, `ladder_enclosed`,
+`storage_plain`, `storage_upgraded`, `storage_tab`, `waystones`, or `report`.
+The receipt is written to `receipt.json`. This accepts no commands, paths, coordinates or item IDs.
+It uses the same private integrated-server owner checks below. Production JARs do not include it.
+
+These cases replace blocks in **300,100,300 through 320,108,320**, remove tagged fixture vehicles,
+and replace the player's inventory, position, mode and effects. Back up the entire disposable world
+and profile settings first, then restore them after testing. `report` only reads server inventory,
+cursor, position, air, health, ground/climbable flags, dimension and the fixed merchant/vehicle state.
+Submit new setup requests only when the previous public job has terminated.
+Setup never enables MCP: the user must press the game's normal status button before the smoke runner.
+Run `tools/eval/Invoke-McmcpV2PrioritiesSmoke.ps1` with the matching case, explicit world session and
+a fresh artifact directory. `water` supplies water breathing; `water_air` starts underwater with 120 air,
+so run its retreat test immediately. `cake`/`cancel` use the existing production smoke cases.
+
+The ladder cases additionally clear **300,101,300 through 320,115,320**. They prepare an east-facing
+ladder at x=305, z=305 between feet heights 101 and 104 (short) or 112 (long). Downward cases start
+at x=305.5814, z=304.7269 on the upper floor lip. Upward cases start at x=306.5, z=305.5 on the lower
+floor. `ladder_gap` removes the rung at y=102. `ladder_enclosed` surrounds the long ladder's upper
+entry with walls and starts at x=305.456794159, z=304.508786297 to reproduce shoulder collision
+against the ladder's thin side. Use only a backed-up disposable world.
+Run `tools/eval/Invoke-McmcpV2LadderSmoke.ps1 -TokenPath <private-token-file> -Endpoint <endpoint>
+-ExpectedWorldSession <session> -ArtifactDirectory <fresh-directory> -LadderCase <case>` after setup.
+Cases `Down`, `LongDown`, `Up`, `LongUp`, `Gap` match those five preparations. `Cancel` uses
+`ladder_long`; `TickLimit` uses `ladder_down`; `Enclosed` and `FarGoal` use `ladder_enclosed`.
+`FarGoal` targets the lower floor at 313,101,301, with replanning enabled, 40 blocks and 800 ticks.
+The runner checks the full public catalog, session,
+fixture bounds, health, terminal status and idle control; issue `report` afterward for server-side
+landing evidence. Cancellation releases inputs and does not freeze Vanilla ladder gravity.
+
+The storage cases initialize a netherite backpack in player slot 6 and put 32 black concrete in the
+player inventory. `storage_plain` puts 64 white and 64 black concrete into the bag. `storage_upgraded`
+adds two tier-2 and one tier-1 stack upgrades, pickup and magnet upgrades, and stores 2048 white
+concrete. `storage_tab` also leaves pickup tab 3 open. Setup removes dropped items only within
+300,100,300 through 320,115,320 to prevent fixture leftovers from entering pickup/magnet storage.
+`report` includes storage quantities, upgrade slots and open-tab identity for server-side comparison.
+Use `Invoke-McmcpV2BackpackSmoke.ps1 -BackpackCase Plain|Upgraded|Tab|Cancel|Budget` with the same
+token/session/artifact arguments. The last two cases use `storage_tab`; compare server reports
+before/after for unchanged upgrades and an empty cursor. Runner availability is not a live pass.
+
+`waystones` additionally rebuilds the End platform at 300,100,300 through 320,104,320, places and
+activates named waystones at 309,101,309 in both dimensions, and gives a warp stone in hotbar 7
+with 30 experience levels. It does not select a destination or change any cooldown configuration.
+`report` can read the fixed private End fixture; setup still requires the Overworld owner boundary.
+Back up the entire world, including MOD saved data and both dimensions, before this preparation.
+
+## 弓cleanupの故障注入（#90）
+
+検証専用の `BowFaultMixin` は、弓取消のslot送信または発射処理の直前に1回だけ例外を投げる。
+入力・発射を追加せず、製品の結果も書き換えない。
+`-Dmcmcp.testHarness=true -Dmcmcp.fixture.v2Priorities=true` を有効にし、既存のprivateな
+`recovery_equipment_bow` を使う。番号付きのsetup要求前に、次の1モードだけを
+`config/mcmcp-v2-priorities/bow-fault.txt` へ書く。
+
+- `cancel_first_runtime`, `cancel_second_runtime`, `fire_runtime`
+- `cancel_first_linkage`, `cancel_second_linkage`, `fire_linkage`
+
+制御ファイルは64 byteまで。symlink、未知の値、複数要求を拒否し、明示認可されたsetup時だけ読む。
+空・欠落なら注入しない。armは180秒で失効し、毎回同じclient player/level、private integrated server、
+単独のsingleplayer owner、Agent所有のuse leaseを要求する。他caseのsetupで解除し、新しいsetupまで再注入しない。
+
+T0前に新しい番号の `report` で `bow_fault.mode` と `fired:false` を確認する。
+公開MCPで通常の有限移動・回復を開始する。取消モードではcombat ownerが弓を引く間に公開cancelを送り、
+発射モードでは通常の発射まで待つ。Action中にfixture commandやGUI観測を加えない。
+全Actionのterminal後に新しい番号の `report` を出すと、注入点、入力所有・channel解放、local使用状態、
+注入時とreport時の矢の所持数・弓耐久を返す。通常のserver inventory報告と公開control状態も照合する。
+`input_owner_none` は追跡velocity台帳も含み、`input_channels_none` は入力channelの解放を別に示す。
+falseを解放成功の証拠へ読み替えない。
+
+受入後は退避したworld/config/MODを復元し、故障制御ファイルを削除する。
+
+## Original fixed arenas
+
 This source set is a destructive development fixture, not part of the production mod. It is
 enabled only by `-Dmcmcp.testHarness=true` (the Gradle `harnessClient` run supplies this).
 Its common entrypoint only registers a server-side GameTest; the command entrypoint is physically

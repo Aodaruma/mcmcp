@@ -1,0 +1,686 @@
+{
+  "phase": "G",
+  "api_checks_passed": true,
+  "failure": null,
+  "terminal": {
+    "schema_version": 2,
+    "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+    "kind": "input_sequence",
+    "state": "succeeded",
+    "progress": {
+      "completed_operations": 399,
+      "max_operations": 400,
+      "remaining_seconds": 0.0,
+      "elapsed_seconds": 20.0006649,
+      "max_duration_seconds": 19.9999781
+    },
+    "stop_reason": "duration_elapsed",
+    "cancel_requested": false,
+    "failure": null,
+    "result": {
+      "stop_reason": "duration_elapsed"
+    }
+  },
+  "events": [
+    {
+      "utc": "2026-09-29T05:40:53.4341429Z",
+      "job": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+          "kind": "input_sequence",
+          "state": "running",
+          "progress": {
+            "completed_operations": 166,
+            "max_operations": 400,
+            "remaining_seconds": 11.697209,
+            "elapsed_seconds": 8.3027691,
+            "max_duration_seconds": 19.9999781
+          },
+          "stop_reason": null,
+          "cancel_requested": false,
+          "failure": null,
+          "result": {
+            "phase": "holding"
+          }
+        }
+      },
+      "control": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "control_mode": "agent",
+          "game_paused": false,
+          "ready_expires_at": null,
+          "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+          "latest_frame_id": "obs-45c47ee1ed6138f3",
+          "running_action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1"
+        }
+      }
+    },
+    {
+      "utc": "2026-09-29T05:40:54.3093353Z",
+      "job": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+          "kind": "input_sequence",
+          "state": "running",
+          "progress": {
+            "completed_operations": 184,
+            "max_operations": 400,
+            "remaining_seconds": 10.7635323,
+            "elapsed_seconds": 9.2364458,
+            "max_duration_seconds": 19.9999781
+          },
+          "stop_reason": null,
+          "cancel_requested": false,
+          "failure": null,
+          "result": {
+            "phase": "holding"
+          }
+        }
+      },
+      "control": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "control_mode": "agent",
+          "game_paused": false,
+          "ready_expires_at": null,
+          "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+          "latest_frame_id": "obs-17a3ecf26449f79e",
+          "running_action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1"
+        }
+      }
+    },
+    {
+      "utc": "2026-09-29T05:40:55.1609566Z",
+      "job": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+          "kind": "input_sequence",
+          "state": "running",
+          "progress": {
+            "completed_operations": 202,
+            "max_operations": 400,
+            "remaining_seconds": 9.8899463,
+            "elapsed_seconds": 10.1100318,
+            "max_duration_seconds": 19.9999781
+          },
+          "stop_reason": null,
+          "cancel_requested": false,
+          "failure": null,
+          "result": {
+            "phase": "holding"
+          }
+        }
+      },
+      "control": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "control_mode": "agent",
+          "game_paused": false,
+          "ready_expires_at": null,
+          "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+          "latest_frame_id": "obs-1816935b3de30b58",
+          "running_action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1"
+        }
+      }
+    },
+    {
+      "utc": "2026-09-29T05:40:56.0017383Z",
+      "job": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+          "kind": "input_sequence",
+          "state": "running",
+          "progress": {
+            "completed_operations": 219,
+            "max_operations": 400,
+            "remaining_seconds": 9.0435615,
+            "elapsed_seconds": 10.9564166,
+            "max_duration_seconds": 19.9999781
+          },
+          "stop_reason": null,
+          "cancel_requested": false,
+          "failure": null,
+          "result": {
+            "phase": "holding"
+          }
+        }
+      },
+      "control": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "control_mode": "agent",
+          "game_paused": false,
+          "ready_expires_at": null,
+          "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+          "latest_frame_id": "obs-44256abbce7cf044",
+          "running_action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1"
+        }
+      }
+    },
+    {
+      "utc": "2026-09-29T05:40:56.8534205Z",
+      "job": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+          "kind": "input_sequence",
+          "state": "running",
+          "progress": {
+            "completed_operations": 235,
+            "max_operations": 400,
+            "remaining_seconds": 8.2024783,
+            "elapsed_seconds": 11.7974998,
+            "max_duration_seconds": 19.9999781
+          },
+          "stop_reason": null,
+          "cancel_requested": false,
+          "failure": null,
+          "result": {
+            "phase": "holding"
+          }
+        }
+      },
+      "control": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "control_mode": "agent",
+          "game_paused": false,
+          "ready_expires_at": null,
+          "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+          "latest_frame_id": "obs-7704ad27a6601106",
+          "running_action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1"
+        }
+      }
+    },
+    {
+      "utc": "2026-09-29T05:40:57.6509581Z",
+      "job": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+          "kind": "input_sequence",
+          "state": "running",
+          "progress": {
+            "completed_operations": 252,
+            "max_operations": 400,
+            "remaining_seconds": 7.3539023,
+            "elapsed_seconds": 12.6460758,
+            "max_duration_seconds": 19.9999781
+          },
+          "stop_reason": null,
+          "cancel_requested": false,
+          "failure": null,
+          "result": {
+            "phase": "holding"
+          }
+        }
+      },
+      "control": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "control_mode": "agent",
+          "game_paused": false,
+          "ready_expires_at": null,
+          "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+          "latest_frame_id": "obs-7eac07aab0dcdbac",
+          "running_action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1"
+        }
+      }
+    },
+    {
+      "utc": "2026-09-29T05:40:58.4517143Z",
+      "job": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+          "kind": "input_sequence",
+          "state": "running",
+          "progress": {
+            "completed_operations": 268,
+            "max_operations": 400,
+            "remaining_seconds": 6.5626766,
+            "elapsed_seconds": 13.4373015,
+            "max_duration_seconds": 19.9999781
+          },
+          "stop_reason": null,
+          "cancel_requested": false,
+          "failure": null,
+          "result": {
+            "phase": "holding"
+          }
+        }
+      },
+      "control": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "control_mode": "agent",
+          "game_paused": false,
+          "ready_expires_at": null,
+          "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+          "latest_frame_id": "obs-59378256394278d6",
+          "running_action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1"
+        }
+      }
+    },
+    {
+      "utc": "2026-09-29T05:40:59.2868242Z",
+      "job": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+          "kind": "input_sequence",
+          "state": "running",
+          "progress": {
+            "completed_operations": 285,
+            "max_operations": 400,
+            "remaining_seconds": 5.7643349,
+            "elapsed_seconds": 14.2356432,
+            "max_duration_seconds": 19.9999781
+          },
+          "stop_reason": null,
+          "cancel_requested": false,
+          "failure": null,
+          "result": {
+            "phase": "holding"
+          }
+        }
+      },
+      "control": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "control_mode": "agent",
+          "game_paused": false,
+          "ready_expires_at": null,
+          "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+          "latest_frame_id": "obs-ef2f181071275742",
+          "running_action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1"
+        }
+      }
+    },
+    {
+      "utc": "2026-09-29T05:41:00.0881325Z",
+      "job": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+          "kind": "input_sequence",
+          "state": "running",
+          "progress": {
+            "completed_operations": 301,
+            "max_operations": 400,
+            "remaining_seconds": 4.9178343,
+            "elapsed_seconds": 15.0821438,
+            "max_duration_seconds": 19.9999781
+          },
+          "stop_reason": null,
+          "cancel_requested": false,
+          "failure": null,
+          "result": {
+            "phase": "holding"
+          }
+        }
+      },
+      "control": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "control_mode": "agent",
+          "game_paused": false,
+          "ready_expires_at": null,
+          "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+          "latest_frame_id": "obs-9df88386e22c2fcf",
+          "running_action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1"
+        }
+      }
+    },
+    {
+      "utc": "2026-09-29T05:41:00.8855775Z",
+      "job": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+          "kind": "input_sequence",
+          "state": "running",
+          "progress": {
+            "completed_operations": 318,
+            "max_operations": 400,
+            "remaining_seconds": 4.108789,
+            "elapsed_seconds": 15.8911891,
+            "max_duration_seconds": 19.9999781
+          },
+          "stop_reason": null,
+          "cancel_requested": false,
+          "failure": null,
+          "result": {
+            "phase": "holding"
+          }
+        }
+      },
+      "control": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "control_mode": "agent",
+          "game_paused": false,
+          "ready_expires_at": null,
+          "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+          "latest_frame_id": "obs-4381c8c8d109dd35",
+          "running_action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1"
+        }
+      }
+    },
+    {
+      "utc": "2026-09-29T05:41:01.6895841Z",
+      "job": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+          "kind": "input_sequence",
+          "state": "running",
+          "progress": {
+            "completed_operations": 333,
+            "max_operations": 400,
+            "remaining_seconds": 3.3280723,
+            "elapsed_seconds": 16.6719058,
+            "max_duration_seconds": 19.9999781
+          },
+          "stop_reason": null,
+          "cancel_requested": false,
+          "failure": null,
+          "result": {
+            "phase": "holding"
+          }
+        }
+      },
+      "control": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "control_mode": "agent",
+          "game_paused": false,
+          "ready_expires_at": null,
+          "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+          "latest_frame_id": "obs-65cd5125b1055bef",
+          "running_action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1"
+        }
+      }
+    },
+    {
+      "utc": "2026-09-29T05:41:02.4914709Z",
+      "job": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+          "kind": "input_sequence",
+          "state": "running",
+          "progress": {
+            "completed_operations": 349,
+            "max_operations": 400,
+            "remaining_seconds": 2.5186667,
+            "elapsed_seconds": 17.4813114,
+            "max_duration_seconds": 19.9999781
+          },
+          "stop_reason": null,
+          "cancel_requested": false,
+          "failure": null,
+          "result": {
+            "phase": "holding"
+          }
+        }
+      },
+      "control": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "control_mode": "agent",
+          "game_paused": false,
+          "ready_expires_at": null,
+          "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+          "latest_frame_id": "obs-ef8f2d5c2cf69c6b",
+          "running_action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1"
+        }
+      }
+    },
+    {
+      "utc": "2026-09-29T05:41:03.3026458Z",
+      "job": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+          "kind": "input_sequence",
+          "state": "running",
+          "progress": {
+            "completed_operations": 365,
+            "max_operations": 400,
+            "remaining_seconds": 1.7337658,
+            "elapsed_seconds": 18.2662123,
+            "max_duration_seconds": 19.9999781
+          },
+          "stop_reason": null,
+          "cancel_requested": false,
+          "failure": null,
+          "result": {
+            "phase": "holding"
+          }
+        }
+      },
+      "control": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "control_mode": "agent",
+          "game_paused": false,
+          "ready_expires_at": null,
+          "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+          "latest_frame_id": "obs-d166c7762836f117",
+          "running_action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1"
+        }
+      }
+    },
+    {
+      "utc": "2026-09-29T05:41:04.0988035Z",
+      "job": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+          "kind": "input_sequence",
+          "state": "running",
+          "progress": {
+            "completed_operations": 381,
+            "max_operations": 400,
+            "remaining_seconds": 0.9220418,
+            "elapsed_seconds": 19.0779363,
+            "max_duration_seconds": 19.9999781
+          },
+          "stop_reason": null,
+          "cancel_requested": false,
+          "failure": null,
+          "result": {
+            "phase": "holding"
+          }
+        }
+      },
+      "control": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "control_mode": "agent",
+          "game_paused": false,
+          "ready_expires_at": null,
+          "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+          "latest_frame_id": "obs-d47b0b99f3262269",
+          "running_action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1"
+        }
+      }
+    },
+    {
+      "utc": "2026-09-29T05:41:04.9016218Z",
+      "job": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+          "kind": "input_sequence",
+          "state": "running",
+          "progress": {
+            "completed_operations": 397,
+            "max_operations": 400,
+            "remaining_seconds": 0.1175343,
+            "elapsed_seconds": 19.8824438,
+            "max_duration_seconds": 19.9999781
+          },
+          "stop_reason": null,
+          "cancel_requested": false,
+          "failure": null,
+          "result": {
+            "phase": "holding"
+          }
+        }
+      },
+      "control": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "control_mode": "ready",
+          "game_paused": false,
+          "ready_expires_at": null,
+          "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+          "latest_frame_id": "obs-54e43bc09eb8f032",
+          "running_action_id": null
+        }
+      }
+    },
+    {
+      "utc": "2026-09-29T05:41:05.5972690Z",
+      "job": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+          "kind": "input_sequence",
+          "state": "succeeded",
+          "progress": {
+            "completed_operations": 399,
+            "max_operations": 400,
+            "remaining_seconds": 0.0,
+            "elapsed_seconds": 20.0006649,
+            "max_duration_seconds": 19.9999781
+          },
+          "stop_reason": "duration_elapsed",
+          "cancel_requested": false,
+          "failure": null,
+          "result": {
+            "stop_reason": "duration_elapsed"
+          }
+        }
+      },
+      "control": {
+        "ok": true,
+        "result": {
+          "schema_version": 2,
+          "control_mode": "ready",
+          "game_paused": false,
+          "ready_expires_at": null,
+          "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+          "latest_frame_id": "obs-5cd08b8085c55a46",
+          "running_action_id": null
+        }
+      }
+    }
+  ],
+  "gui_note": "GUI observations are reported separately; physical key state was not directly measured.",
+  "before": {
+    "utc": "2026-09-29T05:40:45.1931496Z",
+    "reply": {
+      "ok": true,
+      "result": {
+        "schema_version": 2,
+        "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+        "kind": "input_sequence",
+        "state": "running",
+        "progress": {
+          "completed_operations": 5,
+          "max_operations": 400,
+          "remaining_seconds": 19.7293511,
+          "elapsed_seconds": 0.270627,
+          "max_duration_seconds": 19.9999781
+        },
+        "stop_reason": null,
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "phase": "holding"
+        }
+      }
+    }
+  },
+  "focus_transition": {
+    "focus_lost_at": "2026-09-29T05:40:45.697Z",
+    "foreground": "Prism Launcher 11.1.0",
+    "pauseOnLostFocus": false
+  },
+  "after_focus": {
+    "utc": "2026-09-29T05:41:32.4449310Z",
+    "control": {
+      "ok": true,
+      "result": {
+        "schema_version": 2,
+        "control_mode": "ready",
+        "game_paused": false,
+        "ready_expires_at": null,
+        "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+        "latest_frame_id": "obs-f28191a92c37a2d9",
+        "running_action_id": null
+      }
+    },
+    "job": {
+      "ok": true,
+      "result": {
+        "schema_version": 2,
+        "action_id": "8c3172b2-2232-416d-8548-e44a110fc5e1",
+        "kind": "input_sequence",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 399,
+          "max_operations": 400,
+          "remaining_seconds": 0.0,
+          "elapsed_seconds": 20.0006649,
+          "max_duration_seconds": 19.9999781
+        },
+        "stop_reason": "duration_elapsed",
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "stop_reason": "duration_elapsed"
+        }
+      }
+    }
+  }
+}

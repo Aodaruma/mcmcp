@@ -44,6 +44,15 @@ public final class LocalArmingState {
         return true;
     }
 
+    /** Only the retained action owner may resume within the same recovery epoch. */
+    public synchronized boolean resumeAfterRecovery(UUID sessionId, long recoveryEpoch) {
+        var current = snapshot(sessionId);
+        if (current.mode() != Mode.RECOVERING || current.controlEpoch() != recoveryEpoch) return false;
+        mode = Mode.AGENT;
+        controlEpoch++;
+        return true;
+    }
+
     /** Returns a completed action to READY without extending it across a world boundary. */
     public synchronized boolean completeAction(UUID sessionId) {
         var current = snapshot(sessionId);
@@ -67,6 +76,11 @@ public final class LocalArmingState {
         if (worldSessionId != null && !worldSessionId.equals(currentSessionId)) {
             lock("world_session_changed");
         }
+        return peek();
+    }
+
+    /** Read-only observation for a worker that must not lock a newer world session. */
+    public synchronized Snapshot peek() {
         return new Snapshot(
                 mode,
                 worldSessionId,

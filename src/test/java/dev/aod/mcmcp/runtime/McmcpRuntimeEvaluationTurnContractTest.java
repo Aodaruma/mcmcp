@@ -184,7 +184,12 @@ class McmcpRuntimeEvaluationTurnContractTest {
                 .contains(terminate);
         for (String lifecycle : List.of(
                 "onLoggingIn", "onLevelUnload", "onLoggingOut", "onPlayerClone", "shutdown")) {
-            assertThat(invocations(method(runtime, lifecycle)))
+            // Dimension handoff captures local ON intent before revocation, never an evaluation
+            // lease. No cleanup or input/action method may move ahead of guard termination.
+            assertThat(invocations(method(runtime, lifecycle)).stream().filter(call -> !List.of(
+                            "dev/aod/mcmcp/runtime/WorldTransitionControl#clear",
+                            "dev/aod/mcmcp/runtime/McmcpRuntime#captureWorldTransition",
+                            "net/minecraft/client/player/LocalPlayer#getHealth").contains(call)).toList())
                     .startsWith(
                             "dev/aod/mcmcp/runtime/McmcpRuntime#assertClientThread",
                             terminate);

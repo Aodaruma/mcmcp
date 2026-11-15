@@ -1,0 +1,182 @@
+{
+  "world_session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+  "phase": "Entity",
+  "events": [
+    {
+      "arguments": {
+        "entity_ref": "H5OnwfzA3ov4CjnS9LSAbBOx",
+        "advance": true,
+        "item": "minecraft:bucket",
+        "entity_type": "minecraft:cow",
+        "target": "entity",
+        "result_item": "minecraft:milk_bucket"
+      },
+      "receipt": {
+        "schema_version": 2,
+        "action_id": "b027e4cc-0134-49d6-b726-2a0d1db70968",
+        "state": "queued"
+      },
+      "tool": "agent_interact"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "b027e4cc-0134-49d6-b726-2a0d1db70968",
+        "kind": "interact",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 19,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "dispatched": true,
+          "effect_confirmed": true,
+          "confirmation": "server_held_item",
+          "held_after": {
+            "item": "minecraft:milk_bucket",
+            "count": 1
+          },
+          "entity_ref": "H5OnwfzA3ov4CjnS9LSAbBOx",
+          "inventory_layout_may_have_changed": false,
+          "target": "entity",
+          "client_consumed": true,
+          "slot": 0
+        }
+      }
+    },
+    {
+      "arguments": {
+        "result_item": "minecraft:bucket",
+        "target": "item",
+        "item": "minecraft:milk_bucket"
+      },
+      "receipt": {
+        "schema_version": 2,
+        "action_id": "427f0aa2-15f9-4737-a547-e23bbc8c703d",
+        "state": "queued"
+      },
+      "tool": "agent_interact"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "427f0aa2-15f9-4737-a547-e23bbc8c703d",
+        "kind": "interact",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 34,
+          "max_operations": 200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "target": "item",
+          "server_processed": true,
+          "effect_confirmed": true,
+          "held_after": {
+            "item": "minecraft:bucket",
+            "count": 1
+          },
+          "dispatched": true,
+          "inventory_layout_may_have_changed": false,
+          "client_consumed": true,
+          "slot": 0
+        }
+      }
+    },
+    {
+      "control": {
+        "schema_version": 2,
+        "control_mode": "ready",
+        "game_paused": false,
+        "ready_expires_at": null,
+        "world_session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+        "latest_frame_id": "obs-6f54012fa8efe8e4",
+        "running_action_id": null
+      },
+      "after": {
+        "schema_version": 2,
+        "player": {
+          "hunger": 20,
+          "submerged": false,
+          "on_fire": false,
+          "yaw": 0.0,
+          "pitch": 10.0,
+          "position": {
+            "y": 201.0,
+            "z": 203.74187119447268,
+            "x": 200.5
+          },
+          "air": 300,
+          "status_effects": [],
+          "dimension": "minecraft:overworld",
+          "absorption": 0.0,
+          "max_air": 300,
+          "health": 20.0
+        },
+        "hotbar": {
+          "slots": [
+            {
+              "slot": 0,
+              "selected": true,
+              "item": "minecraft:bucket",
+              "count": 1
+            },
+            {
+              "slot": 1,
+              "selected": false,
+              "item": "minecraft:netherite_pickaxe",
+              "count": 1
+            },
+            {
+              "slot": 2,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 3,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 4,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 5,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 6,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 7,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 8,
+              "selected": false,
+              "item": null,
+              "count": 0
+            }
+          ],
+          "selected_slot": 0
+        }
+      }
+    }
+  ],
+  "passed": true
+}

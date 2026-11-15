@@ -42,7 +42,7 @@ final class DiagonalGroundPath {
         var corridor = new AABB(bounds.minX - SUPPORT_MARGIN,
                 start.minY, bounds.minZ - SUPPORT_MARGIN,
                 bounds.maxX + SUPPORT_MARGIN,
-                start.minY + Math.max(1.8D, Math.max(start.getYsize(), end.getYsize())),
+                start.minY + Math.max(start.getYsize(), end.getYsize()),
                 bounds.maxZ + SUPPORT_MARGIN);
         return Optional.of(new Path(from, to, corridor));
     }

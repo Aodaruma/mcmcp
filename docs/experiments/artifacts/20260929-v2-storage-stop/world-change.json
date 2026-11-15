@@ -1,0 +1,77 @@
+{
+  "status": "passed",
+  "phase": "WorldChange",
+  "failure": null,
+  "active_action_id": null,
+  "final_control": {
+    "schema_version": 2,
+    "control_mode": "off",
+    "game_paused": false,
+    "ready_expires_at": null,
+    "world_session_id": "0bcbe027-b81f-4157-935d-fd715835ad64",
+    "latest_frame_id": null,
+    "running_action_id": null
+  },
+  "events": [
+    {
+      "arguments": {
+        "item": "minecraft:shield",
+        "max_ticks": 1200,
+        "hold_ticks": 1000,
+        "target": "item"
+      },
+      "receipt": {
+        "state": "queued",
+        "action_id": "b51b75f3-9e59-4a41-b594-e9458df42c31",
+        "schema_version": 2
+      },
+      "tool": "agent_interact"
+    },
+    {
+      "before_stop": {
+        "schema_version": 2,
+        "action_id": "b51b75f3-9e59-4a41-b594-e9458df42c31",
+        "kind": "interact",
+        "state": "running",
+        "progress": {
+          "completed_operations": 4,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "client_consumed": true,
+          "inventory_layout_may_have_changed": false,
+          "server_processed": true,
+          "target": "item",
+          "slot": 3,
+          "dispatched": true,
+          "effect_confirmed": false
+        }
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "b51b75f3-9e59-4a41-b594-e9458df42c31",
+        "kind": "interact",
+        "state": "failed",
+        "progress": {
+          "completed_operations": 214,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": "world_boundary",
+        "result": {
+          "client_consumed": true,
+          "inventory_layout_may_have_changed": false,
+          "server_processed": true,
+          "target": "item",
+          "slot": 3,
+          "dispatched": true,
+          "effect_confirmed": false
+        }
+      }
+    }
+  ]
+}

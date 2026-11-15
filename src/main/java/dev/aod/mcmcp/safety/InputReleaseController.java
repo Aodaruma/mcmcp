@@ -13,7 +13,18 @@ public final class InputReleaseController {
         boolean released = true;
         var agentInput = AgentInputState.global();
         var player = minecraft.player;
+        var bowCancellation = BowUseCancellation.global();
+        boolean cancelBow = bowCancellation.pendingFor(player)
+                || player != null && agentInput.inputOwnershipSnapshot().useOwned()
+                    && player.isUsingItem() && player.getUseItem().is(net.minecraft.world.item.Items.BOW);
+        // A generic RELEASE_USE_ITEM fires a drawn bow; cancel its owned use via ordinary slot changes first.
         try {
+            if (cancelBow) {
+                released = bowCancellation.cancel(player, player.getInventory().getSelectedSlot(),
+                        slot -> minecraft.getConnection().send(
+                                new net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket(slot)),
+                        player::stopUsingItem);
+            }
             if (player != null) {
                 agentInput.neutralizeTrackedAgentVelocity(player);
             } else {
@@ -45,7 +56,7 @@ public final class InputReleaseController {
             } catch (RuntimeException | LinkageError failure) {
                 released = false;
             }
-            if (gameMode != null) {
+            if (gameMode != null && !cancelBow) {
                 try {
                     gameMode.releaseUsingItem(player);
                 } catch (RuntimeException | LinkageError failure) {

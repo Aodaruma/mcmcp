@@ -84,6 +84,18 @@ class MinecraftKnownBrewingPortTest {
     }
 
     @Test
+    void blazeIngredientUsesHotbarSwapInsteadOfTheFuelQuickMoveRoute() {
+        var slots = emptyMenu();
+        var blaze = key("minecraft:blaze_powder", BLAZE_HASH);
+        slots.set(5, stack("minecraft:blaze_powder", 1, BLAZE_HASH));
+        assertThat(MinecraftKnownBrewingPort.chooseIngredientSource(slots, blaze, List.of())).isEmpty();
+        slots.set(32, stack("minecraft:blaze_powder", 1, BLAZE_HASH));
+        assertThat(MinecraftKnownBrewingPort.chooseIngredientSource(slots, blaze, List.of())).contains(32);
+        assertThat(MinecraftKnownBrewingPort.chooseSingletonSource(slots, blaze, List.of(32))).contains(5);
+        assertThat(MinecraftKnownBrewingPort.chooseIngredientSource(slots, blaze, List.of(32))).isEmpty();
+    }
+
+    @Test
     void fuelPlanCoversEveryBoundaryWithoutExposingTheHiddenCounter() {
         assertThat(MinecraftKnownBrewingPort.fuelPlan(0))
                 .isEqualTo(new MinecraftKnownBrewingPort.FuelPlan(true, 19));
@@ -362,7 +374,7 @@ class MinecraftKnownBrewingPortTest {
                         "net/minecraft/client/multiplayer/MultiPlayerGameMode#useItemOn",
                         "dev/aod/mcmcp/runtime/ClientPredictionSignals$PredictionAttempt"
                                 + "#captureIssuedPredictions");
-        var clickCalls = invocations(node, "dispatchQuickMove");
+        var clickCalls = invocations(node, "dispatchClick");
         assertThat(clickCalls)
                 .contains("net/minecraft/client/multiplayer/MultiPlayerGameMode#handleContainerInput")
                 .doesNotContain(
@@ -397,7 +409,7 @@ class MinecraftKnownBrewingPortTest {
                 "net/minecraft/client/multiplayer/MultiPlayerGameMode", "useItemOn"))
                 .isTrue();
         assertThat(fieldWritePrecedesInvocation(
-                node, "dispatchQuickMove", "containerClicks",
+                node, "dispatchClick", "containerClicks",
                 "net/minecraft/client/multiplayer/MultiPlayerGameMode", "handleContainerInput"))
                 .isTrue();
         assertThat(invocations(node, "observe"))

@@ -32,6 +32,14 @@ class MinecraftActionPrimitiveExecutorTest {
     private static final String DIMENSION = "minecraft:overworld";
 
     @Test
+    void surfaceArrivalWaitsForOxygenButUnderwaterArrivalDoesNotWaitForImpossibleBreathing() {
+        assertThat(MinecraftActionPrimitiveExecutor.waterBreathingRecovered(false, 99, 300)).isFalse();
+        assertThat(MinecraftActionPrimitiveExecutor.waterBreathingRecovered(false, 299, 300)).isFalse();
+        assertThat(MinecraftActionPrimitiveExecutor.waterBreathingRecovered(false, 300, 300)).isTrue();
+        assertThat(MinecraftActionPrimitiveExecutor.waterBreathingRecovered(true, 200, 300)).isTrue();
+    }
+
+    @Test
     void waterSteeringControlsDepthAndArrivalWithoutSprintOrCamera() {
         var forward = java.util.Set.of(MovementInputLease.MovementKey.FORWARD);
         assertThat(MinecraftActionPrimitiveExecutor.withVerticalInput(forward, -1, -0.2, 0.6, Locomotion.WATER, true, -0.2))

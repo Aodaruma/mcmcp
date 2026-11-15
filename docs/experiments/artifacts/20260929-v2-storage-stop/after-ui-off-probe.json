@@ -1,0 +1,50 @@
+{
+  "events": [
+    {
+      "receipt": {
+        "state": "queued",
+        "action_id": "a960b488-79b4-4e70-9af1-3302b3918872",
+        "schema_version": 2
+      },
+      "tool": "agent_interact",
+      "arguments": {
+        "target": "item",
+        "hold_ticks": 1,
+        "item": "minecraft:shield"
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "a960b488-79b4-4e70-9af1-3302b3918872",
+        "kind": "interact",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 2,
+          "max_operations": 200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "client_consumed": true,
+          "inventory_layout_may_have_changed": false,
+          "server_processed": true,
+          "target": "item",
+          "slot": 3,
+          "dispatched": true,
+          "effect_confirmed": false
+        }
+      }
+    }
+  ],
+  "phase": "after-ui-off-probe",
+  "control": {
+    "schema_version": 2,
+    "control_mode": "ready",
+    "game_paused": false,
+    "ready_expires_at": null,
+    "world_session_id": "ef8dcc0c-5f92-41fe-8054-c9da6298b295",
+    "latest_frame_id": "obs-9634b86d2257b26d",
+    "running_action_id": null
+  }
+}

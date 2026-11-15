@@ -1,0 +1,392 @@
+{
+  "phase": "C",
+  "api_checks_passed": true,
+  "failure": null,
+  "terminal": {
+    "schema_version": 2,
+    "action_id": "4cef5cc3-92fd-49ed-9210-56a2f1fe65f0",
+    "kind": "input_sequence",
+    "state": "cancelled",
+    "progress": {
+      "completed_operations": 9,
+      "max_operations": 600,
+      "remaining_seconds": 29.4998854,
+      "elapsed_seconds": 0.5000802,
+      "max_duration_seconds": 29.9999656
+    },
+    "stop_reason": "client_request",
+    "cancel_requested": true,
+    "failure": "client_request",
+    "result": {
+      "phase": "holding"
+    }
+  },
+  "events": [
+    {
+      "data": {
+        "tool": "agent_get_mcp_status",
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "control_mode": "ready",
+            "game_paused": false,
+            "ready_expires_at": null,
+            "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+            "latest_frame_id": "obs-b5b91b5f90545b48",
+            "running_action_id": null
+          }
+        },
+        "arguments": {}
+      },
+      "elapsed": 0.4384173,
+      "utc": "2026-09-29T05:31:10.6616255Z"
+    },
+    {
+      "data": {
+        "tool": "agent_get_state",
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "player": {
+              "on_fire": false,
+              "yaw": 0.0,
+              "pitch": 60.0,
+              "position": {
+                "z": 200.5,
+                "x": 200.5,
+                "y": 201.0
+              },
+              "air": 300,
+              "status_effects": [],
+              "dimension": "minecraft:overworld",
+              "absorption": 0.0,
+              "max_air": 300,
+              "health": 20.0,
+              "hunger": 20,
+              "submerged": false
+            },
+            "hotbar": {
+              "slots": [
+                {
+                  "slot": 0,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 1,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 2,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 3,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 4,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 5,
+                  "selected": true,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 6,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 7,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 8,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                }
+              ],
+              "selected_slot": 5
+            }
+          }
+        },
+        "arguments": {}
+      },
+      "elapsed": 0.6198467,
+      "utc": "2026-09-29T05:31:10.8460946Z"
+    },
+    {
+      "data": {
+        "start_cli_started": "2026-09-29T05:31:10.8548623Z",
+        "start_cli_exited": "2026-09-29T05:31:12.1685991Z",
+        "receipt": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "4cef5cc3-92fd-49ed-9210-56a2f1fe65f0",
+            "state": "queued"
+          }
+        },
+        "exit_code": 0,
+        "request": {
+          "inputs": [
+            "sneak"
+          ],
+          "duration_seconds": 30
+        }
+      },
+      "elapsed": 1.9458399,
+      "utc": "2026-09-29T05:31:12.1720917Z"
+    },
+    {
+      "data": {
+        "tool": "agent_get_action",
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "4cef5cc3-92fd-49ed-9210-56a2f1fe65f0",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 7,
+              "max_operations": 600,
+              "remaining_seconds": 29.6278139,
+              "elapsed_seconds": 0.3721517,
+              "max_duration_seconds": 29.9999656
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "4cef5cc3-92fd-49ed-9210-56a2f1fe65f0"
+        }
+      },
+      "elapsed": 2.1801535,
+      "utc": "2026-09-29T05:31:12.4064061Z"
+    },
+    {
+      "data": {
+        "tool": "agent_cancel_action",
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "state_at_request": "running",
+            "action_id": "4cef5cc3-92fd-49ed-9210-56a2f1fe65f0",
+            "cancel_requested": true
+          }
+        },
+        "arguments": {
+          "action_id": "4cef5cc3-92fd-49ed-9210-56a2f1fe65f0"
+        }
+      },
+      "elapsed": 2.2949205,
+      "utc": "2026-09-29T05:31:12.5211774Z"
+    },
+    {
+      "data": {
+        "tool": "agent_get_action",
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "4cef5cc3-92fd-49ed-9210-56a2f1fe65f0",
+            "kind": "input_sequence",
+            "state": "cancelled",
+            "progress": {
+              "completed_operations": 9,
+              "max_operations": 600,
+              "remaining_seconds": 29.4998854,
+              "elapsed_seconds": 0.5000802,
+              "max_duration_seconds": 29.9999656
+            },
+            "stop_reason": "client_request",
+            "cancel_requested": true,
+            "failure": "client_request",
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "include_result": true,
+          "action_id": "4cef5cc3-92fd-49ed-9210-56a2f1fe65f0"
+        }
+      },
+      "elapsed": 2.7149704,
+      "utc": "2026-09-29T05:31:12.9412228Z"
+    },
+    {
+      "data": {
+        "tool": "agent_get_mcp_status",
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "control_mode": "ready",
+            "game_paused": false,
+            "ready_expires_at": null,
+            "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+            "latest_frame_id": "obs-e22aa2429087b07d",
+            "running_action_id": null
+          }
+        },
+        "arguments": {}
+      },
+      "elapsed": 2.8317397,
+      "utc": "2026-09-29T05:31:13.0579971Z"
+    },
+    {
+      "data": {
+        "tool": "agent_get_state",
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "player": {
+              "on_fire": false,
+              "yaw": 0.0,
+              "pitch": 60.0,
+              "position": {
+                "z": 200.5,
+                "x": 200.5,
+                "y": 201.0
+              },
+              "air": 300,
+              "status_effects": [],
+              "dimension": "minecraft:overworld",
+              "absorption": 0.0,
+              "max_air": 300,
+              "health": 20.0,
+              "hunger": 20,
+              "submerged": false
+            },
+            "hotbar": {
+              "slots": [
+                {
+                  "slot": 0,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 1,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 2,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 3,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 4,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 5,
+                  "selected": true,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 6,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 7,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 8,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                }
+              ],
+              "selected_slot": 5
+            }
+          }
+        },
+        "arguments": {}
+      },
+      "elapsed": 3.010599,
+      "utc": "2026-09-29T05:31:13.2368519Z"
+    },
+    {
+      "data": {
+        "tool": "agent_get_action",
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "4cef5cc3-92fd-49ed-9210-56a2f1fe65f0",
+            "kind": "input_sequence",
+            "state": "cancelled",
+            "progress": {
+              "completed_operations": 9,
+              "max_operations": 600,
+              "remaining_seconds": 29.4998854,
+              "elapsed_seconds": 0.5000802,
+              "max_duration_seconds": 29.9999656
+            },
+            "stop_reason": "client_request",
+            "cancel_requested": true,
+            "failure": "client_request",
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "arguments": {
+          "include_result": true,
+          "action_id": "4cef5cc3-92fd-49ed-9210-56a2f1fe65f0"
+        }
+      },
+      "elapsed": 3.1181701,
+      "utc": "2026-09-29T05:31:13.3444245Z"
+    }
+  ],
+  "gui_note": "GUI observations are reported separately; physical key state was not directly measured."
+}

@@ -224,7 +224,12 @@ class InputIsolationContractTest {
                 .containsSubsequence(
                         "dev/aod/mcmcp/runtime/McmcpRuntime#retainReadyAfterDeferredAgentRelease",
                         "dev/aod/mcmcp/safety/LocalArmingState#completeAction");
-        assertThat(fieldAccesses(method(runtime, "automationActivityPending")))
+        assertThat(invocations(method(runtime, "automationActivityPending")))
+                .contains("dev/aod/mcmcp/runtime/McmcpRuntime#automationActivityPending");
+        var pendingPredicate = runtime.methods.stream()
+                .filter(m -> m.name.equals("automationActivityPending") && m.desc.equals("(Z)Z"))
+                .findFirst().orElseThrow();
+        assertThat(fieldAccesses(pendingPredicate))
                 .contains(
                         "dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentInputRelease",
                         "dev/aod/mcmcp/runtime/McmcpRuntime#pendingAgentTerminal",
@@ -382,7 +387,8 @@ class InputIsolationContractTest {
                 .containsSubsequence(
                         "dev/aod/mcmcp/runtime/McmcpRuntime#closeAgentPrimitiveExecutor",
                         "dev/aod/mcmcp/runtime/McmcpRuntime#recordPendingAgentMotion",
-                        "dev/aod/mcmcp/runtime/McmcpRuntime#closeRecoveryGovernor");
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#closeRecoveryGovernor",
+                        "dev/aod/mcmcp/runtime/McmcpRuntime#closeV2Recovery");
         assertThat(invocations(statefulCleanup).stream()
                 .filter(call -> call.equals(
                         "dev/aod/mcmcp/runtime/McmcpRuntime#closeAgentPrimitiveExecutor")))

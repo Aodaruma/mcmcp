@@ -13,8 +13,31 @@ import java.util.Objects;
 import java.util.Optional;
 
 /** 既知Vanilla containerをMAIN_HANDで開くためのhotbar選択とNeoForge hook検証。 */
-final class InventoryOpenHandPolicy {
+public final class InventoryOpenHandPolicy {
     private InventoryOpenHandPolicy() {}
+
+    /** The provider must additionally rule out its block's item-specific interactions (for example fluids). */
+    public static java.util.OptionalInt chooseProviderOpenSlot(LocalPlayer player,
+            java.util.function.Predicate<ItemStack> providerAllows) {
+        var hotbar = new ArrayList<ItemStack>(9);
+        for (int slot = 0; slot < 9; slot++) hotbar.add(player.getInventory().getItem(slot));
+        return chooseProviderOpenSlot(hotbar, safeEmptyMainHandOffhand(player.getOffhandItem()), providerAllows);
+    }
+
+    static java.util.OptionalInt chooseProviderOpenSlot(List<ItemStack> hotbar, boolean emptyMainHandAllowed,
+            java.util.function.Predicate<ItemStack> providerAllows) {
+        if (hotbar.size() != 9) throw new IllegalArgumentException("invalid hotbar");
+        for (int slot = 0; slot < 9; slot++) {
+            var stack = hotbar.get(slot);
+            if (safeKnownMenuOpenStack(stack) && providerAllows.test(stack)) return java.util.OptionalInt.of(slot);
+        }
+        if (emptyMainHandAllowed) {
+            for (int slot = 0; slot < 9; slot++) {
+                if (hotbar.get(slot).isEmpty()) return java.util.OptionalInt.of(slot);
+            }
+        }
+        return java.util.OptionalInt.empty();
+    }
 
     static Optional<OpenHandPlan> chooseOpenHand(LocalPlayer player) {
         Objects.requireNonNull(player, "player");

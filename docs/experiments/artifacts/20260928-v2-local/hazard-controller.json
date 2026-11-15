@@ -1,0 +1,60 @@
+{
+  "mcp_control": {
+    "schema_version": 2,
+    "control_mode": "agent",
+    "game_paused": false,
+    "ready_expires_at": null,
+    "world_session_id": "f4b2d604-2959-4982-b37f-8e7c6f96df69",
+    "latest_frame_id": "obs-ddeec3309b5813e9",
+    "running_action_id": "5e1d3d1c-31ea-463a-ae81-15ade51cf49b"
+  },
+  "action_id": "5e1d3d1c-31ea-463a-ae81-15ade51cf49b",
+  "applied": {
+    "ok": true,
+    "result": {
+      "fixture_id": "public-api-v2-water-stop",
+      "fixture_sha256": "b00924a8cba074b344d6c96677ea73a83a79df9c85d521ef20bf6bf5de94b80b",
+      "world_session_id": "8d1669d6-94d0-4a33-a98c-155ed42ae8d6",
+      "commands_dispatched": 1,
+      "declared_changed_blocks": 1,
+      "random_tick_lease": {
+        "active": false,
+        "target": null,
+        "remaining_seconds": 0
+      }
+    }
+  },
+  "admin_status": {
+    "state": "READY",
+    "world_session_id": "8d1669d6-94d0-4a33-a98c-155ed42ae8d6",
+    "player": {
+      "x": 207.53589226441508,
+      "y": 201.0,
+      "z": 200.59021664815705
+    },
+    "random_tick_lease": {
+      "active": false,
+      "target": null,
+      "remaining_seconds": 0
+    }
+  },
+  "running_action": {
+    "schema_version": 2,
+    "action_id": "5e1d3d1c-31ea-463a-ae81-15ade51cf49b",
+    "kind": "input_sequence",
+    "state": "running",
+    "progress": {
+      "completed_operations": 31,
+      "max_operations": 1200
+    },
+    "cancel_requested": false,
+    "failure": null
+  },
+  "validation": {
+    "fixture_id": "public-api-v2-water-stop",
+    "fixture_sha256": "b00924a8cba074b344d6c96677ea73a83a79df9c85d521ef20bf6bf5de94b80b",
+    "command_count": 1,
+    "declared_changed_blocks": 1,
+    "random_tick_lease_requested": false
+  }
+}

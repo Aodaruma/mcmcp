@@ -7,6 +7,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class McmcpClientConfigTest {
+    @Test void automaticRecoveryNeverDisconnectsByDefault() {
+        var values = McmcpClientConfig.SPEC.getValues().valueMap();
+        assertThat(((ModConfigSpec.BooleanValue) values.get("automatic_recovery")).getDefault()).isTrue();
+        assertThat(((ModConfigSpec.BooleanValue) values.get("recovery_disconnect")).getDefault()).isFalse();
+        assertThat(((ModConfigSpec.ConfigValue<?>) values.get("recovery_player_message")).getDefault()).isEqualTo("");
+        assertThat(((ModConfigSpec.ConfigValue<?>) values.get("recovery_waystone_destination")).getDefault()).isEqualTo("");
+    }
     @Test
     void recipeScopeKeepsBackwardCompatibleDefaultAndExactUserLabels() {
         var scope = (ModConfigSpec.EnumValue<?>) McmcpClientConfig.SPEC.getValues().valueMap().get("recipe_scope");

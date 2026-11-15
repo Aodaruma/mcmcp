@@ -1,0 +1,269 @@
+{
+  "passed": true,
+  "world_session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+  "events": [
+    {
+      "receipt": {
+        "schema_version": 2,
+        "action_id": "866a3430-25ec-4e9e-9c20-da6caba56410",
+        "state": "queued"
+      },
+      "arguments": {
+        "z": 202,
+        "x": 204,
+        "block": "minecraft:sunflower",
+        "y": 201,
+        "advance": true
+      },
+      "tool": "agent_place_block"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "866a3430-25ec-4e9e-9c20-da6caba56410",
+        "kind": "place_block",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 79,
+          "max_operations": 1200,
+          "scanned_cells": 1,
+          "placed_blocks": 1
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "confirmed_cells": [
+            {
+              "y": 201,
+              "z": 202,
+              "companions": [
+                {
+                  "y": 202,
+                  "z": 202,
+                  "before": "minecraft:air",
+                  "after": "minecraft:sunflower[half=upper]",
+                  "x": 204
+                }
+              ],
+              "after": "minecraft:sunflower[half=lower]",
+              "before": "minecraft:air",
+              "x": 204
+            }
+          ],
+          "retained_from": 1,
+          "dimension": "minecraft:overworld",
+          "observed_count": 0,
+          "confirmed_count": 1,
+          "truncated": false,
+          "observed_cells": []
+        }
+      }
+    },
+    {
+      "receipt": {
+        "schema_version": 2,
+        "action_id": "1a3d8edc-7d35-472e-9f72-3f52e7008f4d",
+        "state": "queued"
+      },
+      "arguments": {
+        "z": 202,
+        "x": 202,
+        "block": "minecraft:red_bed",
+        "y": 201,
+        "advance": true
+      },
+      "tool": "agent_place_block"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "1a3d8edc-7d35-472e-9f72-3f52e7008f4d",
+        "kind": "place_block",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 56,
+          "max_operations": 1200,
+          "scanned_cells": 1,
+          "placed_blocks": 1
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "confirmed_cells": [
+            {
+              "y": 201,
+              "z": 202,
+              "companions": [
+                {
+                  "y": 201,
+                  "z": 202,
+                  "before": "minecraft:air",
+                  "after": "minecraft:red_bed[facing=east,occupied=false,part=head]",
+                  "x": 203
+                }
+              ],
+              "after": "minecraft:red_bed[facing=east,occupied=false,part=foot]",
+              "before": "minecraft:air",
+              "x": 202
+            }
+          ],
+          "retained_from": 1,
+          "dimension": "minecraft:overworld",
+          "observed_count": 0,
+          "confirmed_count": 1,
+          "truncated": false,
+          "observed_cells": []
+        }
+      }
+    },
+    {
+      "receipt": {
+        "schema_version": 2,
+        "action_id": "bd18ced8-09e8-4576-b607-cd829b0aa10b",
+        "state": "queued"
+      },
+      "arguments": {
+        "z": 200,
+        "x": 203,
+        "block": "minecraft:oak_door",
+        "y": 201,
+        "advance": true
+      },
+      "tool": "agent_place_block"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "bd18ced8-09e8-4576-b607-cd829b0aa10b",
+        "kind": "place_block",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 81,
+          "max_operations": 1200,
+          "scanned_cells": 1,
+          "placed_blocks": 1
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "confirmed_cells": [
+            {
+              "y": 201,
+              "z": 200,
+              "companions": [
+                {
+                  "y": 202,
+                  "z": 200,
+                  "before": "minecraft:air",
+                  "after": "minecraft:oak_door[facing=south,half=upper,hinge=left,open=false,powered=false]",
+                  "x": 203
+                }
+              ],
+              "after": "minecraft:oak_door[facing=south,half=lower,hinge=left,open=false,powered=false]",
+              "before": "minecraft:air",
+              "x": 203
+            }
+          ],
+          "retained_from": 1,
+          "dimension": "minecraft:overworld",
+          "observed_count": 0,
+          "confirmed_count": 1,
+          "truncated": false,
+          "observed_cells": []
+        }
+      }
+    },
+    {
+      "control": {
+        "schema_version": 2,
+        "control_mode": "ready",
+        "game_paused": false,
+        "ready_expires_at": null,
+        "world_session_id": "13891b85-858f-4df8-b846-16516fd1cfeb",
+        "latest_frame_id": "obs-f87f6feb9f167dcc",
+        "running_action_id": null
+      },
+      "after": {
+        "schema_version": 2,
+        "player": {
+          "hunger": 20,
+          "submerged": false,
+          "on_fire": false,
+          "yaw": -13.470362,
+          "pitch": 42.972042,
+          "position": {
+            "y": 201.0,
+            "z": 199.65958401636703,
+            "x": 203.38315449006046
+          },
+          "air": 300,
+          "status_effects": [],
+          "dimension": "minecraft:overworld",
+          "absorption": 0.0,
+          "max_air": 300,
+          "health": 20.0
+        },
+        "hotbar": {
+          "slots": [
+            {
+              "slot": 0,
+              "selected": true,
+              "item": "minecraft:oak_door",
+              "count": 2
+            },
+            {
+              "slot": 1,
+              "selected": false,
+              "item": "minecraft:netherite_pickaxe",
+              "count": 1
+            },
+            {
+              "slot": 2,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 3,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 4,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 5,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 6,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 7,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 8,
+              "selected": false,
+              "item": null,
+              "count": 0
+            }
+          ],
+          "selected_slot": 0
+        }
+      }
+    }
+  ],
+  "phase": "Special"
+}

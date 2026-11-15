@@ -1,6 +1,7 @@
 package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.agent.action.AgentActionStore;
+import dev.aod.mcmcp.agent.action.AgentJobStore;
 import dev.aod.mcmcp.agent.dsl.ActionDslException;
 import dev.aod.mcmcp.mcp.McpRuntimePort.RuntimeReply;
 import dev.aod.mcmcp.observation.BlockPlanValidationException;
@@ -17,6 +18,27 @@ import java.util.concurrent.RejectedExecutionException;
 /** 内部失敗を固定の公開診断へ変換する。未知例外の本文は返さない。 */
 final class RuntimeFailures {
     private RuntimeFailures() {}
+
+    /** The MCP error envelope publishes the message, not the internal details map. */
+    static RuntimeInvocationException v2SafetyPrecondition(String operation, String reason,
+            dev.aod.mcmcp.agent.safety.ObservationRecord current) {
+        var details = new LinkedHashMap<String, Object>();
+        details.put("safety_reason", reason);
+        String message = operation + " requires a safe local world state. Reason: " + reason + ".";
+        if (reason.equals("local_hazard") || reason.equals("local_safety_unconfirmed")) {
+            if (current == null) {
+                message += " Local observation: unavailable.";
+            } else {
+                String hazard = current.hazard().name().toLowerCase(Locale.ROOT);
+                details.put("local_hazard", hazard);
+                details.put("observed_tick", current.observedTick());
+                details.put("world_revision", current.worldRevision());
+                message += " Local hazard: " + hazard + "; observed_tick: " + current.observedTick()
+                        + "; world_revision: " + current.worldRevision() + ".";
+            }
+        }
+        return new RuntimeInvocationException("unsafe_state", message, true, details);
+    }
 
     static String sanitizeLocalCode(String code) {
         if (code == null || code.isBlank()) {
@@ -70,6 +92,9 @@ final class RuntimeFailures {
             return RuntimeReply.failure("task_busy", "Another action is active", true);
         }
         if (cause instanceof AgentActionStore.NotFoundException) {
+            return RuntimeReply.failure("action_not_found", "The action is not retained", false);
+        }
+        if (cause instanceof AgentJobStore.NotFoundException) {
             return RuntimeReply.failure("action_not_found", "The action is not retained", false);
         }
         if (cause instanceof RuntimeInvocationException invocation) {

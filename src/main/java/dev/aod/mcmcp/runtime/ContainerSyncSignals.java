@@ -149,11 +149,26 @@ public final class ContainerSyncSignals {
     }
 
     /** Captures an ItemStack without retaining its mutable count or component containers. */
-    public record StackFingerprint(String itemId, int count, int itemAndComponentsHash) {
+    public record StackFingerprint(String itemId, int count, int itemAndComponentsHash,
+                                   java.util.Map<net.minecraft.core.component.DataComponentType<?>, Object> components) {
         public static final StackFingerprint EMPTY = new StackFingerprint("minecraft:air", 0, 0);
+
+        public StackFingerprint(String itemId, int count, int itemAndComponentsHash) {
+            this(itemId, count, itemAndComponentsHash, null);
+        }
+
+        public StackFingerprint withCount(int value) {
+            return value == 0 ? EMPTY : new StackFingerprint(itemId, value, itemAndComponentsHash, components);
+        }
+
+        public boolean sameItem(StackFingerprint other) {
+            return itemId.equals(other.itemId) && itemAndComponentsHash == other.itemAndComponentsHash
+                    && Objects.equals(components, other.components);
+        }
 
         public StackFingerprint {
             Objects.requireNonNull(itemId, "itemId");
+            if (components != null) components = java.util.Map.copyOf(components);
             if (!itemId.matches("[a-z0-9_.-]+:[a-z0-9_./-]+")) {
                 throw new IllegalArgumentException("invalid itemId");
             }
@@ -170,7 +185,10 @@ public final class ContainerSyncSignals {
             return new StackFingerprint(
                     BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(),
                     stack.getCount(),
-                    ItemStack.hashItemAndComponents(stack));
+                    ItemStack.hashItemAndComponents(stack),
+                    stack.getComponents().stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
+                            net.minecraft.core.component.TypedDataComponent::type,
+                            net.minecraft.core.component.TypedDataComponent::value)));
         }
 
         public boolean empty() {

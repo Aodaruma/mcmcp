@@ -1,0 +1,44 @@
+{
+  "date": "2026-09-29",
+  "source_commit": "e79f59888e2aece6d426437e0d4c545f8e27384a",
+  "checkout_before_changes": "2565dfec40b561f7cb7dec7697d11b7ac9db78d3",
+  "production_changed": false,
+  "installed_jars": [
+    {
+      "file": "mcmcp-neoforge-26.2-0.1.0-SNAPSHOT-fixture-admin.jar",
+      "sha256": "9b4aeb58e57c6ac3353fe8d553f55971cf11b50766506b4e9c2cd7dc6a584230"
+    },
+    {
+      "file": "mcmcp-neoforge-26.2-0.1.0-SNAPSHOT.jar",
+      "sha256": "6acde6beacbea21c812c390568332ccf5bcd8a21005204085ff3eda633dbdde5"
+    },
+    {
+      "file": "sophisticatedbackpacks-26.2-3.25.90.2084.jar",
+      "sha256": "9b8b60c087937b141c8ed61c8fea357ac8931f86eda42a26198c231712eb4037"
+    },
+    {
+      "file": "sophisticatedcore-26.2-1.4.99.2265.jar",
+      "sha256": "f80b8868d15b59882c642ebaa020100e9d1f59cfbae8bdb6a584140b658fb10e"
+    }
+  ],
+  "world_session_id": "ef8dcc0c-5f92-41fe-8054-c9da6298b295",
+  "after_dimension_session_id": "0bcbe027-b81f-4157-935d-fd715835ad64",
+  "minecraft": "26.2",
+  "neoforge": "26.2.0.59",
+  "java": "Zulu 25",
+  "mode": "survival",
+  "difficulty": "peaceful",
+  "storage_fixture": {
+    "slot": 2,
+    "initialized_by_normal_ui": true,
+    "initial_snow_count": 16
+  },
+  "checks": {
+    "source_check_skip_java": "passed",
+    "transport": 15,
+    "original_smoke_mock": 7,
+    "storage_stop_smoke_mock": 13,
+    "real_game_phases": 5,
+    "java_rerun_locally": false
+  }
+}

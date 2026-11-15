@@ -29,24 +29,21 @@ The illustrated guide is currently in Japanese. See [Releases](https://github.co
 
 ## 対応状況 / Status
 
-✅ 実装済み / Implemented　☐ 未対応・改善中 / Pending or in progress
+公開API v2は、座標・対象・数量を指定する17ツールを提供します。[ツールと操作例](docs/MCMCP_Public_API_v2_クイックガイド.md)、[設計図施工](docs/PUBLIC_API_V2_BLUEPRINT_TOOL.md)、[実機検証と残件](docs/PUBLIC_API_V2_STATUS_20260928.md)を参照してください。
 
-| 観測・管理<br>Observation & inventory | 作業・建築<br>Tasks & building | 操作・連携<br>Controls & integration |
-| --- | --- | --- |
-| ✅ 周囲観測<br>Surroundings | ✅ 小麦農業<br>Wheat farming | ✅ 長押し操作<br>Bounded input holds |
-| ✅ 安全な移動<br>Known paths | ✅ 原木・丸石採掘<br>Supported mining | ✅ 攻撃機能（対応トラップ）<br>Combat (supported traps) |
-| ✅ 視点操作<br>Camera control | ✅ 丸石製造機<br>Cobblestone generators | ✅ MCP接続・ON/OFF<br>MCP setup & control |
-| ✅ 持ち物確認<br>Inventory inspection | ✅ クラフト・精錬<br>Crafting & smelting | ✅ 緊急停止<br>Emergency stop |
-| ✅ チェスト棚卸し<br>Chest & barrel inspection | ✅ 小規模建築・コピー<br>Small builds & copying | ✅ マルチプレイ<br>Multiplayer support |
-| ✅ アイテム出し入れ<br>Item transfers | ✅ 回路組み立て（定型）<br>Preset redstone circuits | ☐ 追加MOD互換性<br>More mod compatibility |
-| ☐ 未探索エリア・段差移動<br>Exploration & full-block steps | ✅ ポーション醸造<br>Standard potion brewing | ☐ 低FPS時の安定性<br>Low-FPS stability |
-| ☐ 額縁付きチェストの安定性<br>Item-frame chest reliability | ✅ 釣り<br>Fishing | ✅ Pre-release公開<br>Pre-release publication |
-| ✅ 額縁の表示変更<br>Item-frame displays | ✅ 平面建築の進捗保存・再開<br>Resumable floor building | |
-| | ☐ 連続釣り<br>Multi-cycle fishing | |
+API v2 provides 17 tools for coordinates, targets, and quantities. See the [API guide](docs/MCMCP_Public_API_v2_クイックガイド.md) and [verification status](docs/PUBLIC_API_V2_STATUS_20260928.md).
 
-対応する対象・操作範囲は[機能詳細](docs/MCMCP_Action_DSL_クイックガイド.md)を参照してください。<br>See the [feature guide (Japanese)](docs/MCMCP_Action_DSL_クイックガイド.md) for supported targets and limits.
+| 操作 / Operation | ツール / Tools |
+| --- | --- |
+| 状態・観測 / State and observation | `agent_get_state`、`agent_get_mcp_status`、`agent_get_observation` |
+| 移動・視点・施工 / Movement and building | `agent_look`、`agent_move`、`agent_break_block`、`agent_place_block`、`agent_build` |
+| 操作・生産・所持品 / Interaction and inventory | `agent_interact`、`agent_craft`、`agent_inventory` |
+| 入力・script・chat / Input, scripts and chat | `agent_click`、`agent_input_sequence`、`agent_run_script`、`agent_chat` |
+| 進行・取消 / Progress and cancellation | `agent_get_action`、`agent_cancel_action` |
 
-平面建築の設計図・かがみ端設置・補充・checkpointの使い方は[施工runner](tools/building/README.md)を参照してください。最大128×128の台帳を扱えます。実機確認は小平面で行っており、全サイズの施工検証とは区別しています。
+**0.1系からの移行：** 旧`agent_start_action`とJSON Action DSLは削除されています。MCPクライアントを再起動し、v2ガイドへ移行してください。<br>**Upgrading from 0.1:** restart your MCP client and migrate from the removed `agent_start_action` / JSON Action DSL to the v2 tools.
+
+設計図は`agent_build`でpreviewし、hashとworld/sessionを確認して有限の区間を施工できます。取消・失敗は確定済みの変更を巻き戻しません。実機で確認した規模と、APIが受け付ける上限は区別してください。
 
 ## 質問・不具合 / Questions and issues
 
@@ -72,7 +69,7 @@ Java 25を`JAVA_HOME`へ設定して実行します。<br>Set `JAVA_HOME` to Jav
 Linux/macOSでは`bash gradlew`を使います。検証用MODは本体JARから分離しています。<br>On Linux/macOS, use `bash gradlew`. Test-only mods are kept separate from the production JAR.
 
 - [接続設定の詳細 / Connection details](docs/MCMCP_導入と接続ガイド.md)
-- [Action DSLガイド / Action DSL guide](docs/MCMCP_Action_DSL_クイックガイド.md) · [実行例 / Examples](docs/action-templates/)
+- [公開API v2 / Public API v2](docs/MCMCP_Public_API_v2_クイックガイド.md) · [Tool Catalog](docs/MCMCP_MCP_Tool_Catalog.json)
 - [設計・仕様 / Design and specification](docs/Minecraft_MCP_NeoForge_設計仕様書.md) · [MCP Tool Catalog](docs/MCMCP_MCP_Tool_Catalog.json)
 - [実験・検証記録 / Test and experiment records](docs/experiments/)
 - [配布・PDF生成 / Distribution and PDF generation](tools/release/README.md)

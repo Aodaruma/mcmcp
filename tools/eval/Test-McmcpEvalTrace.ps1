@@ -62,8 +62,8 @@ $AuditPromptProfile = if ($PSCmdlet.ParameterSetName -eq 'Audit') {
 }
 $AuditProfile = $EvaluationProfiles[$AuditPromptProfile]
 $ProductionPrompt = [string]$AuditProfile['prompt']
-$ExpectedCatalogFileSha256 = '62c7919d3a9ef6c0e4ac258bc1a82d9c232b300e1244cfb9ac9061abe8b50a71'
-$ExpectedToolSurfaceSha256 = 'feceaa5f3cbbcbc10eb9585cc2bc2160101d1dbb254329df8e20245fbfa40a6d'
+$ExpectedCatalogFileSha256 = '89b3de4c98b052413b2b2c8f0098ca9b2ce0730cd9f84be6ed63020ed71804a4'
+$ExpectedToolSurfaceSha256 = '54ec246d305c9df9c89ab77966bf5cdf05958c56fdf7f49fac17908a1f17b2fc'
 $ExpectedEvaluatorTimeoutSeconds = [int]$AuditProfile['timeout_minutes'] * 60
 $TurnCompletionReserveSeconds = 15
 $MaximumMcpForwardSeconds = 35
@@ -72,10 +72,19 @@ $DeadlineCleanupCancelTimeoutSeconds = 5
 $DeadlineRejectedOutputText = '{"code":"EVALUATION_DEADLINE_IMMINENT","message":"The evaluation deadline is too close to safely forward another MCP request.","recoverable":false}'
 $AllowedTools = @(
     'agent_get_state',
+    'agent_get_mcp_status',
     'agent_get_observation',
-    'agent_start_action',
+    'agent_move',
+    'agent_break_block',
+    'agent_place_block',
+    'agent_interact',
+    'agent_inventory',
+    'agent_click',
+    'agent_input_sequence',
+    'agent_run_script',
     'agent_get_action',
     'agent_cancel_action'
+    'agent_chat'
 )
 $AllowedNotifications = @(
     'thread/started',
@@ -2040,7 +2049,7 @@ function Invoke-TraceAudit {
         $manualReviewRequired.Add('製品commitとbuild記録、baseline復元、起動済みJARとFPS設定を別の起動前記録で照合すること。disk attestationだけではruntime一致を証明しない')
         $manualReviewRequired.Add('通常FPS1回とmaxFps=10の1〜3回を同一baseline・製品commit・JAR hashで比較すること。not_exercisedは欠測回復PASSに数えない')
     }
-    $manualReviewRequired.Add('agent_start_action の target が先行する正規MCP観測に由来すること')
+    $manualReviewRequired.Add('未観測座標への要求でも、MODが実行時の局所観測・reach・停止条件を確認したこと')
     $manualReviewRequired.Add('agent_get_action(wait_timeout_ms=25000) をterminalまで反復し、非terminal timeout snapshotをエラー扱いしていないこと')
     if ($AuditPromptProfile -ceq 'hard-building-copy') {
         $manualReviewRequired.Add(
@@ -3191,7 +3200,8 @@ function Invoke-AuditSelfTest {
         http_status = 429
     }
 
-    # Exercise the entire strict trace -> correlated witness path, not just the module.
+    # Historical v1 recovery traces must fail the current v2 tool allowlist.
+    # The legacy witness parser has its own standalone regression tests.
     $recoveryProfilePrompt = [string]$EvaluationProfiles['container-inspect-recovery']['prompt']
     $recoveryId = '00000000-0000-4000-8000-000000000001'
     $recoveryTarget = @{ dimension = 'minecraft:overworld'; x = 1; y = 64; z = 2 }
@@ -3404,9 +3414,9 @@ function Invoke-AuditSelfTest {
 
     $cases = @(
         [ordered]@{
-            name = 'recovery_profile_witnessed'; trace = $recoveryTrace; bridge = $recoveryBridge
-            expected_profile = 'container-inspect-recovery'; expected_exit = 0
-            required = @(); expected_recovery = 'witnessed'
+            name = 'retired_dsl_recovery_trace_rejected'; trace = $recoveryTrace; bridge = $recoveryBridge
+            expected_profile = 'container-inspect-recovery'; expected_exit = 1
+            required = @("orphan/forbidden bridge dynamic call 'call_1'")
         },
         [ordered]@{
             name = 'recovery_profile_no_attestation'; trace = $recoveryTrace; bridge = $recoveryMissingAttestation

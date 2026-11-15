@@ -1,0 +1,54 @@
+{
+  "verified_by": "designated installation task; native file-handle and restart API receipts",
+  "installed_at_checked": "2026-09-29T14:51:02.7859194+09:00",
+  "installed": true,
+  "physical_path_verified": true,
+  "installed_sha256": "f787171893dff9ea3027fb9139c28ad28f8dad0b05ffcc375b8fa304bc9b2e7b",
+  "product_jar_count": 1,
+  "previous_jar_backup_sha256": "03c7943f7fcd78f06021db2224a5df5b47fd77a2bc98bd99c32c5a930fadece1",
+  "restoration": {
+    "restored_at": "2026-09-29T14:51:01.1523513+09:00",
+    "archive_verified": true,
+    "native_profile_absent": true,
+    "baseline_files_verified": 12,
+    "original_virtual_profile_unchanged": true
+  },
+  "restart_verification": {
+    "checked_at": "2026-09-29T14:53:45.2380625+09:00",
+    "tool_count": 13,
+    "state_schema_version": 2,
+    "input_sequence_schema_matches_catalog": true,
+    "duration_seconds_max": 86400,
+    "refill_wait_seconds_max": 300,
+    "refill_wait_seconds_default": 30,
+    "control": {
+      "schema_version": 2,
+      "control_mode": "ready",
+      "game_paused": false,
+      "ready_expires_at": null,
+      "world_session_id": "dd09bf38-fa1a-4679-b0dd-7440293cf02d",
+      "latest_frame_id": "obs-1dcbe9f003b0b4b3",
+      "running_action_id": null
+    }
+  },
+  "background_idle_verification": {
+    "focus_switch": {
+      "switch_started_at": "2026-09-29T05:54:02.136Z",
+      "foreground_target": "Prism Launcher 11.1.0",
+      "switch_completed_at": "2026-09-29T05:54:02.344Z",
+      "minecraft_chat_closed": true
+    },
+    "checked_at": "2026-09-29T14:54:17.7594525+09:00",
+    "control": {
+      "schema_version": 2,
+      "control_mode": "ready",
+      "game_paused": false,
+      "ready_expires_at": null,
+      "world_session_id": "dd09bf38-fa1a-4679-b0dd-7440293cf02d",
+      "latest_frame_id": "obs-943930b1f3461f8c",
+      "running_action_id": null
+    }
+  },
+  "normal_profile_powder_operation_tested": false,
+  "twenty_four_hour_continuous_run": false
+}

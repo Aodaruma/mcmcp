@@ -1,0 +1,42 @@
+[
+  {
+    "file": "after-ui-off-probe.json",
+    "sha256": "18d92615dfe92b0d005d483660df4e86301ebab0778be3067956569a222e8e14"
+  },
+  {
+    "file": "after-world-change-probe.json",
+    "sha256": "7c42781624abef3d37cf9b21cc2307444e65c64105360ae635c0a1c8c6c7c19f"
+  },
+  {
+    "file": "candidate.json",
+    "sha256": "3ad6d3708460b14e8036747e1737763885af99fa40517d760d09b4a2670636f4"
+  },
+  {
+    "file": "escape.json",
+    "sha256": "ae06a5d9663a517fb12989f1201ad1a2ced0799fb2076bfb69dfb5fc29eb17c6"
+  },
+  {
+    "file": "item-cancel.json",
+    "sha256": "446a42a8efcd8b9b9b376c87cb41d49061adc14c2fc4fb6dacfff1341a4ff988"
+  },
+  {
+    "file": "restoration.json",
+    "sha256": "0061221bc753a14b1039c2190f049dbede59a976e826845fefd2912daee23b1c"
+  },
+  {
+    "file": "storage.json",
+    "sha256": "f910c45ba7b16d91d94ad809b6b03297f2d11aceb6b4054c8378e0f8737e33bd"
+  },
+  {
+    "file": "ui-off.json",
+    "sha256": "ae924db87392ddc26b98420cd981869efcf07081e452d14893eaed2d0ac4d781"
+  },
+  {
+    "file": "world-change-readback.json",
+    "sha256": "71b47f2b91f814cd0d37b7c43ffc0b9a41543f0cab2cf8af156260d2da801736"
+  },
+  {
+    "file": "world-change.json",
+    "sha256": "277ca1df9c0880cf24e5ef971ce35727080c345b4b535511acc061c35eecacee"
+  }
+]

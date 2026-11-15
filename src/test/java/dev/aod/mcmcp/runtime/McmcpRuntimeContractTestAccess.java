@@ -21,6 +21,8 @@ public final class McmcpRuntimeContractTestAccess {
                         "inventory_transfer", "item_use", "entity_attack"),
                 null,
                 1L);
-        return ActionWireMapper.statePayload(lock, false, null, List.of());
+        var details = ActionWireMapper.statePayload(lock, false, null, List.of());
+        return ActionWireMapper.lightweightStatePayload(
+                null, null, details, Set.of("control", "policy"));
     }
 }

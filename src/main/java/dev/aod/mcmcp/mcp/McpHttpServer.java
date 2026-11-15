@@ -720,6 +720,7 @@ public final class McpHttpServer implements AutoCloseable {
                     ? params.getAsJsonObject("arguments") : new JsonObject();
             var prepared = tools.prepareCall(
                     name, arguments, evaluationLeaseExpectation);
+            if (sendCompletion(exchange, id, name, arguments, prepared, true)) return;
             JsonObject result = legacyToolResult(prepared.response());
             try {
                 sendJson(exchange, 200, jsonRpcResult(id, result));
@@ -815,6 +816,7 @@ public final class McpHttpServer implements AutoCloseable {
                     evaluationLeaseExpectation,
                     elicitationInput);
             JsonObject response = prepared.response();
+            if (sendCompletion(exchange, id, name, params.getAsJsonObject("arguments"), prepared, false)) return;
             if (elicitationInput.formSupported() && awaitingKillZoneConsent(response)) {
                 response = killZoneInputRequired(
                         response.getAsJsonObject("structuredContent")
@@ -834,6 +836,48 @@ public final class McpHttpServer implements AutoCloseable {
             tools.confirmDelivery(prepared);
         } catch (McmcpToolRegistry.UnknownToolException failure) {
             sendJson(exchange, 200, jsonRpcError(id, -32602, "Unknown tool", "UnknownTool"));
+        }
+    }
+
+    /** Flush an accepted response channel before starting input; keep the final JSON bounded in time. */
+    private boolean sendCompletion(HttpExchange exchange, JsonElement id, String name, JsonObject arguments,
+            McmcpToolRegistry.PreparedCall prepared, boolean legacy) throws IOException {
+        int requested = McmcpToolRegistry.completionWaitMillis(name, arguments, prepared);
+        int waitMillis = (int) Math.min(requested, Math.max(0, config.ioTimeout().toMillis() - 2_000));
+        if (waitMillis == 0) return false;
+        boolean confirmed = false;
+        JsonObject latest = prepared.response();
+        try {
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+            exchange.getResponseHeaders().set("Cache-Control", "no-store");
+            exchange.sendResponseHeaders(200, 0);
+            try (var output = exchange.getResponseBody()) {
+                output.write(' ');
+                output.flush();
+                tools.confirmDelivery(prepared);
+                confirmed = true;
+                long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(waitMillis);
+                while (System.nanoTime() < deadline && !Thread.currentThread().isInterrupted()) {
+                    int slice = (int) Math.max(1, Math.min(1_000, TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())));
+                    JsonObject polled = tools.pollCompletion(prepared, slice);
+                    if (polled.get("isError").getAsBoolean()) break;
+                    latest = polled;
+                    String state = latest.getAsJsonObject("structuredContent").get("state").getAsString();
+                    if (Set.of("succeeded", "failed", "cancelled").contains(state)) {
+                        latest.addProperty("isError", !state.equals("succeeded"));
+                        break;
+                    }
+                    output.write(' ');
+                    output.flush();
+                }
+                output.write(GSON.toJson(jsonRpcResult(id, legacy ? legacyToolResult(latest) : latest))
+                        .getBytes(StandardCharsets.UTF_8));
+            }
+            return true;
+        } catch (IOException | RuntimeException failure) {
+            if (confirmed) tools.cancelDelivery(prepared);
+            else tools.abandonDelivery(prepared);
+            throw failure;
         }
     }
 

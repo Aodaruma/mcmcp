@@ -92,7 +92,8 @@ public final class KnownMenuProfileSupport {
                     && screen.getMenu() == menu;
             if (fullContent) {
                 Object value = type.getMethod("itemStacks").invoke(payload);
-                if (!(value instanceof List<?> items) || items.size() != slotViews(menu).size()
+                var slots = slotViews(menu);
+                if (!(value instanceof List<?> items) || items.size() != slots.size()
                         || items.stream().anyMatch(item -> !(item instanceof ItemStack))) return;
                 var stacks = items.stream().map(item -> ContainerSyncSignals.StackFingerprint
                         .fromServerPacket((ItemStack) item)).toList();
@@ -100,12 +101,19 @@ public final class KnownMenuProfileSupport {
                 signals.onFullContent(minecraft.level, id, BACKPACK_MENU_TYPE, state, stacks,
                         ContainerSyncSignals.StackFingerprint.fromServerPacket(carried),
                         screenMatches, signals.currentTick());
+                for (int index = 0; index < slots.size(); index++) {
+                    PlayerMenuSyncSignals.global().menuSlot(minecraft, slots.get(index), stacks.get(index));
+                }
             } else {
                 int slot = (int) type.getMethod("slotNumber").invoke(payload);
                 var stack = (ItemStack) type.getMethod("stack").invoke(payload);
+                var slots = slotViews(menu);
+                if (slot < 0 || slot >= slots.size()) return;
+                var fingerprint = ContainerSyncSignals.StackFingerprint.fromServerPacket(stack);
                 signals.onSlot(minecraft.level, id, BACKPACK_MENU_TYPE, state, slot,
-                        ContainerSyncSignals.StackFingerprint.fromServerPacket(stack),
+                        fingerprint,
                         screenMatches, signals.currentTick());
+                PlayerMenuSyncSignals.global().menuSlot(minecraft, slots.get(slot), fingerprint);
             }
         } catch (ReflectiveOperationException | RuntimeException ignored) {
             // No evidence is preferable to mistaking a client prediction for a server update.
@@ -172,11 +180,25 @@ public final class KnownMenuProfileSupport {
                 : backpackContext(minecraft.player, screen, menu, snapshot, runtime);
     }
 
-    static boolean synchronizedMenuMatches(
+    public static boolean synchronizedMenuMatches(
             ContainerSyncSignals.Snapshot ledger,
             UUID worldSessionId,
             AbstractContainerMenu menu) {
         return synchronizedMenuMatches(ledger, worldSessionId, menu, false);
+    }
+
+    /** Opening identity is sufficient for cleanup, never for reading or moving contents. */
+    public static boolean freshOpenedMenuMatches(ContainerSyncSignals.Snapshot ledger,
+            UUID worldSessionId, AbstractContainerMenu menu, long afterRevision) {
+        if (ledger == null || !ledger.sameSession(worldSessionId) || ledger.lastOpenScreen() == null) {
+            return false;
+        }
+        var open = ledger.lastOpenScreen();
+        return worldSessionId.equals(open.worldSessionId())
+                && open.packetLedgerRevision() > afterRevision
+                && open.containerId() == menu.containerId
+                && ScreenOwnershipSignals.registeredMenuTypeId(menu)
+                        .filter(open.menuTypeId()::equals).isPresent();
     }
 
     private static boolean synchronizedMenuMatches(
@@ -286,7 +308,7 @@ public final class KnownMenuProfileSupport {
             Object extraSlots = runtime.extraSlots().invoke(menu);
             if (storageCount < 1 || storageCount > 512
                     || storageCount > menu.slots.size() - 36
-                    || !(openContainer instanceof Optional<?> open) || open.isPresent()
+                    || !(openContainer instanceof Optional<?>)
                     || !(extraSlots instanceof List<?> extra) || !extra.isEmpty()) {
                 return Optional.empty();
             }
@@ -416,10 +438,10 @@ public final class KnownMenuProfileSupport {
                 + "artifacts=" + BACKPACK_ARTIFACT.canonical()
                 + ";" + CORE_ARTIFACT.canonical() + "\n"
                 + "slots=storage:getNumberOfStorageInventorySlots;player:next36;protected:rest\n"
-                + "guards=no_open_upgrade,no_extra_slots,accessible,pickup,normal_stack,full_capacity\n"
+                + "guards=no_extra_slots,accessible,pickup,normal_stack,full_capacity;quick_move=no_open_upgrade\n"
                 + "transfer_to_player=quick_move;protected_unchanged=true\n"
                 + "storage=carried_equipped;identity=uuid_and_slot;open=normal_targeted_provider_action\n"
-                + "exact_pickup=common_14click;cursor=normal_limit;slot=provider_capacity;overflow=reject\n"
+                + "exact_pickup=common_14click,open_upgrade_slots_protected;cursor=normal_limit;slot=provider_capacity;overflow=reject\n"
                 + "sync=neoforge_open,provider_full,provider_slot,vanilla_cursor;readback=reopen\n";
         return new ModProfile(profileId, profileHash(canonical), BACKPACK_MENU_TYPE);
     }
@@ -455,7 +477,7 @@ public final class KnownMenuProfileSupport {
         return method;
     }
 
-    private static boolean activeArtifactMatches(ArtifactRequirement requirement)
+    static boolean activeArtifactMatches(ArtifactRequirement requirement)
             throws IOException {
         ModList modList = ModList.get();
         if (modList == null) return false;
@@ -539,12 +561,24 @@ public final class KnownMenuProfileSupport {
 
         /** Revalidates every stack-dependent precondition immediately before dispatch. */
         public boolean canTransferEntireStack(int sourceSlot) {
+            // Shift-click may route through an open upgrade; exact PICKUP never targets those protected slots.
+            if (BACKPACK_PROFILE.equals(profile)) {
+                try {
+                    Object open = menu.getClass().getMethod("getOpenContainer").invoke(menu);
+                    if (!(open instanceof Optional<?> tab) || tab.isPresent()) return false;
+                } catch (ReflectiveOperationException | RuntimeException unavailable) { return false; }
+            }
             if (!transferableStorageSlots.contains(sourceSlot)) return false;
             Slot sourceSlotView = menu.slots.get(sourceSlot);
             ItemStack source = sourceSlotView.getItem();
             return sourceSlotView.mayPickup(player)
                     && hasFullPlayerCapacity(source, playerSlots.stream()
                             .map(menu.slots::get).toList());
+        }
+
+        /** The pinned backpack caps PICKUP before halving; Vanilla takes the whole stack. */
+        public int pickupLimit(ItemStack item) {
+            return BACKPACK_PROFILE.equals(profile) ? item.getMaxStackSize() : Integer.MAX_VALUE;
         }
 
         /** Generic slot roles/capacities; no transfer algorithm depends on slot ordering. */

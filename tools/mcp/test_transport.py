@@ -15,11 +15,10 @@ PWSH = os.environ.get('MCMCP_TEST_PWSH') or shutil.which('pwsh')
 TOKEN = 'fixture_' + 'x' * 43
 ACTION = '00000000-0000-4000-8000-000000000001'
 META = {'io.modelcontextprotocol/serverInfo': {'name': 'mcmcp', 'version': '0.1.0'}}
-START = {'schema_version': 1, 'program': {'dsl_version': 1, 'capabilities': [],
-         'body': [{'id': 'wait', 'op': 'wait_ticks', 'ticks': 1}]},
-         'budget': dict(max_duration_ms=1000, max_ticks=20, max_distance_blocks=0,
-                        max_camera_degrees=0, max_interactions=0,
-                        max_blocks_broken=0, max_blocks_placed=0)}
+START = {'x': 4, 'y': 65, 'z': 8}
+V2_START_TOOLS = {'agent_move', 'agent_look', 'agent_break_block', 'agent_place_block',
+                  'agent_interact', 'agent_inventory', 'agent_craft', 'agent_click',
+                  'agent_input_sequence', 'agent_run_script', 'agent_build'}
 
 
 def tool_result(data=None, error=False):
@@ -47,6 +46,12 @@ def status(state='succeeded'):
                 template=dict(media_type=media, canonical_json='{}',
                               ready_for_agent_start_action=True, blocked_by=None),
                 reference_requirements=[])
+
+
+def v2_status(state='succeeded'):
+    return dict(schema_version=2, action_id=ACTION, kind='move', state=state,
+                progress=dict(completed_operations=3, max_operations=1200),
+                cancel_requested=False, failure=None)
 
 
 @unittest.skipUnless(PWSH, 'PowerShell 7.4+ required (set MCMCP_TEST_PWSH)')
@@ -105,11 +110,25 @@ class TransportTests(unittest.TestCase):
                         capabilities={'tools': {'listChanged': False}})
         if request['method'] == 'tools/list':
             return dict(resultType='complete', _meta=META, tools=[{'name': n} for n in
-                ['agent_get_state', 'agent_get_observation', 'agent_start_action',
-                 'agent_get_action', 'agent_cancel_action']])
-        if request['params']['name'] == 'agent_start_action':
-            return tool_result(dict(schema_version=1, action_id=ACTION, state='queued',
-                                    accepted_at='2026-09-06T00:00:00Z'))
+                ['agent_get_state', 'agent_get_mcp_status', 'agent_get_observation',
+                 'agent_move', 'agent_look', 'agent_break_block', 'agent_place_block', 'agent_interact',
+                 'agent_inventory', 'agent_craft', 'agent_click', 'agent_input_sequence', 'agent_run_script',
+                 'agent_get_action', 'agent_cancel_action', 'agent_chat', 'agent_build']])
+        if (request['params']['name'] == 'agent_build' and
+                request['params']['arguments'].get('operation', 'preview') == 'preview'):
+            return tool_result(dict(schema_version=2, operation='preview', blueprint={'total_entries': 8}))
+        if request['params']['name'] == 'agent_chat':
+            if request['params']['arguments']['operation'] == 'send':
+                return tool_result(dict(schema_version=2, action_id=ACTION, state='queued'))
+            return tool_result(dict(schema_version=2, operation='read', session_id=ACTION,
+                messages=[], next_cursor=ACTION+':0', has_more=False, missed_messages=0,
+                untrusted=True, capacity=256))
+        if request['params']['name'] in V2_START_TOOLS:
+            return tool_result(dict(schema_version=2, action_id=ACTION, state='queued'))
+        if (request['params']['name'] == 'agent_get_action' and
+                any(r[0].get('params', {}).get('name') in V2_START_TOOLS
+                    for r in self.requests)):
+            return tool_result(v2_status())
         return tool_result(status())
 
     def invoke(self, *options, arguments=None):
@@ -139,7 +158,7 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(request['params']['_meta']['io.modelcontextprotocol/protocolVersion'], '2026-07-28')
 
     def test_start_waits_only_on_successful_id_and_preserves_arguments(self):
-        reply = self.invoke('-Tool', 'agent_start_action', '-WaitSeconds', '10', arguments=START)
+        reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10', arguments=START)
         self.assertTrue(reply['ok'], reply)
         self.assertEqual(reply['result']['state'], 'succeeded')
         calls = [r[0]['params'] for r in self.requests if r[0]['method'] == 'tools/call']
@@ -148,6 +167,68 @@ class TransportTests(unittest.TestCase):
         self.assertGreater(calls[1]['arguments']['wait_timeout_ms'], 0)
         self.assertLessEqual(calls[1]['arguments']['wait_timeout_ms'], 25000)
         self.assertEqual(len(calls), 2)
+
+    def test_running_start_waits_only_when_requested_without_restarting(self):
+        for wait in [0, 10]:
+            with self.subTest(wait=wait):
+                self.requests.clear()
+                def modify(request, envelope):
+                    if request.get('params', {}).get('name') == 'agent_move':
+                        envelope['result'] = tool_result(v2_status('running'))
+                    return envelope
+                self.modify = modify
+                reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', str(wait), arguments=START)
+                self.assertTrue(reply['ok'], reply)
+                self.assertEqual(reply['result']['state'], 'succeeded' if wait else 'running')
+                calls = [r[0]['params'] for r in self.requests if r[0]['method'] == 'tools/call']
+                self.assertEqual([call['name'] for call in calls],
+                                 ['agent_move', 'agent_get_action'] if wait else ['agent_move'])
+                if wait: self.assertEqual(calls[1]['arguments']['action_id'], ACTION)
+
+    def test_v2_move_waits_for_its_common_action_id(self):
+        arguments = {'x': 4, 'y': 65, 'z': 8}
+        reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10',
+                            arguments=arguments)
+        self.assertTrue(reply['ok'], reply)
+        self.assertEqual(reply['result'], v2_status())
+        calls = [r[0]['params'] for r in self.requests
+                 if r[0]['method'] == 'tools/call']
+        self.assertEqual([c['name'] for c in calls],
+                         ['agent_move', 'agent_get_action'])
+        self.assertEqual(calls[0]['arguments'], arguments)
+        self.assertEqual(calls[1]['arguments']['action_id'], ACTION)
+
+    def test_chat_read_and_send_share_one_tool_but_only_send_can_wait(self):
+        reply = self.invoke('-Tool', 'agent_chat', arguments={'operation': 'read'})
+        self.assertTrue(reply['ok'], reply)
+        self.assertEqual(reply['result']['messages'], [])
+        self.requests.clear()
+        reply = self.invoke('-Tool', 'agent_chat', '-WaitSeconds', '10',
+                            arguments={'operation': 'send', 'text': '日本語の連絡です'})
+        self.assertTrue(reply['ok'], reply)
+        calls = [r[0]['params'] for r in self.requests if r[0]['method'] == 'tools/call']
+        self.assertEqual([c['name'] for c in calls], ['agent_chat', 'agent_get_action'])
+        self.assertEqual(calls[0]['arguments']['text'], '日本語の連絡です')
+        self.requests.clear()
+        reply = self.invoke('-Tool', 'agent_chat', '-WaitSeconds', '10', arguments={'operation': 'read'})
+        self.assertEqual(reply['diagnostic_code'], 'wait_requires_start_tool')
+        self.assertEqual(self.requests, [])
+
+    def test_blueprint_preview_is_read_only_and_execute_polls_without_replay(self):
+        arguments = {'blueprint_file': 'art.json', 'dimension': 'minecraft:overworld'}
+        reply = self.invoke('-Tool', 'agent_build', arguments=arguments)
+        self.assertTrue(reply['ok'], reply)
+        self.assertEqual(reply['result']['blueprint']['total_entries'], 8)
+        self.requests.clear()
+        reply = self.invoke('-Tool', 'agent_build', '-WaitSeconds', '10', arguments=arguments)
+        self.assertEqual(reply['diagnostic_code'], 'wait_requires_start_tool')
+        self.assertEqual(self.requests, [])
+        arguments.update(operation='execute', plan_sha256='a' * 64, world_session_id=ACTION)
+        reply = self.invoke('-Tool', 'agent_build', '-WaitSeconds', '10', arguments=arguments)
+        self.assertTrue(reply['ok'], reply)
+        calls = [r[0]['params'] for r in self.requests if r[0]['method'] == 'tools/call']
+        self.assertEqual([c['name'] for c in calls], ['agent_build', 'agent_get_action'])
+        self.assertEqual(calls[0]['arguments'], arguments)
 
     def test_error_or_missing_id_never_polls_or_replays(self):
         for mode, diagnostic in [('rpc', 'jsonrpc_error'), ('rpc_secret', 'secret_blocked'), ('tool', 'tool_rejected'),
@@ -169,7 +250,7 @@ class TransportTests(unittest.TestCase):
                         envelope['result']['isError'] = 'false'
                     return envelope
                 self.modify = modify
-                reply = self.invoke('-Tool', 'agent_start_action', '-WaitSeconds', '10', arguments=START)
+                reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10', arguments=START)
                 self.assertFalse(reply['ok'])
                 self.assertEqual(reply['diagnostic_code'], diagnostic)
                 self.assertEqual(len(self.requests), 2)
@@ -183,10 +264,143 @@ class TransportTests(unittest.TestCase):
                 envelope['result']['structuredContent']['action_id'] = ACTION[:-1] + '2'
             return envelope
         self.modify = modify
-        reply = self.invoke('-Tool', 'agent_start_action', '-WaitSeconds', '10', arguments=START)
+        reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10', arguments=START)
         self.assertEqual(reply['diagnostic_code'], 'action_id_mismatch')
         self.assertEqual(reply['action_id'], ACTION)
         self.assertEqual(len(self.requests), 3)
+
+    def test_synchronous_failed_and_cancelled_actions_retain_results_without_polling(self):
+        for state in ['failed', 'cancelled']:
+            for wait in [0, 10]:
+                with self.subTest(state=state, wait=wait):
+                    self.requests.clear()
+                    data = v2_status(state)
+                    data.update(failure='path_blocked' if state == 'failed' else 'client_request',
+                                result={'confirmed_count': 1, 'failure_diagnostics': ['check=fixture']})
+                    def modify(request, envelope):
+                        if request['method'] == 'tools/call':
+                            envelope['result'] = tool_result(data)
+                            envelope['result']['isError'] = True
+                            # Formatting and key order are not a protocol mismatch.
+                            envelope['result']['content'][0]['text'] = json.dumps(
+                                dict(reversed(list(data.items()))), indent=2)
+                        return envelope
+                    self.modify = modify
+                    reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', str(wait), arguments=START)
+                    self.assertTrue(reply['ok'], reply)  # Receipt validity, not gameplay success.
+                    self.assertEqual(reply['result'], data)
+                    self.assertEqual(len(self.requests), 2)
+
+    def test_malformed_action_errors_stop_with_bounded_unverified_hints(self):
+        modes = ['queued', 'running', 'succeeded', 'wrong_id', 'id_newline', 'wrong_progress',
+                 'wrong_failure', 'wrong_result', 'text_mismatch', 'duplicate_text_id', 'extra_text',
+                 'read_tool', 'chat_read', 'build_preview']
+        for mode in modes:
+            with self.subTest(mode=mode):
+                self.requests.clear()
+                def modify(request, envelope):
+                    if request['method'] != 'tools/call':
+                        return envelope
+                    data = v2_status('failed')
+                    data['failure'] = 'path_blocked'
+                    if mode in ['queued', 'running', 'succeeded']: data['state'] = mode
+                    if mode == 'wrong_id': data['action_id'] = 'invalid-' * 1000
+                    if mode == 'id_newline': data['action_id'] += '\n'
+                    if mode == 'wrong_progress': data['progress']['completed_operations'] = -1
+                    if mode == 'wrong_failure': data['failure'] = {'private_message': 'do not copy'}
+                    if mode == 'wrong_result': data['result'] = 'private-payload' * 1000
+                    result = tool_result(data)
+                    result['isError'] = True
+                    if mode == 'text_mismatch':
+                        result['content'][0]['text'] = json.dumps(dict(data, action_id=ACTION[:-1]+'2'))
+                    if mode == 'duplicate_text_id':
+                        result['content'][0]['text'] = result['content'][0]['text'].replace(
+                            '"action_id":', f'"action_id": "{ACTION}", "action_id":')
+                    if mode == 'extra_text': result['content'].append({'type': 'text', 'text': 'private text'})
+                    envelope['result'] = result
+                    return envelope
+                self.modify = modify
+                tool, arguments = {
+                    'read_tool': ('agent_get_state', {}),
+                    'chat_read': ('agent_chat', {'operation': 'read'}),
+                    'build_preview': ('agent_build', {'blueprint_file': 'art.json', 'dimension': 'minecraft:overworld'})
+                }.get(mode, ('agent_move', START))
+                reply = self.invoke('-Tool', tool, arguments=arguments)
+                self.assertFalse(reply['ok'], reply)
+                self.assertEqual(reply['diagnostic_code'], 'invalid_tool_result')
+                self.assertNotIn('result', reply)
+                self.assertNotIn('action_id', reply)  # Never promote an unverified ID.
+                hint = reply['response_diagnostic']
+                self.assertFalse(hint['schema_validated'])
+                self.assertTrue(hint['is_error'])
+                self.assertTrue(hint['has_structured_content'])
+                if mode not in ['wrong_id', 'id_newline']: self.assertEqual(hint['unverified_action_id'], ACTION)
+                else: self.assertNotIn('unverified_action_id', hint)
+                if mode == 'wrong_failure': self.assertNotIn('unverified_failure', hint)
+                self.assertLess(len(json.dumps(hint).encode()), 1024)
+                self.assertNotIn('private', json.dumps(reply))
+                self.assertEqual(len(self.requests), 2)
+
+    def test_malformed_success_also_retains_hints_without_accepting_or_polling(self):
+        def modify(request, envelope):
+            if request['method'] == 'tools/call':
+                data = v2_status('running')
+                data['progress']['completed_operations'] = -1
+                envelope['result'] = tool_result(data)
+            return envelope
+        self.modify = modify
+        reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10', arguments=START)
+        self.assertEqual(reply['diagnostic_code'], 'invalid_success_schema')
+        self.assertEqual(reply['response_diagnostic']['validation_stage'], 'output_schema')
+        self.assertEqual(reply['response_diagnostic']['unverified_action_id'], ACTION)
+        self.assertNotIn('action_id', reply)
+        self.assertEqual(len(self.requests), 2)
+
+    def test_polled_action_error_checks_identity_and_never_loses_known_id(self):
+        for mismatch in [False, True]:
+            with self.subTest(mismatch=mismatch):
+                self.requests.clear()
+                def modify(request, envelope):
+                    if request.get('params', {}).get('name') == 'agent_get_action':
+                        data = v2_status('failed')
+                        data['failure'] = 'path_blocked'
+                        if mismatch: data['action_id'] = ACTION[:-1]+'2'
+                        envelope['result'] = tool_result(data)
+                        envelope['result']['isError'] = True
+                    return envelope
+                self.modify = modify
+                reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10', arguments=START)
+                if mismatch:
+                    self.assertEqual(reply['diagnostic_code'], 'action_id_mismatch')
+                    self.assertEqual(reply['action_id'], ACTION)
+                    self.assertEqual(reply['response_diagnostic']['unverified_action_id'], ACTION[:-1]+'2')
+                else:
+                    self.assertTrue(reply['ok'], reply)
+                    self.assertEqual(reply['result']['state'], 'failed')
+                self.assertEqual(len(self.requests), 3)
+
+    def test_action_errors_and_rejected_diagnostics_cannot_expose_tokens(self):
+        for encoded_text_only in [False, True]:
+            with self.subTest(encoded_text_only=encoded_text_only):
+                self.requests.clear()
+                def modify(request, envelope):
+                    if request['method'] == 'tools/call':
+                        data = v2_status('failed')
+                        data['failure'] = TOKEN
+                        result = tool_result(data)
+                        result['isError'] = True
+                        if encoded_text_only:
+                            result['structuredContent']['failure'] = 'path_blocked'
+                            result['content'][0]['text'] = result['content'][0]['text'].replace(
+                                TOKEN, ''.join('\\u%04x' % ord(c) for c in TOKEN))
+                        envelope['result'] = result
+                    return envelope
+                self.modify = modify
+                reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10', arguments=START)
+                self.assertFalse(reply['ok'])
+                self.assertNotIn('result', reply)
+                self.assertEqual(reply['diagnostic_code'], 'invalid_tool_result' if encoded_text_only else 'secret_blocked')
+                self.assertEqual(len(self.requests), 2)
 
     def test_nested_domain_json_cannot_decode_an_escaped_token_into_output(self):
         def modify(request, envelope):
@@ -197,7 +411,7 @@ class TransportTests(unittest.TestCase):
                 envelope['result'] = result
             return envelope
         self.modify = modify
-        reply = self.invoke('-Tool', 'agent_start_action', '-WaitSeconds', '10', arguments=START)
+        reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10', arguments=START)
         self.assertEqual(reply['diagnostic_code'], 'secret_blocked')
         self.assertEqual(len(self.requests), 2)
 
@@ -239,7 +453,7 @@ $null = Invoke-McmcpTransportRequest -Endpoint $args[0] `
         self.assertEqual(process.stdout, b'')
         self.assertIn('日本語のクライアント'.encode('utf-8'), self.requests[0][2])
 
-    def test_consent_without_action_id_is_success_but_does_not_poll(self):
+    def test_legacy_consent_reply_is_rejected_for_a_v2_start_without_polling(self):
         def modify(request, envelope):
             if request['method'] == 'tools/call':
                 envelope['result'] = tool_result(dict(schema_version=1, state='AWAITING_CONSENT',
@@ -247,9 +461,9 @@ $null = Invoke-McmcpTransportRequest -Endpoint $args[0] `
                     approval_scope_summary='承認対象の説明', action_reserved=False, input_acquired=False))
             return envelope
         self.modify = modify
-        reply = self.invoke('-Tool', 'agent_start_action', '-WaitSeconds', '10', arguments=START)
-        self.assertTrue(reply['ok'], reply)
-        self.assertIn('承認対象', reply['result']['approval_scope_summary'])
+        reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '10', arguments=START)
+        self.assertFalse(reply['ok'], reply)
+        self.assertEqual(reply['diagnostic_code'], 'invalid_success_schema')
         self.assertEqual(len(self.requests), 2)
 
     def test_bad_inputs_never_send_requests(self):
@@ -315,10 +529,10 @@ $null = Invoke-McmcpTransportRequest -Endpoint $args[0] `
     def test_wait_timeout_keeps_known_id_and_does_not_restart_action(self):
         self.modify = lambda request, envelope: dict(envelope, result=tool_result(status('running'))) \
             if request.get('params', {}).get('name') == 'agent_get_action' else envelope
-        reply = self.invoke('-Tool', 'agent_start_action', '-WaitSeconds', '3', arguments=START)
+        reply = self.invoke('-Tool', 'agent_move', '-WaitSeconds', '3', arguments=START)
         self.assertEqual(reply['diagnostic_code'], 'action_wait_timeout')
         self.assertEqual(reply['action_id'], ACTION)
-        self.assertEqual(sum(r[0].get('params', {}).get('name') == 'agent_start_action'
+        self.assertEqual(sum(r[0].get('params', {}).get('name') == 'agent_move'
                              for r in self.requests), 1)
 
     def test_shared_evaluator_wrapper_http_timeout_is_bounded(self):

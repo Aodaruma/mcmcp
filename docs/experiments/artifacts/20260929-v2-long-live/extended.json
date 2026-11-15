@@ -1,0 +1,5502 @@
+{
+  "phase": "H",
+  "api_checks_passed": true,
+  "failure": null,
+  "terminal": {
+    "schema_version": 2,
+    "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+    "kind": "input_sequence",
+    "state": "succeeded",
+    "progress": {
+      "completed_operations": 1500,
+      "max_operations": 1500,
+      "remaining_seconds": 44.940296,
+      "elapsed_seconds": 75.0596604,
+      "max_duration_seconds": 119.9999564
+    },
+    "stop_reason": "completed",
+    "cancel_requested": false,
+    "failure": null,
+    "result": {
+      "phase": "holding"
+    }
+  },
+  "events": [
+    {
+      "elapsed": 0.3334849,
+      "utc": "2026-09-29T05:42:25.3298063Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "control_mode": "ready",
+            "game_paused": false,
+            "ready_expires_at": null,
+            "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+            "latest_frame_id": "obs-83a9935d5bf82d37",
+            "running_action_id": null
+          }
+        },
+        "tool": "agent_get_mcp_status",
+        "arguments": {}
+      }
+    },
+    {
+      "elapsed": 0.467079,
+      "utc": "2026-09-29T05:42:25.4668768Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "player": {
+              "on_fire": false,
+              "yaw": 0.0,
+              "pitch": 60.0,
+              "position": {
+                "z": 200.5,
+                "x": 200.5,
+                "y": 201.0
+              },
+              "air": 300,
+              "status_effects": [],
+              "dimension": "minecraft:overworld",
+              "absorption": 0.0,
+              "max_air": 300,
+              "health": 20.0,
+              "hunger": 20,
+              "submerged": false
+            },
+            "hotbar": {
+              "slots": [
+                {
+                  "slot": 0,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 1,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 2,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 3,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 4,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 5,
+                  "selected": true,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 6,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 7,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 8,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                }
+              ],
+              "selected_slot": 5
+            }
+          }
+        },
+        "tool": "agent_get_state",
+        "arguments": {}
+      }
+    },
+    {
+      "elapsed": 1.6694999,
+      "utc": "2026-09-29T05:42:26.6693023Z",
+      "data": {
+        "receipt": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "state": "queued"
+          }
+        },
+        "start_cli_exited": "2026-09-29T05:42:26.6667183Z",
+        "start_cli_started": "2026-09-29T05:42:25.4751386Z",
+        "exit_code": 0,
+        "request": {
+          "steps": [
+            {
+              "inputs": [
+                "sneak"
+              ],
+              "hold_ticks": 1500
+            }
+          ]
+        }
+      }
+    },
+    {
+      "elapsed": 1.9091465,
+      "utc": "2026-09-29T05:42:26.9089483Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 7,
+              "max_operations": 1500,
+              "remaining_seconds": 119.6057142,
+              "elapsed_seconds": 0.3942422,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 2.4385825,
+      "utc": "2026-09-29T05:42:27.4383850Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 18,
+              "max_operations": 1500,
+              "remaining_seconds": 119.0744213,
+              "elapsed_seconds": 0.9255351,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 2.9652744,
+      "utc": "2026-09-29T05:42:27.9650415Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 29,
+              "max_operations": 1500,
+              "remaining_seconds": 118.5446352,
+              "elapsed_seconds": 1.4553212,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 3.4995058,
+      "utc": "2026-09-29T05:42:28.4993068Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 39,
+              "max_operations": 1500,
+              "remaining_seconds": 118.0156781,
+              "elapsed_seconds": 1.9842783,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 4.0341983,
+      "utc": "2026-09-29T05:42:29.0340043Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 50,
+              "max_operations": 1500,
+              "remaining_seconds": 117.4795958,
+              "elapsed_seconds": 2.5203606,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 4.5648714,
+      "utc": "2026-09-29T05:42:29.5646771Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 60,
+              "max_operations": 1500,
+              "remaining_seconds": 116.9503224,
+              "elapsed_seconds": 3.049634,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 5.0850411,
+      "utc": "2026-09-29T05:42:30.0848458Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 71,
+              "max_operations": 1500,
+              "remaining_seconds": 116.4369717,
+              "elapsed_seconds": 3.5629847,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 5.5961405,
+      "utc": "2026-09-29T05:42:30.5959212Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 81,
+              "max_operations": 1500,
+              "remaining_seconds": 115.9213745,
+              "elapsed_seconds": 4.0785819,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 6.1085328,
+      "utc": "2026-09-29T05:42:31.1083359Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 91,
+              "max_operations": 1500,
+              "remaining_seconds": 115.4040662,
+              "elapsed_seconds": 4.5958902,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 6.620809,
+      "utc": "2026-09-29T05:42:31.6206168Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 102,
+              "max_operations": 1500,
+              "remaining_seconds": 114.8818398,
+              "elapsed_seconds": 5.1181166,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 7.1349956,
+      "utc": "2026-09-29T05:42:32.1348002Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 112,
+              "max_operations": 1500,
+              "remaining_seconds": 114.3679207,
+              "elapsed_seconds": 5.6320357,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 7.6267529,
+      "utc": "2026-09-29T05:42:32.6265637Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 122,
+              "max_operations": 1500,
+              "remaining_seconds": 113.871035,
+              "elapsed_seconds": 6.1289214,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 8.1215714,
+      "utc": "2026-09-29T05:42:33.1213825Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 132,
+              "max_operations": 1500,
+              "remaining_seconds": 113.3760227,
+              "elapsed_seconds": 6.6239337,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 8.6270339,
+      "utc": "2026-09-29T05:42:33.6268416Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 142,
+              "max_operations": 1500,
+              "remaining_seconds": 112.8720297,
+              "elapsed_seconds": 7.1279267,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 9.122601,
+      "utc": "2026-09-29T05:42:34.1224117Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 152,
+              "max_operations": 1500,
+              "remaining_seconds": 112.3738287,
+              "elapsed_seconds": 7.6261277,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 9.6267972,
+      "utc": "2026-09-29T05:42:34.6266121Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 162,
+              "max_operations": 1500,
+              "remaining_seconds": 111.8688808,
+              "elapsed_seconds": 8.1310756,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 10.1332161,
+      "utc": "2026-09-29T05:42:35.1330169Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 172,
+              "max_operations": 1500,
+              "remaining_seconds": 111.3715812,
+              "elapsed_seconds": 8.6283752,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 10.6364523,
+      "utc": "2026-09-29T05:42:35.6362614Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 182,
+              "max_operations": 1500,
+              "remaining_seconds": 110.8698968,
+              "elapsed_seconds": 9.1300596,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 11.1479775,
+      "utc": "2026-09-29T05:42:36.1477632Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 192,
+              "max_operations": 1500,
+              "remaining_seconds": 110.3567241,
+              "elapsed_seconds": 9.6432323,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 11.6335032,
+      "utc": "2026-09-29T05:42:36.6333119Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 202,
+              "max_operations": 1500,
+              "remaining_seconds": 109.8689464,
+              "elapsed_seconds": 10.13101,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 12.1295328,
+      "utc": "2026-09-29T05:42:37.1293210Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 212,
+              "max_operations": 1500,
+              "remaining_seconds": 109.3727997,
+              "elapsed_seconds": 10.6271567,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 12.6174537,
+      "utc": "2026-09-29T05:42:37.6172418Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 222,
+              "max_operations": 1500,
+              "remaining_seconds": 108.8856508,
+              "elapsed_seconds": 11.1143056,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 13.104664,
+      "utc": "2026-09-29T05:42:38.1044750Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 232,
+              "max_operations": 1500,
+              "remaining_seconds": 108.3982616,
+              "elapsed_seconds": 11.6016948,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 13.5916659,
+      "utc": "2026-09-29T05:42:38.5914738Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 241,
+              "max_operations": 1500,
+              "remaining_seconds": 107.9047237,
+              "elapsed_seconds": 12.0952327,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 14.0805042,
+      "utc": "2026-09-29T05:42:39.0803186Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 251,
+              "max_operations": 1500,
+              "remaining_seconds": 107.4146217,
+              "elapsed_seconds": 12.5853347,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 14.5637538,
+      "utc": "2026-09-29T05:42:39.5635676Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 261,
+              "max_operations": 1500,
+              "remaining_seconds": 106.931425,
+              "elapsed_seconds": 13.0685314,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 15.0583979,
+      "utc": "2026-09-29T05:42:40.0582048Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 271,
+              "max_operations": 1500,
+              "remaining_seconds": 106.437344,
+              "elapsed_seconds": 13.5626124,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 15.561056,
+      "utc": "2026-09-29T05:42:40.5608594Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 281,
+              "max_operations": 1500,
+              "remaining_seconds": 105.9346655,
+              "elapsed_seconds": 14.0652909,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 16.0588226,
+      "utc": "2026-09-29T05:42:41.0585973Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 291,
+              "max_operations": 1500,
+              "remaining_seconds": 105.4385839,
+              "elapsed_seconds": 14.5613725,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 16.5639858,
+      "utc": "2026-09-29T05:42:41.5637796Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 301,
+              "max_operations": 1500,
+              "remaining_seconds": 104.9311219,
+              "elapsed_seconds": 15.0688345,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 17.0663801,
+      "utc": "2026-09-29T05:42:42.0661844Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 311,
+              "max_operations": 1500,
+              "remaining_seconds": 104.4298175,
+              "elapsed_seconds": 15.5701389,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 17.5618704,
+      "utc": "2026-09-29T05:42:42.5616829Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 321,
+              "max_operations": 1500,
+              "remaining_seconds": 103.9338939,
+              "elapsed_seconds": 16.0660625,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 18.0612007,
+      "utc": "2026-09-29T05:42:43.0610109Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 331,
+              "max_operations": 1500,
+              "remaining_seconds": 103.4349499,
+              "elapsed_seconds": 16.5650065,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 18.5558919,
+      "utc": "2026-09-29T05:42:43.5557028Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 341,
+              "max_operations": 1500,
+              "remaining_seconds": 102.9484298,
+              "elapsed_seconds": 17.0515266,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 19.0451938,
+      "utc": "2026-09-29T05:42:44.0449999Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 350,
+              "max_operations": 1500,
+              "remaining_seconds": 102.4610585,
+              "elapsed_seconds": 17.5388979,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 19.5435803,
+      "utc": "2026-09-29T05:42:44.5433917Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 360,
+              "max_operations": 1500,
+              "remaining_seconds": 101.9608077,
+              "elapsed_seconds": 18.0391487,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 20.0415545,
+      "utc": "2026-09-29T05:42:45.0413620Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 370,
+              "max_operations": 1500,
+              "remaining_seconds": 101.4632093,
+              "elapsed_seconds": 18.5367471,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 20.5223941,
+      "utc": "2026-09-29T05:42:45.5222041Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 380,
+              "max_operations": 1500,
+              "remaining_seconds": 100.979684,
+              "elapsed_seconds": 19.0202724,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 21.0088275,
+      "utc": "2026-09-29T05:42:46.0086346Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 390,
+              "max_operations": 1500,
+              "remaining_seconds": 100.4946825,
+              "elapsed_seconds": 19.5052739,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 21.4926267,
+      "utc": "2026-09-29T05:42:46.4924388Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 399,
+              "max_operations": 1500,
+              "remaining_seconds": 100.0108581,
+              "elapsed_seconds": 19.9890983,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 21.9750415,
+      "utc": "2026-09-29T05:42:46.9748573Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 409,
+              "max_operations": 1500,
+              "remaining_seconds": 99.5271558,
+              "elapsed_seconds": 20.4728006,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 22.4646821,
+      "utc": "2026-09-29T05:42:47.4644936Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 419,
+              "max_operations": 1500,
+              "remaining_seconds": 99.0322364,
+              "elapsed_seconds": 20.96772,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 22.9636171,
+      "utc": "2026-09-29T05:42:47.9634329Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 429,
+              "max_operations": 1500,
+              "remaining_seconds": 98.5317739,
+              "elapsed_seconds": 21.4681825,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 23.4584925,
+      "utc": "2026-09-29T05:42:48.4583011Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 439,
+              "max_operations": 1500,
+              "remaining_seconds": 98.0381511,
+              "elapsed_seconds": 21.9618053,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 23.9572931,
+      "utc": "2026-09-29T05:42:48.9571079Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 449,
+              "max_operations": 1500,
+              "remaining_seconds": 97.537659,
+              "elapsed_seconds": 22.4622974,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 24.448507,
+      "utc": "2026-09-29T05:42:49.4483238Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 459,
+              "max_operations": 1500,
+              "remaining_seconds": 97.0464468,
+              "elapsed_seconds": 22.9535096,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 24.9317687,
+      "utc": "2026-09-29T05:42:49.9315830Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 468,
+              "max_operations": 1500,
+              "remaining_seconds": 96.5630672,
+              "elapsed_seconds": 23.4368892,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 25.4158433,
+      "utc": "2026-09-29T05:42:50.4156598Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 478,
+              "max_operations": 1500,
+              "remaining_seconds": 96.0786433,
+              "elapsed_seconds": 23.9213131,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 25.9037817,
+      "utc": "2026-09-29T05:42:50.9035972Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 488,
+              "max_operations": 1500,
+              "remaining_seconds": 95.5907474,
+              "elapsed_seconds": 24.409209,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 26.3913947,
+      "utc": "2026-09-29T05:42:51.3912096Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 498,
+              "max_operations": 1500,
+              "remaining_seconds": 95.1034359,
+              "elapsed_seconds": 24.8965205,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 26.8916566,
+      "utc": "2026-09-29T05:42:51.8914726Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 508,
+              "max_operations": 1500,
+              "remaining_seconds": 94.603483,
+              "elapsed_seconds": 25.3964734,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 27.3899479,
+      "utc": "2026-09-29T05:42:52.3897612Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 517,
+              "max_operations": 1500,
+              "remaining_seconds": 94.1052336,
+              "elapsed_seconds": 25.8947228,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 27.8769471,
+      "utc": "2026-09-29T05:42:52.8767626Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 527,
+              "max_operations": 1500,
+              "remaining_seconds": 93.6178679,
+              "elapsed_seconds": 26.3820885,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 28.3751713,
+      "utc": "2026-09-29T05:42:53.3749842Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 537,
+              "max_operations": 1500,
+              "remaining_seconds": 93.1210327,
+              "elapsed_seconds": 26.8789237,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 28.8716879,
+      "utc": "2026-09-29T05:42:53.8714765Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 547,
+              "max_operations": 1500,
+              "remaining_seconds": 92.6320776,
+              "elapsed_seconds": 27.3678788,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 29.3740352,
+      "utc": "2026-09-29T05:42:54.3738441Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 557,
+              "max_operations": 1500,
+              "remaining_seconds": 92.1336484,
+              "elapsed_seconds": 27.866308,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 29.8860574,
+      "utc": "2026-09-29T05:42:54.8858657Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 567,
+              "max_operations": 1500,
+              "remaining_seconds": 91.6211511,
+              "elapsed_seconds": 28.3788053,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 30.369342,
+      "utc": "2026-09-29T05:42:55.3691531Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 577,
+              "max_operations": 1500,
+              "remaining_seconds": 91.133931,
+              "elapsed_seconds": 28.8660254,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 30.8691511,
+      "utc": "2026-09-29T05:42:55.8689595Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 587,
+              "max_operations": 1500,
+              "remaining_seconds": 90.6394297,
+              "elapsed_seconds": 29.3605267,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 31.3713994,
+      "utc": "2026-09-29T05:42:56.3712103Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 597,
+              "max_operations": 1500,
+              "remaining_seconds": 90.13962,
+              "elapsed_seconds": 29.8603364,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 31.8679471,
+      "utc": "2026-09-29T05:42:56.8677532Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 607,
+              "max_operations": 1500,
+              "remaining_seconds": 89.6351418,
+              "elapsed_seconds": 30.3648146,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 32.3459358,
+      "utc": "2026-09-29T05:42:57.3457538Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 617,
+              "max_operations": 1500,
+              "remaining_seconds": 89.1485988,
+              "elapsed_seconds": 30.8513576,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 32.8374802,
+      "utc": "2026-09-29T05:42:57.8372982Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 627,
+              "max_operations": 1500,
+              "remaining_seconds": 88.6570803,
+              "elapsed_seconds": 31.3428761,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 33.3247746,
+      "utc": "2026-09-29T05:42:58.3245863Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 636,
+              "max_operations": 1500,
+              "remaining_seconds": 88.1712824,
+              "elapsed_seconds": 31.828674,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 33.8259616,
+      "utc": "2026-09-29T05:42:58.8257766Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 646,
+              "max_operations": 1500,
+              "remaining_seconds": 87.6691451,
+              "elapsed_seconds": 32.3308113,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 34.330559,
+      "utc": "2026-09-29T05:42:59.3303593Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 656,
+              "max_operations": 1500,
+              "remaining_seconds": 87.1644201,
+              "elapsed_seconds": 32.8355363,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 34.8225152,
+      "utc": "2026-09-29T05:42:59.8223312Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 666,
+              "max_operations": 1500,
+              "remaining_seconds": 86.6724788,
+              "elapsed_seconds": 33.3274776,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 35.3161175,
+      "utc": "2026-09-29T05:43:00.3159359Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 676,
+              "max_operations": 1500,
+              "remaining_seconds": 86.1779205,
+              "elapsed_seconds": 33.8220359,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 35.8062765,
+      "utc": "2026-09-29T05:43:00.8060897Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 686,
+              "max_operations": 1500,
+              "remaining_seconds": 85.6885357,
+              "elapsed_seconds": 34.3114207,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 36.296733,
+      "utc": "2026-09-29T05:43:01.2965316Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 695,
+              "max_operations": 1500,
+              "remaining_seconds": 85.1983321,
+              "elapsed_seconds": 34.8016243,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 36.7858982,
+      "utc": "2026-09-29T05:43:01.7857070Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 705,
+              "max_operations": 1500,
+              "remaining_seconds": 84.7110537,
+              "elapsed_seconds": 35.2889027,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 37.281125,
+      "utc": "2026-09-29T05:43:02.2809401Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 715,
+              "max_operations": 1500,
+              "remaining_seconds": 84.2142245,
+              "elapsed_seconds": 35.7857319,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 37.7682561,
+      "utc": "2026-09-29T05:43:02.7680727Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 725,
+              "max_operations": 1500,
+              "remaining_seconds": 83.7267964,
+              "elapsed_seconds": 36.27316,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 38.2523294,
+      "utc": "2026-09-29T05:43:03.2521471Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 735,
+              "max_operations": 1500,
+              "remaining_seconds": 83.2425256,
+              "elapsed_seconds": 36.7574308,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 38.7357374,
+      "utc": "2026-09-29T05:43:03.7355518Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 744,
+              "max_operations": 1500,
+              "remaining_seconds": 82.7595706,
+              "elapsed_seconds": 37.2403858,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 39.2301742,
+      "utc": "2026-09-29T05:43:04.2299869Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 754,
+              "max_operations": 1500,
+              "remaining_seconds": 82.2732691,
+              "elapsed_seconds": 37.7266873,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 39.7264313,
+      "utc": "2026-09-29T05:43:04.7262247Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 764,
+              "max_operations": 1500,
+              "remaining_seconds": 81.7774642,
+              "elapsed_seconds": 38.2224922,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 40.2115043,
+      "utc": "2026-09-29T05:43:05.2113099Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 774,
+              "max_operations": 1500,
+              "remaining_seconds": 81.2936777,
+              "elapsed_seconds": 38.7062787,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 40.6955257,
+      "utc": "2026-09-29T05:43:05.6953386Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 783,
+              "max_operations": 1500,
+              "remaining_seconds": 80.8090151,
+              "elapsed_seconds": 39.1909413,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 41.1783167,
+      "utc": "2026-09-29T05:43:06.1781301Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 793,
+              "max_operations": 1500,
+              "remaining_seconds": 80.3243284,
+              "elapsed_seconds": 39.675628,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 41.6666442,
+      "utc": "2026-09-29T05:43:06.6664578Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 803,
+              "max_operations": 1500,
+              "remaining_seconds": 79.8368433,
+              "elapsed_seconds": 40.1631131,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 42.1488057,
+      "utc": "2026-09-29T05:43:07.1486184Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 813,
+              "max_operations": 1500,
+              "remaining_seconds": 79.3539891,
+              "elapsed_seconds": 40.6459673,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 42.6418843,
+      "utc": "2026-09-29T05:43:07.6416970Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 822,
+              "max_operations": 1500,
+              "remaining_seconds": 78.8537019,
+              "elapsed_seconds": 41.1462545,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 43.1372153,
+      "utc": "2026-09-29T05:43:08.1370311Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 832,
+              "max_operations": 1500,
+              "remaining_seconds": 78.3578776,
+              "elapsed_seconds": 41.6420788,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 43.6358227,
+      "utc": "2026-09-29T05:43:08.6356359Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 842,
+              "max_operations": 1500,
+              "remaining_seconds": 77.8599805,
+              "elapsed_seconds": 42.1399759,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 44.1199067,
+      "utc": "2026-09-29T05:43:09.1197207Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 852,
+              "max_operations": 1500,
+              "remaining_seconds": 77.3748093,
+              "elapsed_seconds": 42.6251471,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 44.6036483,
+      "utc": "2026-09-29T05:43:09.6034653Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 862,
+              "max_operations": 1500,
+              "remaining_seconds": 76.8908955,
+              "elapsed_seconds": 43.1090609,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 45.0885863,
+      "utc": "2026-09-29T05:43:10.0883999Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 871,
+              "max_operations": 1500,
+              "remaining_seconds": 76.4068343,
+              "elapsed_seconds": 43.5931221,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 45.5816137,
+      "utc": "2026-09-29T05:43:10.5814270Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 881,
+              "max_operations": 1500,
+              "remaining_seconds": 75.9138299,
+              "elapsed_seconds": 44.0861265,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 46.080561,
+      "utc": "2026-09-29T05:43:11.0803733Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 891,
+              "max_operations": 1500,
+              "remaining_seconds": 75.4150214,
+              "elapsed_seconds": 44.584935,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 46.578492,
+      "utc": "2026-09-29T05:43:11.5783076Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 901,
+              "max_operations": 1500,
+              "remaining_seconds": 74.916313,
+              "elapsed_seconds": 45.0836434,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 47.0787234,
+      "utc": "2026-09-29T05:43:12.0785387Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 911,
+              "max_operations": 1500,
+              "remaining_seconds": 74.417476,
+              "elapsed_seconds": 45.5824804,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 47.5773637,
+      "utc": "2026-09-29T05:43:12.5771826Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 921,
+              "max_operations": 1500,
+              "remaining_seconds": 73.917189,
+              "elapsed_seconds": 46.0827674,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 48.0654856,
+      "utc": "2026-09-29T05:43:13.0652989Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 931,
+              "max_operations": 1500,
+              "remaining_seconds": 73.4300576,
+              "elapsed_seconds": 46.5698988,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 48.564033,
+      "utc": "2026-09-29T05:43:13.5638254Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 941,
+              "max_operations": 1500,
+              "remaining_seconds": 72.9333438,
+              "elapsed_seconds": 47.0666126,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 49.0613189,
+      "utc": "2026-09-29T05:43:14.0611353Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 951,
+              "max_operations": 1500,
+              "remaining_seconds": 72.4338386,
+              "elapsed_seconds": 47.5661178,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 49.5649283,
+      "utc": "2026-09-29T05:43:14.5647367Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 961,
+              "max_operations": 1500,
+              "remaining_seconds": 71.9379256,
+              "elapsed_seconds": 48.0620308,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 50.0569094,
+      "utc": "2026-09-29T05:43:15.0567041Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 971,
+              "max_operations": 1500,
+              "remaining_seconds": 71.4478625,
+              "elapsed_seconds": 48.5520939,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 50.54114,
+      "utc": "2026-09-29T05:43:15.5409526Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 980,
+              "max_operations": 1500,
+              "remaining_seconds": 70.9625184,
+              "elapsed_seconds": 49.037438,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 51.0239124,
+      "utc": "2026-09-29T05:43:16.0237085Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 990,
+              "max_operations": 1500,
+              "remaining_seconds": 70.4782861,
+              "elapsed_seconds": 49.5216703,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 51.5110424,
+      "utc": "2026-09-29T05:43:16.5108517Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1000,
+              "max_operations": 1500,
+              "remaining_seconds": 69.994674,
+              "elapsed_seconds": 50.0052824,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 51.9931691,
+      "utc": "2026-09-29T05:43:16.9929827Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1009,
+              "max_operations": 1500,
+              "remaining_seconds": 69.5101804,
+              "elapsed_seconds": 50.489776,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 52.4750787,
+      "utc": "2026-09-29T05:43:17.4748908Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1019,
+              "max_operations": 1500,
+              "remaining_seconds": 69.027499,
+              "elapsed_seconds": 50.9724574,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 52.9616055,
+      "utc": "2026-09-29T05:43:17.9614202Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1029,
+              "max_operations": 1500,
+              "remaining_seconds": 68.5407916,
+              "elapsed_seconds": 51.4591648,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 53.4499385,
+      "utc": "2026-09-29T05:43:18.4497483Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1039,
+              "max_operations": 1500,
+              "remaining_seconds": 68.0456677,
+              "elapsed_seconds": 51.9542887,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 54.0774255,
+      "utc": "2026-09-29T05:43:19.0772386Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1051,
+              "max_operations": 1500,
+              "remaining_seconds": 67.4181958,
+              "elapsed_seconds": 52.5817606,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 54.5673974,
+      "utc": "2026-09-29T05:43:19.5672029Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1061,
+              "max_operations": 1500,
+              "remaining_seconds": 66.9309192,
+              "elapsed_seconds": 53.0690372,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 55.0647015,
+      "utc": "2026-09-29T05:43:20.0645093Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1071,
+              "max_operations": 1500,
+              "remaining_seconds": 66.4317556,
+              "elapsed_seconds": 53.5682008,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 55.5614316,
+      "utc": "2026-09-29T05:43:20.5612031Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1081,
+              "max_operations": 1500,
+              "remaining_seconds": 65.9346981,
+              "elapsed_seconds": 54.0652583,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 56.0617708,
+      "utc": "2026-09-29T05:43:21.0615791Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1091,
+              "max_operations": 1500,
+              "remaining_seconds": 65.4356944,
+              "elapsed_seconds": 54.564262,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 56.5604616,
+      "utc": "2026-09-29T05:43:21.5602698Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1101,
+              "max_operations": 1500,
+              "remaining_seconds": 64.9357718,
+              "elapsed_seconds": 55.0641846,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 57.0649362,
+      "utc": "2026-09-29T05:43:22.0647504Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1111,
+              "max_operations": 1500,
+              "remaining_seconds": 64.4304503,
+              "elapsed_seconds": 55.5695061,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 57.5621545,
+      "utc": "2026-09-29T05:43:22.5619697Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1121,
+              "max_operations": 1500,
+              "remaining_seconds": 63.9327153,
+              "elapsed_seconds": 56.0672411,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 58.0625253,
+      "utc": "2026-09-29T05:43:23.0623397Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1131,
+              "max_operations": 1500,
+              "remaining_seconds": 63.4331639,
+              "elapsed_seconds": 56.5667925,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 58.5651438,
+      "utc": "2026-09-29T05:43:23.5649594Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1141,
+              "max_operations": 1500,
+              "remaining_seconds": 62.9293492,
+              "elapsed_seconds": 57.0706072,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 59.0490992,
+      "utc": "2026-09-29T05:43:24.0489161Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1151,
+              "max_operations": 1500,
+              "remaining_seconds": 62.4452709,
+              "elapsed_seconds": 57.5546855,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 59.5463122,
+      "utc": "2026-09-29T05:43:24.5461285Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1161,
+              "max_operations": 1500,
+              "remaining_seconds": 61.948494,
+              "elapsed_seconds": 58.0514624,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 60.0423186,
+      "utc": "2026-09-29T05:43:25.0421304Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1170,
+              "max_operations": 1500,
+              "remaining_seconds": 61.4603684,
+              "elapsed_seconds": 58.539588,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 60.524215,
+      "utc": "2026-09-29T05:43:25.5240283Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1180,
+              "max_operations": 1500,
+              "remaining_seconds": 60.9782201,
+              "elapsed_seconds": 59.0217363,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 61.0090206,
+      "utc": "2026-09-29T05:43:26.0088307Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1189,
+              "max_operations": 1500,
+              "remaining_seconds": 60.4945483,
+              "elapsed_seconds": 59.5054081,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 61.4933402,
+      "utc": "2026-09-29T05:43:26.4931520Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1199,
+              "max_operations": 1500,
+              "remaining_seconds": 60.009671,
+              "elapsed_seconds": 59.9902854,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 61.9751561,
+      "utc": "2026-09-29T05:43:26.9749699Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1209,
+              "max_operations": 1500,
+              "remaining_seconds": 59.5268739,
+              "elapsed_seconds": 60.4730825,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 62.4616182,
+      "utc": "2026-09-29T05:43:27.4614296Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1219,
+              "max_operations": 1500,
+              "remaining_seconds": 59.0422848,
+              "elapsed_seconds": 60.9576716,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 62.9462842,
+      "utc": "2026-09-29T05:43:27.9460982Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1228,
+              "max_operations": 1500,
+              "remaining_seconds": 58.5558453,
+              "elapsed_seconds": 61.4441111,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 63.4290007,
+      "utc": "2026-09-29T05:43:28.4288175Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1238,
+              "max_operations": 1500,
+              "remaining_seconds": 58.0732108,
+              "elapsed_seconds": 61.9267456,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 63.9119796,
+      "utc": "2026-09-29T05:43:28.9117924Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1247,
+              "max_operations": 1500,
+              "remaining_seconds": 57.5832659,
+              "elapsed_seconds": 62.4166905,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 64.4027129,
+      "utc": "2026-09-29T05:43:29.4025269Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1257,
+              "max_operations": 1500,
+              "remaining_seconds": 57.0941879,
+              "elapsed_seconds": 62.9057685,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 64.9020864,
+      "utc": "2026-09-29T05:43:29.9019015Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1267,
+              "max_operations": 1500,
+              "remaining_seconds": 56.592906,
+              "elapsed_seconds": 63.4070504,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 65.4079461,
+      "utc": "2026-09-29T05:43:30.4077573Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1277,
+              "max_operations": 1500,
+              "remaining_seconds": 56.0877729,
+              "elapsed_seconds": 63.9121835,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 65.8999624,
+      "utc": "2026-09-29T05:43:30.8997767Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1287,
+              "max_operations": 1500,
+              "remaining_seconds": 55.5948531,
+              "elapsed_seconds": 64.4051033,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 66.3926376,
+      "utc": "2026-09-29T05:43:31.3924549Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1297,
+              "max_operations": 1500,
+              "remaining_seconds": 55.1020196,
+              "elapsed_seconds": 64.8979368,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 66.8929498,
+      "utc": "2026-09-29T05:43:31.8927654Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1307,
+              "max_operations": 1500,
+              "remaining_seconds": 54.6021369,
+              "elapsed_seconds": 65.3978195,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 67.39098,
+      "utc": "2026-09-29T05:43:32.3907963Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1317,
+              "max_operations": 1500,
+              "remaining_seconds": 54.1037034,
+              "elapsed_seconds": 65.896253,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 67.8900684,
+      "utc": "2026-09-29T05:43:32.8898839Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1327,
+              "max_operations": 1500,
+              "remaining_seconds": 53.6043846,
+              "elapsed_seconds": 66.3955718,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 68.388386,
+      "utc": "2026-09-29T05:43:33.3882033Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1337,
+              "max_operations": 1500,
+              "remaining_seconds": 53.1061699,
+              "elapsed_seconds": 66.8937865,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 68.892949,
+      "utc": "2026-09-29T05:43:33.8927656Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1347,
+              "max_operations": 1500,
+              "remaining_seconds": 52.6021483,
+              "elapsed_seconds": 67.3978081,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 69.3771624,
+      "utc": "2026-09-29T05:43:34.3769803Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1357,
+              "max_operations": 1500,
+              "remaining_seconds": 52.1173092,
+              "elapsed_seconds": 67.8826472,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 69.8620978,
+      "utc": "2026-09-29T05:43:34.8619052Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1367,
+              "max_operations": 1500,
+              "remaining_seconds": 51.6340959,
+              "elapsed_seconds": 68.3658605,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 70.3549311,
+      "utc": "2026-09-29T05:43:35.3547426Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1376,
+              "max_operations": 1500,
+              "remaining_seconds": 51.1494365,
+              "elapsed_seconds": 68.8505199,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 70.8421715,
+      "utc": "2026-09-29T05:43:35.8419792Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1386,
+              "max_operations": 1500,
+              "remaining_seconds": 50.6638029,
+              "elapsed_seconds": 69.3361535,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 71.3337677,
+      "utc": "2026-09-29T05:43:36.3335804Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1396,
+              "max_operations": 1500,
+              "remaining_seconds": 50.1676242,
+              "elapsed_seconds": 69.8323322,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 71.8193396,
+      "utc": "2026-09-29T05:43:36.8191525Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1405,
+              "max_operations": 1500,
+              "remaining_seconds": 49.6831784,
+              "elapsed_seconds": 70.316778,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 72.3030524,
+      "utc": "2026-09-29T05:43:37.3028663Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1416,
+              "max_operations": 1500,
+              "remaining_seconds": 49.1983684,
+              "elapsed_seconds": 70.801588,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 72.7931059,
+      "utc": "2026-09-29T05:43:37.7929193Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1425,
+              "max_operations": 1500,
+              "remaining_seconds": 48.7107108,
+              "elapsed_seconds": 71.2892456,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 73.2917472,
+      "utc": "2026-09-29T05:43:38.2915558Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1435,
+              "max_operations": 1500,
+              "remaining_seconds": 48.213633,
+              "elapsed_seconds": 71.7863234,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 73.7752764,
+      "utc": "2026-09-29T05:43:38.7750894Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1445,
+              "max_operations": 1500,
+              "remaining_seconds": 47.7273145,
+              "elapsed_seconds": 72.2726419,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 74.2624789,
+      "utc": "2026-09-29T05:43:39.2622902Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1455,
+              "max_operations": 1500,
+              "remaining_seconds": 47.2342202,
+              "elapsed_seconds": 72.7657362,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 74.7472778,
+      "utc": "2026-09-29T05:43:39.7470923Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1464,
+              "max_operations": 1500,
+              "remaining_seconds": 46.7476607,
+              "elapsed_seconds": 73.2522957,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 75.2440001,
+      "utc": "2026-09-29T05:43:40.2438161Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1474,
+              "max_operations": 1500,
+              "remaining_seconds": 46.2508259,
+              "elapsed_seconds": 73.7491305,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 75.7366284,
+      "utc": "2026-09-29T05:43:40.7364450Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1484,
+              "max_operations": 1500,
+              "remaining_seconds": 45.7578766,
+              "elapsed_seconds": 74.2420798,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 76.2364073,
+      "utc": "2026-09-29T05:43:41.2362249Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "running",
+            "progress": {
+              "completed_operations": 1494,
+              "max_operations": 1500,
+              "remaining_seconds": 45.2583669,
+              "elapsed_seconds": 74.7415895,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": null,
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 76.6354699,
+      "utc": "2026-09-29T05:43:41.6352844Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "succeeded",
+            "progress": {
+              "completed_operations": 1500,
+              "max_operations": 1500,
+              "remaining_seconds": 44.940296,
+              "elapsed_seconds": 75.0596604,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": "completed",
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "wait_timeout_ms": 100,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+          "include_result": true
+        }
+      }
+    },
+    {
+      "elapsed": 76.7555683,
+      "utc": "2026-09-29T05:43:41.7553849Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "control_mode": "ready",
+            "game_paused": false,
+            "ready_expires_at": null,
+            "world_session_id": "af76fd17-818e-42ff-a4a5-a78cb34f9e41",
+            "latest_frame_id": "obs-d6d0dcf3c0923e7e",
+            "running_action_id": null
+          }
+        },
+        "tool": "agent_get_mcp_status",
+        "arguments": {}
+      }
+    },
+    {
+      "elapsed": 76.8594637,
+      "utc": "2026-09-29T05:43:41.8592716Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "player": {
+              "on_fire": false,
+              "yaw": 0.0,
+              "pitch": 60.0,
+              "position": {
+                "z": 200.5,
+                "x": 200.5,
+                "y": 201.0
+              },
+              "air": 300,
+              "status_effects": [],
+              "dimension": "minecraft:overworld",
+              "absorption": 0.0,
+              "max_air": 300,
+              "health": 20.0,
+              "hunger": 20,
+              "submerged": false
+            },
+            "hotbar": {
+              "slots": [
+                {
+                  "slot": 0,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 1,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 2,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 3,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 4,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 5,
+                  "selected": true,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 6,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 7,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                },
+                {
+                  "slot": 8,
+                  "selected": false,
+                  "item": null,
+                  "count": 0
+                }
+              ],
+              "selected_slot": 5
+            }
+          }
+        },
+        "tool": "agent_get_state",
+        "arguments": {}
+      }
+    },
+    {
+      "elapsed": 76.9483058,
+      "utc": "2026-09-29T05:43:41.9481152Z",
+      "data": {
+        "reply": {
+          "ok": true,
+          "result": {
+            "schema_version": 2,
+            "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+            "kind": "input_sequence",
+            "state": "succeeded",
+            "progress": {
+              "completed_operations": 1500,
+              "max_operations": 1500,
+              "remaining_seconds": 44.940296,
+              "elapsed_seconds": 75.0596604,
+              "max_duration_seconds": 119.9999564
+            },
+            "stop_reason": "completed",
+            "cancel_requested": false,
+            "failure": null,
+            "result": {
+              "phase": "holding"
+            }
+          }
+        },
+        "tool": "agent_get_action",
+        "arguments": {
+          "include_result": true,
+          "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d"
+        }
+      }
+    }
+  ],
+  "gui_note": "GUI observations are reported separately; physical key state was not directly measured.",
+  "over_old_limit": {
+    "utc": "2026-09-29T05:43:39.2012880Z",
+    "reply": {
+      "ok": true,
+      "result": {
+        "schema_version": 2,
+        "action_id": "e5290c45-00f3-4d51-a599-aac849f4f36d",
+        "kind": "input_sequence",
+        "state": "running",
+        "progress": {
+          "completed_operations": 1452,
+          "max_operations": 1500,
+          "remaining_seconds": 47.3507766,
+          "elapsed_seconds": 72.6491798,
+          "max_duration_seconds": 119.9999564
+        },
+        "stop_reason": null,
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "phase": "holding"
+        }
+      }
+    }
+  }
+}

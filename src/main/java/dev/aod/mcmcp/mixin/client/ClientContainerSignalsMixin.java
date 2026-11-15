@@ -2,6 +2,7 @@ package dev.aod.mcmcp.mixin.client;
 
 import dev.aod.mcmcp.runtime.ContainerSyncSignals;
 import dev.aod.mcmcp.runtime.MerchantOfferSignals;
+import dev.aod.mcmcp.runtime.PlayerMenuSyncSignals;
 import dev.aod.mcmcp.runtime.ScreenOwnershipSignals;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
@@ -30,6 +31,7 @@ public abstract class ClientContainerSignalsMixin {
         var minecraft = Minecraft.getInstance();
         ScreenOwnershipSignals.global().clearLevel(minecraft.level);
         MerchantOfferSignals.global().clearSession(minecraft.level);
+        PlayerMenuSyncSignals.global().clear();
     }
 
     /*
@@ -62,6 +64,7 @@ public abstract class ClientContainerSignalsMixin {
     @Inject(method = "handleContainerContent", at = @At("TAIL"), require = 1, expect = 1)
     private void mcmcp$fullContainerContent(
             ClientboundContainerSetContentPacket packet, CallbackInfo callback) {
+        PlayerMenuSyncSignals.global().full(Minecraft.getInstance(), packet);
         var context = currentMenuContext();
         if (context == null) {
             return;
@@ -79,6 +82,7 @@ public abstract class ClientContainerSignalsMixin {
     @Inject(method = "handleContainerSetSlot", at = @At("TAIL"), require = 1, expect = 1)
     private void mcmcp$incrementalContainerSlot(
             ClientboundContainerSetSlotPacket packet, CallbackInfo callback) {
+        PlayerMenuSyncSignals.global().slot(Minecraft.getInstance(), packet);
         var context = currentMenuContext();
         if (context == null) {
             return;
@@ -106,6 +110,7 @@ public abstract class ClientContainerSignalsMixin {
     @Inject(method = "handleSetCursorItem", at = @At("TAIL"), require = 1, expect = 1)
     private void mcmcp$serverCursorItem(
             ClientboundSetCursorItemPacket packet, CallbackInfo callback) {
+        PlayerMenuSyncSignals.global().carried(Minecraft.getInstance(), packet.contents());
         var context = currentMenuContext();
         if (context == null) {
             return;
@@ -119,6 +124,7 @@ public abstract class ClientContainerSignalsMixin {
     @Inject(method = "handleSetPlayerInventory", at = @At("TAIL"), require = 1, expect = 1)
     private void mcmcp$serverPlayerInventorySlot(
             ClientboundSetPlayerInventoryPacket packet, CallbackInfo callback) {
+        PlayerMenuSyncSignals.global().playerSlot(Minecraft.getInstance(), packet.slot(), packet.contents());
         var minecraft = Minecraft.getInstance();
         var context = currentMenuContext();
         if (context == null || minecraft.player == null) {

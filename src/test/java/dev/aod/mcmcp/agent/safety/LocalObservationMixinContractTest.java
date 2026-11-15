@@ -24,6 +24,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class LocalObservationMixinContractTest {
     @Test
+    void flightHooksCoverVanillaVerticalInputDragAndTheNoClipEarlyReturn() throws Exception {
+        var local = classNode(net.minecraft.client.player.LocalPlayer.class);
+        assertThat(invocations(method(local, "aiStep"))).filteredOn(c -> c.endsWith("#setDeltaMovement"))
+                .containsExactly("net/minecraft/client/player/LocalPlayer#setDeltaMovement");
+        var flight = method(classNode("/dev/aod/mcmcp/mixin/client/LocalPlayerMovementTickMixin.class"),
+                "mcmcp$trackAgentFlightInput");
+        assertThat(invocations(flight)).contains("dev/aod/mcmcp/client/AgentInputState#addAgentMoveContribution");
+        var drag = method(classNode("/dev/aod/mcmcp/mixin/client/PlayerFlightMovementMixin.class"), "mcmcp$afterFlight");
+        assertThat(invocations(drag)).contains("dev/aod/mcmcp/client/AgentInputState#replaceAgentMoveContribution");
+        var guard = method(classNode("/dev/aod/mcmcp/mixin/client/EntityAgentCollisionMixin.class"),
+                "mcmcp$guardNoClipMovement");
+        var injection = annotation(guard, "Lorg/spongepowered/asm/mixin/injection/ModifyVariable;");
+        assertThat(at(injection).values.toString()).contains("HEAD");
+        assertThat(invocations(guard)).contains(
+                "dev/aod/mcmcp/client/AgentInputState#movementBoundary",
+                "dev/aod/mcmcp/runtime/ClientReconciliationSignals#currentSnapshot",
+                "dev/aod/mcmcp/agent/safety/LocalObservationVolume#verifiesNavigationResolvedMovement",
+                "dev/aod/mcmcp/client/AgentInputState#acceptGoalMovement",
+                "dev/aod/mcmcp/client/AgentInputState#rejectGoalMovement");
+    }
+
+    @Test
     void waterDragGravityAndSinkHooksMatchThePinnedVanillaCallSites() throws Exception {
         var living = classNode(net.minecraft.world.entity.LivingEntity.class);
         var water = method(living, "travelInWater");
@@ -177,6 +199,35 @@ class LocalObservationMixinContractTest {
                     .contains("\"client.LivingEntityAgentMovementMixin\"")
                     .contains("\"client.LocalPlayerMovementTickMixin\"");
         }
+    }
+
+    @Test
+    void recoveryLadderHoldUsesTheCurrentBodyAndTheExistingCompleteRungProof() throws Exception {
+        var volume = classNode("/dev/aod/mcmcp/agent/safety/LocalObservationVolume.class");
+        var hold = invocations(method(volume, "canHoldLadder"));
+        assertThat(hold)
+                .anyMatch(call -> call.endsWith("#isAlive"))
+                .anyMatch(call -> call.endsWith("#isPassenger"))
+                .anyMatch(call -> call.endsWith("#getAbilities"))
+                .anyMatch(call -> call.endsWith("#isFallFlying"))
+                .anyMatch(call -> call.endsWith("#getBoundingBox"))
+                .contains("dev/aod/mcmcp/agent/safety/LocalObservationVolume#safeLadderCell")
+                .noneMatch(call -> call.endsWith("#onClimbable"));
+        var proof = invocations(method(volume, "safeLadderCell"));
+        assertThat(proof).contains(
+                "dev/aod/mcmcp/agent/safety/LocalObservationVolume#exactSurvivingLadderAtFeet",
+                "dev/aod/mcmcp/agent/safety/LocalObservationVolume#loadedState",
+                "dev/aod/mcmcp/agent/safety/LocalObservationVolume#fluid",
+                "dev/aod/mcmcp/agent/safety/LocalObservationVolume#damageBlockHazard")
+                .anyMatch(call -> call.endsWith("#noCollision"))
+                .anyMatch(call -> call.endsWith("#collidesWithSuffocatingBlock"));
+        assertThat(invocations(method(volume, "exactSurvivingLadderAtFeet")))
+                .anyMatch(call -> call.endsWith("#isLoaded"))
+                .anyMatch(call -> call.endsWith("#canSurvive"));
+        assertThat(invocations(method(classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class"),
+                "trackRecoveryDescent"))).containsSubsequence(
+                "dev/aod/mcmcp/agent/safety/LocalObservationVolume#canHoldLadder",
+                "dev/aod/mcmcp/runtime/RecoveryPlanning$RecoveryDescentTracker#update");
     }
 
     @Test

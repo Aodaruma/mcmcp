@@ -1,0 +1,111 @@
+{
+  "events": [
+    {
+      "arguments": {
+        "y": 201,
+        "z": 200,
+        "x": 207
+      },
+      "receipt": {
+        "action_id": "c9958341-be60-4406-ad3e-6b92c2e5603d",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "tool": "agent_move"
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "c9958341-be60-4406-ad3e-6b92c2e5603d",
+        "kind": "move",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 26,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null
+      }
+    }
+  ],
+  "state": {
+    "schema_version": 2,
+    "player": {
+      "status_effects": [],
+      "dimension": "minecraft:overworld",
+      "absorption": 0.0,
+      "max_air": 300,
+      "health": 20.0,
+      "hunger": 20,
+      "submerged": false,
+      "on_fire": false,
+      "yaw": 178.89755,
+      "pitch": -30.352127,
+      "position": {
+        "x": 207.53589226441508,
+        "y": 201.0,
+        "z": 200.59021664815705
+      },
+      "air": 300
+    },
+    "hotbar": {
+      "selected_slot": 0,
+      "slots": [
+        {
+          "slot": 0,
+          "selected": true,
+          "item": "minecraft:bucket",
+          "count": 1
+        },
+        {
+          "slot": 1,
+          "selected": false,
+          "item": "minecraft:netherite_pickaxe",
+          "count": 1
+        },
+        {
+          "slot": 2,
+          "selected": false,
+          "item": "minecraft:dirt",
+          "count": 10
+        },
+        {
+          "slot": 3,
+          "selected": false,
+          "item": null,
+          "count": 0
+        },
+        {
+          "slot": 4,
+          "selected": false,
+          "item": "minecraft:black_wool",
+          "count": 14
+        },
+        {
+          "slot": 5,
+          "selected": false,
+          "item": null,
+          "count": 0
+        },
+        {
+          "slot": 6,
+          "selected": false,
+          "item": null,
+          "count": 0
+        },
+        {
+          "slot": 7,
+          "selected": false,
+          "item": null,
+          "count": 0
+        },
+        {
+          "slot": 8,
+          "selected": false,
+          "item": null,
+          "count": 0
+        }
+      ]
+    }
+  }
+}

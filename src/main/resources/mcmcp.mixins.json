@@ -6,6 +6,7 @@
   "client": [
     "client.BlockItemPlacementInvoker",
     "client.ClientContainerSignalsMixin",
+    "client.ChatComponentMixin",
     "client.NeoForgeMenuSignalsMixin",
     "client.StorageFullContentSignalsMixin",
     "client.StorageSlotSignalsMixin",
@@ -20,9 +21,12 @@
     "client.KeyboardHandlerMixin",
     "client.LivingEntityAgentMovementMixin",
     "client.LocalPlayerMovementTickMixin",
+    "client.PlayerFlightMovementMixin",
     "client.MinecraftAttackInputMixin",
-    "client.MinecraftBoundedUseMixin",
+    "client.MinecraftPickInvoker",
     "client.MinecraftUseItemInvoker",
+    "client.MultiPlayerGameModeUseMixin",
+    "client.MinecraftBoundedUseMixin",
     "client.MultiPlayerGameModeBoundedInputMixin",
     "client.MouseHandlerMixin"
   ],

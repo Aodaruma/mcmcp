@@ -29,7 +29,7 @@ public final class NavigationDistanceBudget {
     public static double edgeCost(TraversabilityEdge edge) {
         Objects.requireNonNull(edge, "edge");
         return edge.key().length() * TRAJECTORY_FACTOR
-                + (vertical(edge) ? VERTICAL_ARC_ALLOWANCE : 0.0D);
+                + (vertical(edge) && !edge.locomotion().aerial() ? VERTICAL_ARC_ALLOWANCE : 0.0D);
     }
 
     public static double centerlineRouteCost(RoutePlan route) {

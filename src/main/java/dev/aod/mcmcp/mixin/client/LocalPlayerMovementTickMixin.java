@@ -14,6 +14,26 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(LocalPlayer.class)
 abstract class LocalPlayerMovementTickMixin {
     @WrapOperation(method = "aiStep()V",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;tryToStartFallFlying()Z"),
+            require = 1, expect = 1)
+    private boolean mcmcp$preventAccidentalAgentGlide(LocalPlayer player, Operation<Boolean> original) {
+        // Ordinary navigation jumps cannot silently switch locomotion; the flight owner opts in.
+        return (!AgentInputState.global().movementSnapshot().owned()
+                || AgentInputState.global().elytraDeploymentAllowed(player, player.level())) && original.call(player);
+    }
+
+    @WrapOperation(method = "aiStep()V",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;setDeltaMovement(Lnet/minecraft/world/phys/Vec3;)V"),
+            require = 1, expect = 1)
+    private void mcmcp$trackAgentFlightInput(LocalPlayer player, net.minecraft.world.phys.Vec3 velocity,
+            Operation<Void> original) {
+        var before = player.getDeltaMovement();
+        original.call(player, velocity);
+        if (player.getAbilities().flying && AgentInputState.global().goalMovementOutputActive())
+            AgentInputState.global().addAgentMoveContribution(velocity.subtract(before));
+    }
+
+    @WrapOperation(method = "aiStep()V",
             at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;goDownInWater()V"),
             require = 1, expect = 1)
     private void mcmcp$trackAgentWaterSink(LocalPlayer player, Operation<Void> original) {

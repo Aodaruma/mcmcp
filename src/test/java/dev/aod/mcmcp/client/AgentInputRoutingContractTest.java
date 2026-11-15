@@ -32,6 +32,8 @@ class AgentInputRoutingContractTest {
                 "org/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable#setReturnValue");
         assertThat(invocations(method(classNode("/dev/aod/mcmcp/client/AgentUseInputChannel.class"), "onClientPostTick")))
                 .containsSubsequence(
+                        "dev/aod/mcmcp/client/AgentInputState#useMayStart",
+                        "dev/aod/mcmcp/client/AgentInputState#allowsBoundedDispatch",
                         "dev/aod/mcmcp/mixin/client/MinecraftUseItemInvoker#mcmcp$getRightClickDelay",
                         "net/minecraft/client/player/LocalPlayer#isUsingItem",
                         "dev/aod/mcmcp/client/AgentInputState#beginBoundedInput",

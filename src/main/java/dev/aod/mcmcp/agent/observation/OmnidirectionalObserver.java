@@ -430,11 +430,7 @@ public final class OmnidirectionalObserver {
                 if (state.isAir() && fluid.isEmpty()) {
                     continue;
                 }
-                // Fluid blocks have no block model; their independently rendered fluid shape
-                // remains observable. Other non-model rendering is not safely classifiable.
-                if (!state.isAir()
-                        && state.getRenderShape() != RenderShape.MODEL
-                        && !(state.getBlock() instanceof LiquidBlock)) {
+                if (!observableBlockShape(state)) {
                     return unknownTrace(
                             visibleSurfaces,
                             boundary(sample, cellEntry, UnknownBoundaryReason.AMBIGUOUS_RENDER));
@@ -849,6 +845,13 @@ public final class OmnidirectionalObserver {
             return ShapeClass.PARTIAL;
         }
         return state.canOcclude() ? ShapeClass.PARTIAL : ShapeClass.CUTOUT;
+    }
+
+    static boolean observableBlockShape(BlockState state) {
+        // The vanilla End portal has a fixed visible surface despite its block-entity renderer.
+        // Its ray still stops at that surface; other custom renderers remain unknown.
+        return state.isAir() || state.getRenderShape() == RenderShape.MODEL
+                || state.getBlock() instanceof LiquidBlock || state.is(Blocks.END_PORTAL);
     }
 
     static UnknownBoundaryReason occlusionReason(ShapeClass shapeClass) {

@@ -1,0 +1,37 @@
+{
+  "checked_at": "2026-09-29T15:15:43.0848392+09:00",
+  "installed": true,
+  "physical_path_verified": true,
+  "installed_sha256": "227ae54631d1b09f3fbd75f617bfcd03c1eaf348cef48f4b0e6416ea516a597c",
+  "product_jar_count": 1,
+  "previous_jar_backup_sha256": "f787171893dff9ea3027fb9139c28ad28f8dad0b05ffcc375b8fa304bc9b2e7b",
+  "restart_verification": {
+    "checked_at": "2026-09-29T15:18:25.5634441+09:00",
+    "tool_count": 13,
+    "state_schema_version": 2,
+    "input_sequence_schema_matches_catalog": true,
+    "duration_seconds_max": 86400,
+    "control": {
+      "schema_version": 2,
+      "control_mode": "ready",
+      "game_paused": false,
+      "ready_expires_at": null,
+      "world_session_id": "793da3a8-87e6-4ada-b741-5665b76ffe4f",
+      "latest_frame_id": "obs-15edb6ff4f9cb4dd",
+      "running_action_id": null
+    }
+  },
+  "background_idle_verification": {
+    "checked_at": "2026-09-29T15:18:59.8984517+09:00",
+    "control": {
+      "schema_version": 2,
+      "control_mode": "ready",
+      "game_paused": false,
+      "ready_expires_at": null,
+      "world_session_id": "793da3a8-87e6-4ada-b741-5665b76ffe4f",
+      "latest_frame_id": "obs-b6ef5311d7c24d40",
+      "running_action_id": null
+    }
+  },
+  "storage_inspect_tested_by_installer": false
+}

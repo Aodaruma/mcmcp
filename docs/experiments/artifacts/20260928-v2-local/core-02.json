@@ -1,0 +1,886 @@
+{
+  "status": "failed",
+  "phase": "Core",
+  "failure": "Job failed: agent_break_block / block_not_confirmed",
+  "active_action_id": null,
+  "final_control": {
+    "schema_version": 2,
+    "control_mode": "ready",
+    "game_paused": false,
+    "ready_expires_at": null,
+    "world_session_id": "17056b15-22b9-42c8-9b39-f6f1c2d7455e",
+    "latest_frame_id": "obs-a5b76ae326219f8c",
+    "running_action_id": null
+  },
+  "events": [
+    {
+      "initial_state": {
+        "schema_version": 2,
+        "player": {
+          "status_effects": [],
+          "dimension": "minecraft:overworld",
+          "absorption": 0.0,
+          "max_air": 300,
+          "health": 20.0,
+          "hunger": 20,
+          "submerged": false,
+          "on_fire": false,
+          "yaw": 0.0,
+          "pitch": 0.0,
+          "position": {
+            "x": 200.5,
+            "y": 201.0,
+            "z": 200.5
+          },
+          "air": 300
+        },
+        "hotbar": {
+          "slots": [
+            {
+              "slot": 0,
+              "selected": true,
+              "item": "minecraft:bucket",
+              "count": 1
+            },
+            {
+              "slot": 1,
+              "selected": false,
+              "item": "minecraft:netherite_pickaxe",
+              "count": 1
+            },
+            {
+              "slot": 2,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 3,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 4,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 5,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 6,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 7,
+              "selected": false,
+              "item": null,
+              "count": 0
+            },
+            {
+              "slot": 8,
+              "selected": false,
+              "item": null,
+              "count": 0
+            }
+          ],
+          "selected_slot": 0
+        }
+      },
+      "compact_records": 64
+    },
+    {
+      "tool": "agent_inventory",
+      "receipt": {
+        "action_id": "31baa6ba-0086-4692-be49-9cd9bf2a6990",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "operation": "inspect"
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "31baa6ba-0086-4692-be49-9cd9bf2a6990",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 1,
+          "max_operations": 1
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "matching_count": 34,
+          "slots": [
+            {
+              "item": "minecraft:bucket",
+              "slot": 0,
+              "count": 1
+            },
+            {
+              "item": "minecraft:netherite_pickaxe",
+              "slot": 1,
+              "count": 1
+            },
+            {
+              "item": "minecraft:black_wool",
+              "slot": 9,
+              "count": 16
+            },
+            {
+              "item": "minecraft:snow_block",
+              "slot": 10,
+              "count": 16
+            }
+          ],
+          "slot_count": 43,
+          "operation": "inspect",
+          "empty_slots": 39,
+          "selected_slot": 0
+        }
+      }
+    },
+    {
+      "tool": "agent_inventory",
+      "receipt": {
+        "action_id": "12eea227-0ed9-475e-aef0-6b155b803def",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "operation": "swap",
+        "source_slot": 9,
+        "hotbar_slot": 4,
+        "item": "minecraft:black_wool"
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "12eea227-0ed9-475e-aef0-6b155b803def",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 2,
+          "max_operations": 100
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "source_before": {
+            "item": "minecraft:black_wool",
+            "count": 16
+          },
+          "source_slot": 9,
+          "hotbar_after": {
+            "item": "minecraft:black_wool",
+            "count": 16
+          },
+          "item": "minecraft:black_wool",
+          "operation": "swap",
+          "hotbar_before": {
+            "item": "minecraft:air",
+            "count": 0
+          },
+          "hotbar_slot": 4,
+          "source_after": {
+            "item": "minecraft:air",
+            "count": 0
+          },
+          "confirmed": true
+        }
+      }
+    },
+    {
+      "tool": "agent_inventory",
+      "receipt": {
+        "action_id": "bf3a4f71-a415-4576-abbd-d9309c3620d4",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "slot": 4,
+        "operation": "drop",
+        "count": 2,
+        "item": "minecraft:black_wool"
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "bf3a4f71-a415-4576-abbd-d9309c3620d4",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 3,
+          "max_operations": 600
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "item": "minecraft:black_wool",
+          "confirmed_count": 2,
+          "requested_count": 2,
+          "unconfirmed_count": 0,
+          "selected_slot": 4,
+          "source_slot": 4,
+          "operation": "drop"
+        }
+      }
+    },
+    {
+      "tool": "agent_inventory",
+      "receipt": {
+        "action_id": "44d59745-9efe-4658-9448-c8664553f2f7",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "operation": "inspect"
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "44d59745-9efe-4658-9448-c8664553f2f7",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 1,
+          "max_operations": 1
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "matching_count": 32,
+          "slots": [
+            {
+              "item": "minecraft:bucket",
+              "slot": 0,
+              "count": 1
+            },
+            {
+              "item": "minecraft:netherite_pickaxe",
+              "slot": 1,
+              "count": 1
+            },
+            {
+              "item": "minecraft:black_wool",
+              "slot": 4,
+              "count": 14
+            },
+            {
+              "item": "minecraft:snow_block",
+              "slot": 10,
+              "count": 16
+            }
+          ],
+          "slot_count": 43,
+          "operation": "inspect",
+          "empty_slots": 39,
+          "selected_slot": 0
+        }
+      }
+    },
+    {
+      "tool": "agent_inventory",
+      "receipt": {
+        "action_id": "7a4a1bd8-7cbe-4a74-95ac-3bf4d6784649",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "advance": false,
+        "y": 201,
+        "target": "container",
+        "x": 199,
+        "z": 200,
+        "operation": "inspect"
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "7a4a1bd8-7cbe-4a74-95ac-3bf4d6784649",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 34,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "operation": "inspect",
+          "items": [
+            {
+              "item": "minecraft:snow_block",
+              "count": 32
+            }
+          ],
+          "target": {
+            "dimension": "minecraft:overworld",
+            "x": 199,
+            "y": 201,
+            "z": 200
+          },
+          "complete": true
+        }
+      }
+    },
+    {
+      "container": {
+        "operation": "inspect",
+        "items": [
+          {
+            "item": "minecraft:snow_block",
+            "count": 32
+          }
+        ],
+        "target": {
+          "dimension": "minecraft:overworld",
+          "x": 199,
+          "y": 201,
+          "z": 200
+        },
+        "complete": true
+      }
+    },
+    {
+      "tool": "agent_inventory",
+      "receipt": {
+        "action_id": "ae854fe7-22ec-477a-bd58-908b7608caa8",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "operation": "inspect"
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "ae854fe7-22ec-477a-bd58-908b7608caa8",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 1,
+          "max_operations": 1
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "matching_count": 32,
+          "slots": [
+            {
+              "item": "minecraft:bucket",
+              "slot": 0,
+              "count": 1
+            },
+            {
+              "item": "minecraft:netherite_pickaxe",
+              "slot": 1,
+              "count": 1
+            },
+            {
+              "item": "minecraft:black_wool",
+              "slot": 4,
+              "count": 14
+            },
+            {
+              "item": "minecraft:snow_block",
+              "slot": 10,
+              "count": 16
+            }
+          ],
+          "slot_count": 43,
+          "operation": "inspect",
+          "empty_slots": 39,
+          "selected_slot": 0
+        }
+      }
+    },
+    {
+      "tool": "agent_inventory",
+      "receipt": {
+        "action_id": "d5475e9b-5ac9-4120-89d8-75e0bd111ca6",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "advance": false,
+        "y": 201,
+        "count": 3,
+        "target": "container",
+        "item": "minecraft:snow_block",
+        "x": 199,
+        "direction": "take",
+        "z": 200,
+        "operation": "transfer"
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "d5475e9b-5ac9-4120-89d8-75e0bd111ca6",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 26,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "requested_count": 3,
+          "direction": "take",
+          "confirmed_count": 3,
+          "target": {
+            "dimension": "minecraft:overworld",
+            "x": 199,
+            "y": 201,
+            "z": 200
+          },
+          "effects": [
+            {
+              "before": {
+                "source_count": 32,
+                "destination_count": 16
+              },
+              "after": {
+                "transferred": 3,
+                "source_count": 29,
+                "destination_count": 19
+              },
+              "verification": "confirmed"
+            }
+          ],
+          "item": "minecraft:snow_block",
+          "unconfirmed": false,
+          "operation": "transfer"
+        }
+      }
+    },
+    {
+      "tool": "agent_inventory",
+      "receipt": {
+        "action_id": "5b18ece0-e0bf-43a7-ac3b-02ce4d0b3371",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "operation": "inspect"
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "5b18ece0-e0bf-43a7-ac3b-02ce4d0b3371",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 1,
+          "max_operations": 1
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "matching_count": 35,
+          "slots": [
+            {
+              "item": "minecraft:bucket",
+              "slot": 0,
+              "count": 1
+            },
+            {
+              "item": "minecraft:netherite_pickaxe",
+              "slot": 1,
+              "count": 1
+            },
+            {
+              "item": "minecraft:black_wool",
+              "slot": 4,
+              "count": 14
+            },
+            {
+              "item": "minecraft:snow_block",
+              "slot": 9,
+              "count": 3
+            },
+            {
+              "item": "minecraft:snow_block",
+              "slot": 10,
+              "count": 16
+            }
+          ],
+          "slot_count": 43,
+          "operation": "inspect",
+          "empty_slots": 38,
+          "selected_slot": 0
+        }
+      }
+    },
+    {
+      "tool": "agent_inventory",
+      "receipt": {
+        "action_id": "bdf7ce23-072b-4159-b0be-ff347b380fbc",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "advance": false,
+        "y": 201,
+        "count": 2,
+        "target": "container",
+        "item": "minecraft:snow_block",
+        "x": 199,
+        "direction": "store",
+        "z": 200,
+        "operation": "transfer"
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "bdf7ce23-072b-4159-b0be-ff347b380fbc",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 17,
+          "max_operations": 1200
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "requested_count": 2,
+          "direction": "store",
+          "confirmed_count": 2,
+          "target": {
+            "dimension": "minecraft:overworld",
+            "x": 199,
+            "y": 201,
+            "z": 200
+          },
+          "effects": [
+            {
+              "before": {
+                "source_count": 19,
+                "destination_count": 29
+              },
+              "after": {
+                "transferred": 2,
+                "source_count": 17,
+                "destination_count": 31
+              },
+              "verification": "confirmed"
+            }
+          ],
+          "item": "minecraft:snow_block",
+          "unconfirmed": false,
+          "operation": "transfer"
+        }
+      }
+    },
+    {
+      "tool": "agent_inventory",
+      "receipt": {
+        "action_id": "38e46584-f381-4e43-aac1-8077ce6aed92",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "operation": "inspect"
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "38e46584-f381-4e43-aac1-8077ce6aed92",
+        "kind": "inventory",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 1,
+          "max_operations": 1
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "matching_count": 33,
+          "slots": [
+            {
+              "item": "minecraft:bucket",
+              "slot": 0,
+              "count": 1
+            },
+            {
+              "item": "minecraft:netherite_pickaxe",
+              "slot": 1,
+              "count": 1
+            },
+            {
+              "item": "minecraft:black_wool",
+              "slot": 4,
+              "count": 14
+            },
+            {
+              "item": "minecraft:snow_block",
+              "slot": 9,
+              "count": 1
+            },
+            {
+              "item": "minecraft:snow_block",
+              "slot": 10,
+              "count": 16
+            }
+          ],
+          "slot_count": 43,
+          "operation": "inspect",
+          "empty_slots": 38,
+          "selected_slot": 0
+        }
+      }
+    },
+    {
+      "tool": "agent_interact",
+      "receipt": {
+        "action_id": "91e7f8e3-1e6d-46ed-9a94-c0986b580ed8",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "block": "minecraft:oak_fence_gate",
+        "expected_after_properties": {
+          "open": "true"
+        },
+        "advance": false,
+        "z": 198,
+        "target": "block",
+        "y": 201,
+        "x": 200
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "91e7f8e3-1e6d-46ed-9a94-c0986b580ed8",
+        "kind": "interact",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 15,
+          "max_operations": 1200,
+          "scanned_cells": 1,
+          "interacted_blocks": 1
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "retained_from": 1,
+          "truncated": false,
+          "dimension": "minecraft:overworld",
+          "confirmed_cells": [
+            {
+              "x": 200,
+              "y": 201,
+              "z": 198,
+              "before": "minecraft:oak_fence_gate[facing=south,in_wall=false,open=false,powered=false]",
+              "after": "minecraft:oak_fence_gate[facing=north,in_wall=false,open=true,powered=false]"
+            }
+          ],
+          "confirmed_count": 1
+        }
+      }
+    },
+    {
+      "tool": "agent_click",
+      "receipt": {
+        "action_id": "e9b4e349-abc8-4f67-acaa-8e25ebf270e7",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "y": 201,
+        "button": "right",
+        "x": 200,
+        "z": 198,
+        "block": "minecraft:oak_fence_gate"
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "e9b4e349-abc8-4f67-acaa-8e25ebf270e7",
+        "kind": "click",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 1,
+          "max_operations": 1
+        },
+        "cancel_requested": false,
+        "failure": null
+      }
+    },
+    {
+      "tool": "agent_interact",
+      "receipt": {
+        "action_id": "9b1fe9a8-ac0b-49f3-89ee-7782ad327173",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "block": "minecraft:oak_fence_gate",
+        "expected_after_properties": {
+          "open": "true"
+        },
+        "advance": false,
+        "z": 198,
+        "target": "block",
+        "y": 201,
+        "x": 200
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "9b1fe9a8-ac0b-49f3-89ee-7782ad327173",
+        "kind": "interact",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 3,
+          "max_operations": 1200,
+          "scanned_cells": 1,
+          "interacted_blocks": 1
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "retained_from": 1,
+          "truncated": false,
+          "dimension": "minecraft:overworld",
+          "confirmed_cells": [
+            {
+              "x": 200,
+              "y": 201,
+              "z": 198,
+              "before": "minecraft:oak_fence_gate[facing=north,in_wall=false,open=false,powered=false]",
+              "after": "minecraft:oak_fence_gate[facing=north,in_wall=false,open=true,powered=false]"
+            }
+          ],
+          "confirmed_count": 1
+        }
+      }
+    },
+    {
+      "tool": "agent_place_block",
+      "receipt": {
+        "action_id": "692e8bec-8b30-4646-923c-f406fae6e1f4",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "block": "minecraft:black_wool",
+        "dx": 1,
+        "z": 198,
+        "advance": true,
+        "y": 201,
+        "x": 202
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "692e8bec-8b30-4646-923c-f406fae6e1f4",
+        "kind": "place_block",
+        "state": "succeeded",
+        "progress": {
+          "completed_operations": 125,
+          "max_operations": 1200,
+          "scanned_cells": 2,
+          "placed_blocks": 2
+        },
+        "cancel_requested": false,
+        "failure": null,
+        "result": {
+          "retained_from": 1,
+          "truncated": false,
+          "dimension": "minecraft:overworld",
+          "confirmed_cells": [
+            {
+              "x": 202,
+              "y": 201,
+              "z": 198,
+              "before": "minecraft:air",
+              "after": "minecraft:black_wool"
+            },
+            {
+              "x": 203,
+              "y": 201,
+              "z": 198,
+              "before": "minecraft:air",
+              "after": "minecraft:black_wool"
+            }
+          ],
+          "confirmed_count": 2
+        }
+      }
+    },
+    {
+      "tool": "agent_break_block",
+      "receipt": {
+        "action_id": "89b767e9-b039-485a-a51a-0c3c8519744e",
+        "state": "queued",
+        "schema_version": 2
+      },
+      "arguments": {
+        "include_blocks": [
+          "minecraft:black_wool"
+        ],
+        "dx": 1,
+        "z": 198,
+        "advance": true,
+        "y": 201,
+        "x": 202
+      }
+    },
+    {
+      "terminal": {
+        "schema_version": 2,
+        "action_id": "89b767e9-b039-485a-a51a-0c3c8519744e",
+        "kind": "break_block",
+        "state": "failed",
+        "progress": {
+          "completed_operations": 92,
+          "max_operations": 1200,
+          "scanned_cells": 1,
+          "broken_blocks": 1
+        },
+        "cancel_requested": false,
+        "failure": "block_not_confirmed",
+        "result": {
+          "retained_from": 1,
+          "truncated": false,
+          "dimension": "minecraft:overworld",
+          "confirmed_cells": [
+            {
+              "x": 202,
+              "y": 201,
+              "z": 198,
+              "before": "minecraft:black_wool",
+              "after": "minecraft:air"
+            }
+          ],
+          "confirmed_count": 1
+        }
+      }
+    }
+  ]
+}

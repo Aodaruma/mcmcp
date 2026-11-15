@@ -39,6 +39,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($PromptProfile -ceq 'container-inspect-recovery') {
+    throw 'container-inspect-recovery is a v1-only witness profile; use the matching v1 checkout. v2 game verification is separate.'
+}
 $Utf8NoBom = [Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = $Utf8NoBom
 
@@ -91,14 +94,23 @@ $AuthExpirySafetyMargin = [TimeSpan]::FromMinutes(5)
 $MinimumMcpRequestIntervalMilliseconds = 60
 $ExpectedMcmcpServerName = 'mcmcp'
 $ExpectedMcmcpServerVersion = '0.1.0'
-$ExpectedCatalogFileSha256 = '62c7919d3a9ef6c0e4ac258bc1a82d9c232b300e1244cfb9ac9061abe8b50a71'
-$ExpectedToolSurfaceSha256 = 'feceaa5f3cbbcbc10eb9585cc2bc2160101d1dbb254329df8e20245fbfa40a6d'
+$ExpectedCatalogFileSha256 = '89b3de4c98b052413b2b2c8f0098ca9b2ce0730cd9f84be6ed63020ed71804a4'
+$ExpectedToolSurfaceSha256 = '54ec246d305c9df9c89ab77966bf5cdf05958c56fdf7f49fac17908a1f17b2fc'
 $AllowedTools = @(
     'agent_get_state',
+    'agent_get_mcp_status',
     'agent_get_observation',
-    'agent_start_action',
+    'agent_move',
+    'agent_break_block',
+    'agent_place_block',
+    'agent_interact',
+    'agent_inventory',
+    'agent_click',
+    'agent_input_sequence',
+    'agent_run_script',
     'agent_get_action',
     'agent_cancel_action'
+    'agent_chat'
 )
 $script:PrivateReasoningNotificationMethods = @(
     'item/reasoning/summaryPartAdded',
@@ -256,7 +268,7 @@ function Get-PinnedCatalogSurface {
     $catalog = [IO.File]::ReadAllText($CatalogPath) | ConvertFrom-Json -Depth 100
     $catalogTools = @(Get-PropertyValue -Object $catalog -Name 'tools')
     if ($catalogTools.Count -ne $AllowedTools.Count) {
-        throw 'canonical MCP Tool catalog must contain exactly five tools'
+        throw "canonical MCP Tool catalog must contain exactly $($AllowedTools.Count) tools"
     }
     $surface = [Collections.Generic.List[object]]::new()
     for ($index = 0; $index -lt $AllowedTools.Count; $index++) {

@@ -370,6 +370,19 @@ public final class ClientCommandInbox {
         return safetyEpoch.get();
     }
 
+    /** A concurrent stop must win over a pending dimension handoff. */
+    boolean armAfterWorldTransition(java.util.UUID sessionId, java.util.Set<String> capabilities,
+            long expectedSafetyEpoch, long expectedControlEpoch) {
+        synchronized (admissionGate) {
+            var control = armingState.peek();
+            if (!accepting || pendingStop != null || !stopWaiters.isEmpty()
+                    || safetyEpoch.get() != expectedSafetyEpoch || !control.locked()
+                    || control.controlEpoch() != expectedControlEpoch) return false;
+            armingState.arm(sessionId, capabilities);
+            return true;
+        }
+    }
+
     public int queuedCommands() {
         return normalQueue.size() + controlQueue.size();
     }
@@ -403,8 +416,7 @@ public final class ClientCommandInbox {
             catch (RuntimeException | LinkageError failure) {
                 handlerProgress = StopProgress.FAILED;
             }
-            int discarded = failPending(
-                    new CommandInvalidatedException("invalidated by emergency stop"));
+            int discarded = failPendingForStop();
             pendingStopDiscardedStarts = Math.addExact(
                     pendingStopDiscardedStarts, discarded);
             if (retainPendingStop(handlerProgress, request.keepReady())) {
@@ -451,12 +463,40 @@ public final class ClientCommandInbox {
     }
 
     private int failPending(Throwable failure) {
+        return failPending(failure, false);
+    }
+
+    int failPendingForStop() {
+        synchronized (admissionGate) {
+            return failPending(new CommandInvalidatedException("invalidated by emergency stop"), true);
+        }
+    }
+
+    private int failPending(Throwable failure, boolean retainRecoveryCommands) {
         var pending = new ArrayList<PendingCommand<?>>();
-        normalQueue.drainTo(pending);
-        controlQueue.drainTo(pending);
+        for (var queue : java.util.List.of(normalQueue, controlQueue)) {
+            queue.removeIf(command -> {
+                // A retained cleanup must not starve fresh diagnostics or cancellation.
+                if (retainRecoveryCommands && command.safetyEpoch() == safetyEpoch.get()
+                        && switch (command.name()) {
+                            case "agent_get_state", "agent_get_mcp_status",
+                                    "agent_cancel_action", "cancel_routine" -> true;
+                            default -> false;
+                        }) return false;
+                pending.add(command);
+                return true;
+            });
+        }
         int discardedStarts = Math.toIntExact(pending.stream()
                 .filter(command -> command.name().equals("start_routine")
-                        || command.name().equals("agent_start_action"))
+                        || command.name().equals("agent_start_action")
+                        || command.name().equals("agent_input_sequence")
+                        || command.name().equals("agent_click")
+                        || command.name().equals("agent_move")
+                        || command.name().equals("agent_break_block")
+                        || command.name().equals("agent_place_block")
+                        || command.name().equals("agent_inventory")
+                        || command.name().equals("agent_chat_send"))
                 .count());
         pending.forEach(command -> command.completeFailure(failure));
         return discardedStarts;

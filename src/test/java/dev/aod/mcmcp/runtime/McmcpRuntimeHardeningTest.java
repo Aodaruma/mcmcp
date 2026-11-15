@@ -1284,13 +1284,36 @@ class McmcpRuntimeHardeningTest {
         var level = new Object();
         var session = UUID.randomUUID();
 
-        assertThat(tracker.update(player, level, session, 70, false, false, 0)).isZero();
-        assertThat(tracker.update(player, level, session, 68, false, false, 0)).isEqualTo(2);
-        assertThat(tracker.update(player, level, session, 69, false, false, 0)).isEqualTo(2);
-        assertThat(tracker.update(player, level, session, 50, false, false, 1)).isEqualTo(2);
-        assertThat(tracker.update(player, level, session, 49, false, false, 1)).isEqualTo(3);
+        assertThat(tracker.update(player, level, session, 70, false, false, false, 0)).isZero();
+        assertThat(tracker.update(player, level, session, 68, false, false, false, 0)).isEqualTo(2);
+        assertThat(tracker.update(player, level, session, 69, false, false, false, 0)).isEqualTo(2);
+        assertThat(tracker.update(player, level, session, 50, false, false, false, 1)).isEqualTo(2);
+        assertThat(tracker.update(player, level, session, 49, false, false, false, 1)).isEqualTo(3);
         assertThat(tracker.current(player, level, session)).isEqualTo(3);
-        assertThat(tracker.update(player, level, session, 48, true, false, 1)).isZero();
+        assertThat(tracker.update(player, level, session, 48, true, false, false, 1)).isZero();
+    }
+
+    @Test
+    void provenLadderDescentIsNotAFreeFallAndLosingTheRungStartsANewDrop() {
+        var tracker = new RecoveryPlanning.RecoveryDescentTracker();
+        var player = new Object();
+        var level = new Object();
+        var session = UUID.randomUUID();
+        double y = 213.21449622092544;
+
+        // Vanilla permits a deliberate ladder descent at 0.15 blocks/tick. Its total
+        // distance can exceed the governor's three-block fall threshold without a fall.
+        for (int tick = 0; tick <= 40; tick++) {
+            assertThat(tracker.update(player, level, session, y, false, false, true, 0)).isZero();
+            y -= .15D;
+        }
+        y += .15D;
+        assertThat(tracker.update(player, level, session, y - 1, false, false, false, 0)).isEqualTo(1);
+        assertThat(tracker.update(player, level, session, y - 4, false, false, false, 0)).isEqualTo(4);
+        // Reacquiring a currently proven rung stops that fall; an unknown/broken rung
+        // must supply false and cannot erase the accumulated evidence.
+        assertThat(tracker.update(player, level, session, y - 4, false, false, true, 0)).isZero();
+        assertThat(tracker.update(player, level, session, y - 8, false, false, false, 0)).isEqualTo(4);
     }
 
     @Test
@@ -1505,6 +1528,61 @@ class McmcpRuntimeHardeningTest {
         assertThat(((Map<?, ?>) actionDsl.get("missing_capability_guidance")).get("code"))
                 .isEqualTo("MISSING_CAPABILITY");
         assertThat((List<?>) actionDsl.get("reference_descriptors")).hasSize(7);
+    }
+
+    @Test
+    void lightweightStateOmitsDetailedSectionsUnlessRequested() {
+        var player = Map.<String, Object>of("health", 20.0F);
+        var hotbar = Map.<String, Object>of("selected_slot", 0, "slots", List.of());
+        var details = Map.<String, Object>of(
+                "control", Map.of("mode", "ready"),
+                "inventory", List.of(Map.of("item", "minecraft:stone", "count", 64)),
+                "held_items", Map.of("selected_hotbar_slot", 0));
+
+        assertThat(ActionWireMapper.lightweightStatePayload(
+                player, hotbar, details, Set.of()))
+                .containsOnlyKeys("schema_version", "player", "hotbar")
+                .containsEntry("schema_version", 2)
+                .containsEntry("player", player)
+                .containsEntry("hotbar", hotbar);
+        assertThat(ActionWireMapper.lightweightStatePayload(
+                player, hotbar, details, Set.of("inventory")))
+                .containsOnlyKeys("schema_version", "player", "hotbar", "inventory")
+                .containsEntry("inventory", details.get("inventory"));
+        assertThat(ActionWireMapper.lightweightStatePayload(
+                player, hotbar, details, Set.of("held_items")))
+                .containsOnlyKeys("schema_version", "player", "hotbar", "held_items")
+                .containsEntry("held_items", details.get("held_items"));
+    }
+
+    @Test
+    void compactMcpStatusCarriesOnlyControlAndCorrelationMetadata() {
+        UUID sessionId = UUID.randomUUID();
+        UUID actionId = UUID.randomUUID();
+        var control = new LocalArmingState.Snapshot(
+                LocalArmingState.Mode.AGENT, sessionId, Set.of("movement"), null, 2L);
+
+        assertThat(ActionWireMapper.mcpStatusPayload(
+                control, true, sessionId, "obs-0123456789abcdef", actionId))
+                .containsOnlyKeys(
+                        "schema_version", "control_mode", "game_paused", "ready_expires_at",
+                        "world_session_id", "latest_frame_id", "running_action_id")
+                .containsEntry("schema_version", 2)
+                .containsEntry("control_mode", "agent")
+                .containsEntry("game_paused", true)
+                .containsEntry("world_session_id", sessionId.toString())
+                .containsEntry("latest_frame_id", "obs-0123456789abcdef")
+                .containsEntry("running_action_id", actionId.toString());
+        assertThat(ActionWireMapper.mcpStatusPayload(
+                new LocalArmingState.Snapshot(
+                        LocalArmingState.Mode.OFF, null, Set.of(), "startup", 0L),
+                false, null, null, null))
+                .containsEntry("control_mode", "off")
+                .containsEntry("game_paused", false)
+                .containsEntry("ready_expires_at", null)
+                .containsEntry("world_session_id", null)
+                .containsEntry("latest_frame_id", null)
+                .containsEntry("running_action_id", null);
     }
 
     @Test

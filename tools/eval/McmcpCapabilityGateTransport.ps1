@@ -136,7 +136,7 @@ function Assert-FixedFiveToolSurface {
     }
     $tools = @(Get-ObjectProperty $list 'tools')
     if ($tools.Count -ne $script:AllowedTools.Count) {
-        throw "tools/list returned $($tools.Count) tools instead of five"
+        throw "tools/list returned $($tools.Count) tools instead of $($script:AllowedTools.Count)"
     }
     for ($index = 0; $index -lt $script:AllowedTools.Count; $index++) {
         if ((Get-ObjectProperty $tools[$index] 'name') -cne $script:AllowedTools[$index]) {

@@ -30,7 +30,7 @@ public final class NavigationViewLease {
         expectedSlot = originalSlot;
     }
 
-    static NavigationViewLease acquire(LocalPlayer player, UUID ownerId) {
+    public static NavigationViewLease acquire(LocalPlayer player, UUID ownerId) {
         return acquire(new VanillaViewControl(player), ownerId);
     }
 
@@ -38,7 +38,7 @@ public final class NavigationViewLease {
         return new NavigationViewLease(control, ownerId);
     }
 
-    boolean matches(UUID owner) {
+    public boolean matches(UUID owner) {
         requireOwner(owner);
         return !closed
                 && Math.abs(Mth.wrapDegrees(control.yaw() - expectedYaw))
@@ -47,8 +47,14 @@ public final class NavigationViewLease {
                 && control.selectedSlot() == expectedSlot;
     }
 
-    void turnToward(UUID owner, float desiredYaw, float desiredPitch) {
+    public void turnToward(UUID owner, float desiredYaw, float desiredPitch) {
+        turnTowardWithinBudget(owner, desiredYaw, desiredPitch, Double.POSITIVE_INFINITY);
+    }
+
+    public boolean turnTowardWithinBudget(UUID owner, float desiredYaw, float desiredPitch, double remainingDegrees) {
         requireOwner(owner);
+        if (Double.isNaN(remainingDegrees) || remainingDegrees < 0)
+            throw new IllegalArgumentException("remaining camera budget must be non-negative");
         if (!matches(owner)) {
             throw new IllegalStateException("owned navigation view changed externally");
         }
@@ -56,9 +62,28 @@ public final class NavigationViewLease {
                 control.yaw(), finite(desiredYaw, "desiredYaw"));
         float pitchDelta = boundedPitchDelta(
                 control.pitch(), finite(desiredPitch, "desiredPitch"));
+        if (control instanceof VanillaViewControl vanilla) {
+            var player = vanilla.player();
+            var look = net.minecraft.world.phys.Vec3.directionFromRotation(control.pitch() + pitchDelta, control.yaw() + yawDelta);
+            var eye = player.getEyePosition();
+            boolean provoke = player.level().getEntitiesOfClass(net.minecraft.world.entity.monster.EnderMan.class,
+                    player.getBoundingBox().inflate(32), mob -> mob.isAlive() && player.hasLineOfSight(mob)
+                            && !dev.aod.mcmcp.agent.safety.ObservedThreats.attacking(mob, player)).stream().anyMatch(mob -> {
+                var direction = mob.getEyePosition().subtract(eye);
+                return direction.length() > 0 && look.dot(direction.normalize()) > 1 - 0.025 / direction.length();
+            });
+            // Never spend a client tick staring at a neutral Enderman while turning toward another goal.
+            if (provoke) pitchDelta = boundedPitchDelta(control.pitch(), 60);
+        }
+        float nextYaw = control.yaw() + vanillaTurnDelta(yawDelta);
+        float nextPitch = Mth.clamp(control.pitch() + vanillaTurnDelta(pitchDelta), -90, 90);
+        double travel = Math.abs(Mth.wrapDegrees((double) nextYaw - control.yaw()))
+                + Math.abs((double) nextPitch - control.pitch());
+        if (travel > remainingDegrees) return false;
         control.turn(yawDelta, pitchDelta);
         expectedYaw = finite(control.yaw(), "yaw after turn");
         expectedPitch = finite(control.pitch(), "pitch after turn");
+        return true;
     }
 
     void selectSlot(UUID owner, int slot) {
@@ -81,7 +106,7 @@ public final class NavigationViewLease {
         return matches(owner) && control.selectedSlot() == slot;
     }
 
-    void close(UUID owner) {
+    public void close(UUID owner) {
         requireOwner(owner);
         if (closed) {
             return;

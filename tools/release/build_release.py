@@ -12,6 +12,7 @@ import re
 import shutil
 import tempfile
 import urllib.request
+from urllib.parse import quote
 import unicodedata
 import zipfile
 
@@ -62,6 +63,13 @@ def guide_markdown(version: str) -> str:
     text = re.sub(r'mcmcp-neoforge-26\.2-[A-Za-z0-9.+-]+\.jar',
                   f'mcmcp-neoforge-26.2-{version}.jar', text)
     return text
+
+
+def public_api_markdown(source: str) -> str:
+    text = (ROOT / 'docs/MCMCP_Public_API_v2_クイックガイド.md').read_text(encoding='utf-8')
+    # The portable ZIP contains this guide; its detailed references live at the exact release source.
+    return re.sub(r'(?<=\]\()(?!(?:[A-Za-z][A-Za-z0-9+.-]*:|#))([^\s)]+)(?=\))',
+                  lambda match: source + '/docs/' + quote(match[1], safe='/#'), text)
 
 
 def render_pdf(markdown: str, destination: Path, asset_dir: Path, font: Path) -> None:
@@ -188,8 +196,8 @@ def build(version: str, jar: Path | None, output: Path, tag: str | None = None) 
         for name in ('LICENSE', 'NOTICE.md'):
             shutil.copy2(ROOT / name, staging / name)
         shutil.copy2(ROOT / 'tools/release/OFL-NotoSansJP.txt', staging / 'OFL-NotoSansJP.txt')
-        shutil.copy2(ROOT / 'docs/MCMCP_Action_DSL_クイックガイド.md', staging / 'ACTION_DSL.md')
         source = 'https://github.com/Aodaruma/mcmcp/tree/' + (tag or 'main')
+        (staging / 'PUBLIC_API.md').write_text(public_api_markdown(source), encoding='utf-8')
         (staging / 'SOURCE.txt').write_text(f'MCMCP {version}\nMPL-2.0 source: {source}\n', encoding='utf-8')
         allowed = [path for path in staging.rglob('*') if path.is_file() and path.suffix != '.html']
         checksums = ''.join(f'{sha256(path)}  {path.relative_to(staging).as_posix()}\n'

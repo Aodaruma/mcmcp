@@ -1,0 +1,411 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-30",
+  "candidate_sha256": "1ca9409140ceab974ccbdf2f6f6f267b1d44682b04e39514923c563bdd3987c0",
+  "environment": {
+    "minecraft": "26.2",
+    "neoforge": "26.2.0.59",
+    "java": 25,
+    "isolated_docker": true
+  },
+  "automated_tests": {
+    "java": 1627,
+    "harness": 13,
+    "admin_bridge": 28,
+    "failures": 0
+  },
+  "cases": [
+    {
+      "case": "crawl-entry",
+      "expected_state": "succeeded",
+      "state": "succeeded",
+      "stop_reason": "completed",
+      "elapsed_seconds": 2.493513868,
+      "completed_operations": 50,
+      "result": {
+        "observed_cells": [],
+        "truncated": false,
+        "confirmed_count": 1,
+        "observed_count": 0,
+        "dimension": "minecraft:overworld",
+        "retained_from": 1,
+        "confirmed_cells": [
+          {
+            "after": "minecraft:oak_trapdoor[facing=west,half=bottom,open=false,powered=false,waterlogged=false]",
+            "before": "minecraft:oak_trapdoor[facing=west,half=bottom,open=true,powered=false,waterlogged=false]",
+            "z": 316,
+            "y": 102,
+            "x": 313
+          }
+        ]
+      }
+    },
+    {
+      "case": "crawl",
+      "expected_state": "succeeded",
+      "state": "succeeded",
+      "stop_reason": "completed",
+      "elapsed_seconds": 5.362906446,
+      "completed_operations": 106,
+      "result": {}
+    },
+    {
+      "case": "door-chest",
+      "expected_state": "succeeded",
+      "state": "succeeded",
+      "stop_reason": "completed",
+      "elapsed_seconds": 0.458583983,
+      "completed_operations": 9,
+      "result": {
+        "items": [
+          {
+            "count": 3,
+            "item": "minecraft:stone"
+          }
+        ],
+        "target": {
+          "dimension": "minecraft:overworld",
+          "z": 320,
+          "y": 101,
+          "x": 308
+        },
+        "operation": "inspect",
+        "prepare_reason": "ready",
+        "complete": true
+      }
+    },
+    {
+      "case": "door-entry",
+      "expected_state": "succeeded",
+      "state": "succeeded",
+      "stop_reason": "completed",
+      "elapsed_seconds": 2.496244736,
+      "completed_operations": 49,
+      "result": {}
+    },
+    {
+      "case": "door-lever",
+      "expected_state": "succeeded",
+      "state": "succeeded",
+      "stop_reason": "completed",
+      "elapsed_seconds": 1.207539247,
+      "completed_operations": 3,
+      "result": {
+        "observed_cells": [],
+        "truncated": false,
+        "confirmed_count": 1,
+        "observed_count": 0,
+        "dimension": "minecraft:overworld",
+        "retained_from": 1,
+        "confirmed_cells": [
+          {
+            "after": "minecraft:lever[face=wall,facing=west,powered=true]",
+            "before": "minecraft:lever[face=wall,facing=west,powered=false]",
+            "z": 320,
+            "y": 102,
+            "x": 308
+          }
+        ]
+      }
+    },
+    {
+      "case": "fresh-replan-disabled",
+      "expected_state": "failed",
+      "state": "failed",
+      "stop_reason": "route_replan_required",
+      "elapsed_seconds": 1.097388658,
+      "completed_operations": 21,
+      "result": {
+        "last_replan_reason": "route_edge_changed",
+        "path_replans": 0
+      }
+    },
+    {
+      "case": "ladder-chest",
+      "expected_state": "succeeded",
+      "state": "succeeded",
+      "stop_reason": "completed",
+      "elapsed_seconds": 1.03644669,
+      "completed_operations": 19,
+      "result": {
+        "items": [
+          {
+            "count": 3,
+            "item": "minecraft:stone"
+          }
+        ],
+        "target": {
+          "dimension": "minecraft:overworld",
+          "z": 305,
+          "y": 105,
+          "x": 309
+        },
+        "operation": "inspect",
+        "prepare_reason": "ready",
+        "complete": true
+      }
+    },
+    {
+      "case": "ladder",
+      "expected_state": "succeeded",
+      "state": "succeeded",
+      "stop_reason": "completed",
+      "elapsed_seconds": 6.690027109,
+      "completed_operations": 133,
+      "result": {}
+    },
+    {
+      "case": "look-cancel",
+      "expected_state": "cancelled",
+      "state": "cancelled",
+      "stop_reason": "client_request",
+      "elapsed_seconds": 0.199329988,
+      "completed_operations": 3,
+      "result": {
+        "look_reason": "none",
+        "operation": "look"
+      }
+    },
+    {
+      "case": "look-deadline",
+      "expected_state": "failed",
+      "state": "failed",
+      "stop_reason": "look_not_confirmed",
+      "elapsed_seconds": 0.046764371,
+      "completed_operations": 1,
+      "result": {
+        "look_reason": "primitive_tick_budget_exhausted",
+        "operation": "look"
+      }
+    },
+    {
+      "case": "look",
+      "expected_state": "succeeded",
+      "state": "succeeded",
+      "stop_reason": "completed",
+      "elapsed_seconds": 0.487598969,
+      "completed_operations": 10,
+      "result": {
+        "look_reason": "none",
+        "operation": "look"
+      }
+    },
+    {
+      "case": "low",
+      "expected_state": "succeeded",
+      "state": "succeeded",
+      "stop_reason": "completed",
+      "elapsed_seconds": 4.782072892,
+      "completed_operations": 95,
+      "result": {}
+    },
+    {
+      "case": "piston-chest",
+      "expected_state": "succeeded",
+      "state": "succeeded",
+      "stop_reason": "completed",
+      "elapsed_seconds": 0.47018408,
+      "completed_operations": 9,
+      "result": {
+        "items": [
+          {
+            "count": 3,
+            "item": "minecraft:stone"
+          }
+        ],
+        "target": {
+          "dimension": "minecraft:overworld",
+          "z": 320,
+          "y": 101,
+          "x": 308
+        },
+        "operation": "inspect",
+        "prepare_reason": "ready",
+        "complete": true
+      }
+    },
+    {
+      "case": "piston-entry",
+      "expected_state": "succeeded",
+      "state": "succeeded",
+      "stop_reason": "completed",
+      "elapsed_seconds": 2.695463605,
+      "completed_operations": 53,
+      "result": {}
+    },
+    {
+      "case": "piston-lever",
+      "expected_state": "succeeded",
+      "state": "succeeded",
+      "stop_reason": "completed",
+      "elapsed_seconds": 2.25452377,
+      "completed_operations": 3,
+      "result": {
+        "observed_cells": [],
+        "truncated": false,
+        "confirmed_count": 1,
+        "observed_count": 0,
+        "dimension": "minecraft:overworld",
+        "retained_from": 1,
+        "confirmed_cells": [
+          {
+            "after": "minecraft:lever[face=wall,facing=west,powered=true]",
+            "before": "minecraft:lever[face=wall,facing=west,powered=false]",
+            "z": 320,
+            "y": 102,
+            "x": 308
+          }
+        ]
+      }
+    },
+    {
+      "case": "replan-default",
+      "expected_state": "succeeded",
+      "state": "succeeded",
+      "stop_reason": "completed",
+      "elapsed_seconds": 7.254527128,
+      "completed_operations": 144,
+      "result": {
+        "last_replan_reason": "route_edge_changed",
+        "path_replans": 1
+      }
+    },
+    {
+      "case": "script-look",
+      "expected_state": "succeeded",
+      "state": "succeeded",
+      "stop_reason": "completed",
+      "elapsed_seconds": 1.663008134,
+      "completed_operations": 2,
+      "result": {
+        "iterations": 0,
+        "calls": 2,
+        "script_status": "success",
+        "work": 9,
+        "completed_commands": 2
+      }
+    }
+  ],
+  "final_player_samples": {
+    "replan": {
+      "health": 20.0,
+      "max_air": 300,
+      "absorption": 0.0,
+      "dimension": "minecraft:overworld",
+      "status_effects": [],
+      "air": 300,
+      "position": {
+        "z": 300.5980791522996,
+        "y": 101.0,
+        "x": 310.7011787388087
+      },
+      "pitch": 0.0,
+      "yaw": -90.0,
+      "on_fire": false,
+      "submerged": false,
+      "hunger": 20
+    },
+    "low": {
+      "health": 20.0,
+      "max_air": 300,
+      "absorption": 0.0,
+      "dimension": "minecraft:overworld",
+      "status_effects": [],
+      "air": 300,
+      "position": {
+        "z": 310.5,
+        "y": 101.0,
+        "x": 318.35305030197355
+      },
+      "pitch": 0.0,
+      "yaw": -90.0,
+      "on_fire": false,
+      "submerged": false,
+      "hunger": 20
+    },
+    "crawl": {
+      "health": 20.0,
+      "max_air": 300,
+      "absorption": 0.0,
+      "dimension": "minecraft:overworld",
+      "status_effects": [],
+      "air": 300,
+      "position": {
+        "z": 316.5,
+        "y": 101.0,
+        "x": 318.35305030197355
+      },
+      "pitch": 0.0,
+      "yaw": -90.0,
+      "on_fire": false,
+      "submerged": false,
+      "hunger": 20
+    },
+    "door": {
+      "health": 20.0,
+      "max_air": 300,
+      "absorption": 0.0,
+      "dimension": "minecraft:overworld",
+      "status_effects": [],
+      "air": 300,
+      "position": {
+        "z": 320.5,
+        "y": 101.0,
+        "x": 307.69109896370725
+      },
+      "pitch": -4.7683716e-07,
+      "yaw": -90.0,
+      "on_fire": false,
+      "submerged": false,
+      "hunger": 20
+    },
+    "piston": {
+      "health": 20.0,
+      "max_air": 300,
+      "absorption": 0.0,
+      "dimension": "minecraft:overworld",
+      "status_effects": [],
+      "air": 300,
+      "position": {
+        "z": 320.5,
+        "y": 101.0,
+        "x": 307.5117434898332
+      },
+      "pitch": -4.7683716e-07,
+      "yaw": -90.0,
+      "on_fire": false,
+      "submerged": false,
+      "hunger": 20
+    },
+    "fresh-disabled": {
+      "health": 20.0,
+      "max_air": 300,
+      "absorption": 0.0,
+      "dimension": "minecraft:overworld",
+      "status_effects": [],
+      "air": 300,
+      "position": {
+        "z": 300.5,
+        "y": 101.0,
+        "x": 304.3417234347836
+      },
+      "pitch": 0.0,
+      "yaw": -90.0,
+      "on_fire": false,
+      "submerged": false,
+      "hunger": 20
+    }
+  },
+  "look_no_position_or_hotbar_change": true,
+  "final_control": {
+    "control_mode": "ready",
+    "game_paused": false,
+    "running_action_id": null
+  },
+  "excluded_runs": [
+    {
+      "case": "r2-replan-disabled",
+      "reason": "Cached detour chosen before obstruction; no replan request, therefore not a disable-stop test."
+    }
+  ]
+}

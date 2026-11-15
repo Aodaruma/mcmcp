@@ -39,6 +39,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class OmnidirectionalObserverTest {
     @Test
+    void endPortalHasAKnownSurfaceButArbitraryBlockEntityRenderersStayUnknown() {
+        assertThat(OmnidirectionalObserver.observableBlockShape(Blocks.END_PORTAL.defaultBlockState())).isTrue();
+        assertThat(OmnidirectionalObserver.observableBlockShape(Blocks.STONE.defaultBlockState())).isTrue();
+        assertThat(OmnidirectionalObserver.observableBlockShape(Blocks.MOVING_PISTON.defaultBlockState())).isFalse();
+        assertThat(OmnidirectionalObserver.observableBlockShape(Blocks.END_GATEWAY.defaultBlockState())).isFalse();
+    }
+    @Test
     void leverVisibleStateDoesNotAuthorizeConstructionOrRevealOtherRedstoneState() {
         var lever = Blocks.LEVER.defaultBlockState();
         var view = OmnidirectionalObserver.policyVisibleBlockState(lever);
@@ -417,6 +424,21 @@ class OmnidirectionalObserverTest {
         assertThatThrownBy(() -> OmnidirectionalObserver.displayedItem(ItemStack.EMPTY))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("empty");
+    }
+
+    @Test
+    void visibleMechanismStatesDoNotGrantConstructionPermission() {
+        var lever = Blocks.LEVER.defaultBlockState().setValue(BlockStateProperties.POWERED, true);
+        assertThat(OmnidirectionalObserver.policyVisibleBlockState(lever).properties())
+                .containsEntry("powered", "true").containsEntry("face", "wall");
+        assertThat(OmnidirectionalObserver.safeDirectPlacementItem(lever)).isNull();
+        for (var piston : List.of(Blocks.PISTON, Blocks.STICKY_PISTON)) {
+            var state = piston.defaultBlockState().setValue(BlockStateProperties.EXTENDED, true)
+                    .setValue(BlockStateProperties.FACING, Direction.EAST);
+            assertThat(OmnidirectionalObserver.policyVisibleBlockState(state).properties())
+                    .containsEntry("extended", "true").containsEntry("facing", "east");
+            assertThat(OmnidirectionalObserver.safeDirectPlacementItem(state)).isNull();
+        }
     }
 
     @Test

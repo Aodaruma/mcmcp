@@ -12,6 +12,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ObservationCursorReleaseTest {
     private static final ResourceId DIMENSION = new ResourceId("minecraft:overworld");
@@ -57,6 +58,25 @@ class ObservationCursorReleaseTest {
                 observations.getAgentObservation(pageArguments());
         assertThat(replacement.wireResponse().get("next_cursor")).isNotNull();
         assertThat(replacement.receiptId()).isNotNull();
+    }
+
+    @Test
+    void releaseNeverReadsBlockDataAndRejectsNbtAndPageFields() {
+        var observations = new AgentObservations(null, null, null, null);
+        observations.frames().publish(frame());
+        var first = observations.getAgentObservation(pageArguments());
+        String cursor = (String) first.wireResponse().get("next_cursor");
+        var release = Map.<String, Object>of("schema_version", 1, "release_cursor", cursor);
+        var response = observations.getAgentObservation(release, (surfaces, nbt) -> {
+            throw new AssertionError("release must not read a block entity");
+        });
+        assertThat(response.receiptId()).isNull();
+        for (String extra : List.of("include_nbt", "frame_id")) {
+            var mixed = new java.util.LinkedHashMap<>(release);
+            mixed.put(extra, extra.equals("include_nbt") ? true : null);
+            assertThatThrownBy(() -> observations.getAgentObservation(mixed))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
     }
 
     private static Map<String, Object> pageArguments() {
