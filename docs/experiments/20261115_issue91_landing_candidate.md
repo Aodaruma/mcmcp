@@ -52,6 +52,20 @@ baseは`a44089b81198151fe82dd37669ad06d7287b920c`。レビュー前の初回候�
 
 新候補の凍結後、Gradle daemonを停止した。製品・harness・source checksのログを同じartifactへ保存し、実機起動中の追加ローカルGradleは行わない。
 
+## 下降目標の再選択後に残った実機不合格
+
+上方に残ったplatformを選び直す`72abbda`（製品SHA-256 `5240b704b55b50906de35c1b31a816b828f7c356114e73fd2b4486cf02c4c653`）でも、2026-11-15の`recovery_elytra_edge-092003`は距離予算で停止した。lower bankは正しく選ばれたが、支持上面が未確認のコースは拒否され、従来のfallbackが急な降下を選んだ。広い床への救助成功とは区別する。
+
+旧オフラインWitnessは乾いた支持IDと上方airだけを確認し、現在eyeから支持上面への実rayをモデル化していなかった。保存済み流水5層で、上方airが見えても乾いた支持の上面だけが手前の流水に隠れるケースを再現した。停止域の全支持へ製品と同じ`visibleLandingSupport`を使い、air/supportの合計cacheも2,048に制限したところ、旧固定コースの正当化とnativeの初期コース選択の2件が失敗した（focused26件中2件）。R28の開始stateからは、別の完全証明コースが成立した。
+
+nativeの1326tickでは現在のbody+0.2余裕が頭上platformへ届くため、全コースの初期clearanceを証明できない。1329tickにはその下を抜けるが、最初の検索から8tick待つ間にfallbackがpitch40へ曲げ、1334tickには有効なコースがなくなっていた。また、元の候補には必要な減速区間の中間値がなかった。
+
+独立Java（最大256MiB）で現在の完全証明関数と厳密Witnessを使い、1329tickの実stateからapproach0/flare32/coast24/final pitch-50の111tickコースを確認した。各tickで支持LOS・4遅延・全停止域を再証明し、必要時に有限再計画する追試では、121tickで乾いた岸の停止域へ到達した。移動43.51block、camera85.08度で元の予算内だった。これはオフライン証拠であり実機合格ではない。
+
+補強候補は、必須の現在body+0.2 clearanceを検索前に検査し、coast24/final pitch-50を汎用候補へ追加する。8tickの検索backoffは削除し、共有20ms期限や未成立の証明は次tickの新しい証拠で再試行する。未証明の支持やprefixを着地認可へ使わず、元の可視性・予算・取消条件を維持する。修正後のstrict focused26件と全Java1,953件（通常1,911・harness14・admin28）、`verifyHarnessIsolation build`、`tools/check-source.ps1 -SkipJava`はすべて成功した。実機確認は未実施。新製品SHA-256は`722de853464906080a6567e3dd5d5294dcd8ad0af27ff3cb755654b5d100173f`、読取診断harnessは`06e0293ec654168eeb1d5f1a951385d07c10e506a05071d56bd41a234314ea90`。候補を`artifacts/issue91-safe-landing-20261115-r4`へ凍結し、Gradle daemon停止後にnative edge/poolの実機確認へ渡す。
+
+読取専用のharness診断は`artifacts/issue91-support-sight-diagnostic-20261115-r3`へ別凍結した。これは上記5240製品との組合せに限る。`flight_profile.samples[].landing_visibility`へ現在のeye/range/fogと既に計算された支持ray結果を記録し、新しいworld読取や操作は行わない。1tick最大16試行・最初の失敗だけを採取し、打切りも明示する。
+
 ## このPCでの初回受入と着地点の再選択
 
 隔離profileのコピーと新しい平坦worldで、製品5b005979版とPR #92の検証harnessを使った。`recovery_elytra_edge`は未合格。275ticks、128.045blocksでrecovery_budget_exhaustedとなり、HP20だが飛行中だった。終端後に固定fixtureを再準備して安全床へ戻した。開始時に選んだ上段床y=121を、プレイヤーがy=120.92へ落ちた後も保持していた。新コースは下降着地用なので上方目標を認可せず、旧fallbackだけで滑空した。

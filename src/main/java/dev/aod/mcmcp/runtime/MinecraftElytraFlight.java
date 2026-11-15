@@ -36,7 +36,7 @@ final class MinecraftElytraFlight implements AutoCloseable {
     private String failure;
     private ElytraFlightPlanner.Plan lastPlan;
     private ElytraLandingCourse landingCourse;
-    private long landingCourseStarted, lastLandingAttempt = Long.MIN_VALUE;
+    private long landingCourseStarted;
     private double observationRadius;
     private int observationCells;
     private Vec3 landingTarget;
@@ -191,10 +191,11 @@ final class MinecraftElytraFlight implements AutoCloseable {
                             player.getYRot(), player.getXRot(), player.getGravity(), 0, latency,
                             remainingTicks, remainingDistance, Math.max(0, remainingCamera - 16),
                             observation::clear, stoppedLanding, landingAllowed);
-                lastLandingAttempt = Long.MIN_VALUE;
             }
-            if (landingCourse == null && (lastLandingAttempt == Long.MIN_VALUE || tick - lastLandingAttempt >= 8)) {
-                lastLandingAttempt = tick;
+            // Every course needs the current padded body to be clear. Do not spend its finite
+            // search while still under a lip; retry fresh evidence next tick, including after
+            // the shared search deadline expires, instead of missing a brief admission window.
+            if (landingCourse == null && observation.clear(player.getBoundingBox().inflate(.2))) {
                 landingCourse = ElytraLandingCourse.select(player.position(), player.getDeltaMovement(),
                         player.getYRot(), player.getXRot(), landingTarget, player.getGravity(), latency,
                         remainingTicks, remainingDistance, Math.max(0, remainingCamera - 16),

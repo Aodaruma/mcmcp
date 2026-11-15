@@ -2,8 +2,10 @@ package dev.aod.mcmcp.runtime;
 
 import com.google.gson.JsonParser;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 import java.io.InputStreamReader;
@@ -24,14 +26,36 @@ class ElytraLandingCourseTest {
         assertThat(ElytraLandingCourse.descendingGoal(fallen, null)).isFalse();
     }
 
-    @Test void recordedFloodedBankCanBeReachedAndStoppedWithoutWeakeningTheObservation() throws Exception {
+    @Test void recordedWaterCanHideADryStoppingFloorEvenWhenItsStandingAirIsVisible() throws Exception {
         var witness = new Witness(START);
-        var course = ElytraLandingCourse.select(START, MOTION, -90, 0, GOAL, .08, 4,
+        var standingAir = new Vec3(345.5, 102.5, 292.5);
+        assertThat(witness.shapes.stream().noneMatch(shape -> shape.clip(witness.eye, standingAir).isPresent())).isTrue();
+        assertThat(witness.visibleSupport(new BlockPos(345, 100, 292))).isFalse();
+        assertThat(witness.visibleSupport(new BlockPos(349, 100, 290))).isTrue();
+    }
+
+    @Test void recordedFloodedBankCanBeReachedAndStoppedWithoutWeakeningTheObservation() throws Exception {
+        reachesBank(START, MOTION, GOAL);
+    }
+
+    @Test void nativeReselectedLowerBankMustAlsoHaveVisibleStoppingSupports() throws Exception {
+        var underLip = new Vec3(314.69999998807907, 119.58493859291438, 310.5061103886526);
+        assertThat(new Witness(underLip).clear(body(underLip).inflate(.2))).isFalse();
+        var clearStart = new Vec3(314.81104254261817, 119.03582048849036, 310.5061103886526);
+        assertThat(new Witness(clearStart).clear(body(clearStart).inflate(.2))).isTrue();
+        // The first safe admission is three ticks later, before the old eight-tick retry.
+        reachesBank(clearStart, new Vec3(.054910817660004226, -.17892583470763604, 0),
+                new Vec3(349.33973759412766, 101, 290.5072178429525));
+    }
+
+    private static void reachesBank(Vec3 start, Vec3 initialMotion, Vec3 goal) throws Exception {
+        var witness = new Witness(start);
+        var course = ElytraLandingCourse.select(start, initialMotion, -90, 0, goal, .08, 4,
                 600, 128, 344, witness::clear, witness::stoppedLanding, () -> true);
         assertThat(course).isNotNull();
-        assertThat(witness.cells.size()).isLessThanOrEqualTo(2048);
-        var position = START;
-        var motion = MOTION;
+        assertThat(witness.cells.size() + witness.supports.size()).isLessThanOrEqualTo(2048);
+        var position = start;
+        var motion = initialMotion;
         float yaw = -90, pitch = 0;
         double camera = 0, distance = 0;
         int started = 0;
@@ -42,7 +66,7 @@ class ElytraLandingCourseTest {
             if (verified == 0) {
                 course = course.replan(position, motion, yaw, pitch, .08, tick - started, 4,
                         600 - tick, 128 - distance, 344 - camera, witness::clear, witness::stoppedLanding, () -> true);
-                if (course == null) course = ElytraLandingCourse.select(position, motion, yaw, pitch, GOAL, .08, 4,
+                if (course == null) course = ElytraLandingCourse.select(position, motion, yaw, pitch, goal, .08, 4,
                             600 - tick, 128 - distance, 344 - camera, witness::clear, witness::stoppedLanding, () -> true);
                 started = tick;
                 assertThat(course).as("fresh replacement at tick %s: %s, rejected=%s", tick, position, witness.rejection).isNotNull();
@@ -53,9 +77,9 @@ class ElytraLandingCourseTest {
             motion = ElytraFlightPlanner.velocity(motion, yaw, pitch, .08, false);
             position = position.add(motion);
             distance += motion.length();
-            if (position.y <= GOAL.y) {
+            if (position.y <= goal.y) {
                 assertThat(witness.stoppedLanding(body(position), motion)).isTrue();
-                assertThat(position.distanceTo(GOAL)).isLessThan(8);
+                assertThat(position.distanceTo(goal)).isLessThan(8);
                 assertThat(camera).isLessThan(344);
                 assertThat(distance).isLessThan(128);
                 return;
@@ -65,7 +89,8 @@ class ElytraLandingCourseTest {
     }
 
     @Test void allSteeringDelaysAndTheirCompleteStoppingFootprintsMustRemainWitnessed() throws Exception {
-        var course = new ElytraLandingCourse(GOAL, -120, 8, 48, 20, -70);
+        float bearing = (float) Math.toDegrees(Math.atan2(START.x - GOAL.x, GOAL.z - START.z));
+        var course = new ElytraLandingCourse(GOAL, bearing, 0, 16, 32, -55);
         var witness = new Witness(START);
         assertThat(course.verifiedTicks(START, MOTION, -90, 0, .08, 0, 4, 600, 128, 344,
                 witness::clear, witness::stoppedLanding, () -> true)).isPositive();
@@ -111,6 +136,7 @@ class ElytraLandingCourseTest {
         Thread.sleep(30);
         assertThat(search.getAsBoolean()).isFalse();
         assertThat(authorized).isTrue();
+        assertThat(ElytraLandingCourse.boundedSearch(authorized::get).getAsBoolean()).isTrue();
     }
 
     private static AABB body(Vec3 p) { return new AABB(p.x - .3, p.y, p.z - .3, p.x + .3, p.y + .6, p.z + .3); }
@@ -119,6 +145,7 @@ class ElytraLandingCourseTest {
     private static final class Witness {
         final Vec3 eye;
         final Map<BlockPos, Boolean> cells = new HashMap<>();
+        final Map<BlockPos, Boolean> supports = new HashMap<>();
         final String[][] layers = new String[5][41];
         final List<AABB> shapes = new ArrayList<>();
         String rejection;
@@ -161,7 +188,7 @@ class ElytraLandingCourseTest {
                     BlockPos.containing(box.maxX, box.maxY, box.maxZ))) {
                 Boolean known = cells.get(p);
                 if (known == null) {
-                    if (cells.size() >= 2048) return false;
+                    if (cells.size() + supports.size() >= 2048) return false;
                     var point = Vec3.atCenterOf(p);
                     known = point.distanceTo(eye) <= 96 && cell(p.getX(), p.getY(), p.getZ()) == '.'
                             && shapes.stream().noneMatch(shape -> shape.contains(point) || shape.clip(eye, point).isPresent());
@@ -178,15 +205,41 @@ class ElytraLandingCourseTest {
             for (int tick = 0; tick < 32; tick++) {
                 var standing = new AABB(Math.min(x, x + vx) - .4, 101.01, Math.min(z, z + vz) - .4,
                         Math.max(x, x + vx) + .4, 102.8, Math.max(z, z + vz) + .4);
-                for (int a = Mth.floor(standing.minX); a <= Mth.floor(standing.maxX); a++)
-                    for (int b = Mth.floor(standing.minZ); b <= Mth.floor(standing.maxZ); b++)
+                for (int a = Mth.floor(standing.minX); a <= Mth.floor(standing.maxX); a++) {
+                    for (int b = Mth.floor(standing.minZ); b <= Mth.floor(standing.maxZ); b++) {
                         if (cell(a, 100, b) != '#' || cell(a, 101, b) != '.') return false;
+                        var support = new BlockPos(a, 100, b);
+                        if (!supports.containsKey(support)) {
+                            if (cells.size() + supports.size() >= 2048) return false;
+                            supports.put(support, visibleSupport(support));
+                        }
+                        if (!supports.get(support)) return false;
+                    }
+                }
                 if (!clear(standing)) return false;
                 x += vx; z += vz;
                 if (tick >= 2) { vx *= .546; vz *= .546; }
                 if (Math.hypot(vx, vz) < .005) return true;
             }
             return false;
+        }
+        boolean visibleSupport(BlockPos support) {
+            return FlightObservation.visibleLandingSupport(eye, support, 101, 96, 96,
+                    pos -> true, (mode, end) -> ray(end));
+        }
+        private BlockHitResult ray(Vec3 end) {
+            Vec3 closest = null;
+            AABB hitShape = null;
+            for (var shape : shapes) {
+                var hit = shape.clip(eye, end);
+                if (hit.isPresent() && (closest == null || eye.distanceToSqr(hit.get()) < eye.distanceToSqr(closest))) {
+                    closest = hit.get(); hitShape = shape;
+                }
+            }
+            if (closest == null) return BlockHitResult.miss(end, Direction.DOWN, BlockPos.containing(end));
+            var inside = closest.add(end.subtract(eye).normalize().scale(1e-7));
+            var face = Math.abs(closest.y - hitShape.maxY) < 1e-6 ? Direction.UP : Direction.NORTH;
+            return new BlockHitResult(closest, face, BlockPos.containing(inside), false);
         }
         private char cell(int x, int y, int z) {
             return x >= 290 && x <= 350 && z >= 290 && z <= 330 && y >= 100 && y <= 104

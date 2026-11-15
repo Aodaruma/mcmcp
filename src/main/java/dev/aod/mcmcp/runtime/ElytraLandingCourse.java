@@ -36,8 +36,8 @@ record ElytraLandingCourse(Vec3 goal, float yaw, int approachTicks, int flareTic
         for (int offset : new int[] {0, -15, 15})
             for (int approach : new int[] {0, 8, 16})
                 for (int flare : new int[] {16, 32, 48, 64})
-                    for (int coast : new int[] {8, 20, 32})
-                        for (float finalPitch : new float[] {-45, -55, -60, -65, -70}) {
+                    for (int coast : new int[] {8, 20, 24, 32})
+                        for (float finalPitch : new float[] {-45, -50, -55, -60, -65, -70}) {
                             if (!allowed.getAsBoolean()) return null;
                             var course = new ElytraLandingCourse(goal, bearing + offset, approach, flare, coast, finalPitch);
                             if (course.verifiedTicks(position, motion, yaw, pitch, gravity, 0, latency,
