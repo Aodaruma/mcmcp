@@ -271,6 +271,28 @@ $null = Invoke-McmcpTransportRequest -Endpoint $args[0] `
                 self.assertEqual(reply['http_status'], code)
                 self.assertEqual(len(self.requests), 1)
 
+    def test_missing_endpoint_and_protocol_mismatch_are_not_auth_failures(self):
+        live_endpoint = self.endpoint
+        # Reserve a local port without listening: no request can reach a real game.
+        import socket
+        with socket.socket() as closed_endpoint:
+            closed_endpoint.bind(('127.0.0.1', 0))
+            self.endpoint = f'http://127.0.0.1:{closed_endpoint.getsockname()[1]}/mcp'
+            reply = self.invoke('-Check')
+        self.assertEqual(reply['failure_kind'], 'transport')
+        self.assertEqual(reply['diagnostic_code'], 'http_request_failed')
+        self.assertEqual(len(self.requests), 0)
+        self.endpoint = live_endpoint
+
+        def obsolete_version(_, envelope):
+            envelope['result']['supportedVersions'] = ['1999-01-01']
+            return envelope
+        self.modify = obsolete_version
+        reply = self.invoke('-Check')
+        self.assertEqual(reply['failure_kind'], 'protocol_validation')
+        self.assertEqual(reply['diagnostic_code'], 'discovery_mismatch')
+        self.assertEqual(len(self.requests), 1)
+
     def test_envelope_and_mime_fail_closed(self):
         for mode in ['version', 'id', 'both', 'error_code', 'json', 'content_type']:
             with self.subTest(mode=mode):
