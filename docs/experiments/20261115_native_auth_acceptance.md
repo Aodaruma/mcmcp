@@ -19,6 +19,6 @@
 
 ## 修正と限界
 
-実機で分離設定成功の長い案内が856px幅のHUDからはみ出したため、日英の起動案内を短縮した。認証codeとファイル動作は変更していない。この表示修正の最終JARでの再表示は別途確認する。
+実機で分離設定成功の長い案内が856px幅のHUDからはみ出したため、日英の起動案内を短縮した。認証codeとファイル動作は変更していない。表示修正後のsource `7410c78a3187a0175f4df7b4f586fa6f4a988e6e`（版0.2.0-rc.1）で、分離設定を再登録し、856px幅のHUDに成功案内が収まることを再確認した。登録されたnative Cドライブ側ヘルパーでも17ツールの実接続・誤token401を再確認し、通常設定3ファイルの存在/hashは不変だった。private receiptは`auth/versioned-hud-followup.json`と`auth/versioned-native-helper.json`。通常Codexアプリ自身の接続確認とは区別する。
 
 baselineのJava1,974件、harness16件、admin29件、isolation/buildは成功。参照所有・並行登録・別JVM lockの回帰も含む。今回の実機はUI・生成ヘルパー・実MCP transportの確認であり、通常Codexアプリの再起動や、アプリ自身のCODEX_HOME選択を代行していない。`configured`だけでそのクライアントが正しい設定を読んだと主張しない。

@@ -1,4 +1,6 @@
-# MCMCP公開API v2：改訂案
+# MCMCP公開API v2
+
+2026-11-15：版0.2.0-rc.1の17ツール・移行手順は[クイックガイド](MCMCP_Public_API_v2_クイックガイド.md)、対象commit・実機・残る課題は[最終受入記録](experiments/20261115_release_rc1.md)を参照。以下は設計と実装の履歴。
 
 2026-10-11の開発版は公開17ツール。JSON/CSV設計図をpreview・区間実行する`agent_build`を追加した。[設計図ガイド](PUBLIC_API_V2_BLUEPRINT_TOOL.md)、[床延長とscript施工](PUBLIC_API_V2_BUILDING.md)。ゲーム内チャットの送受信は `agent_chat` にまとめた。[チャットガイド](PUBLIC_API_V2_CHAT_20261011.md)。`agent_get_observation` は [看板文字と任意のNBT読取り](PUBLIC_API_V2_SIGN_NBT_20261011.md) に対応。設置したチェスト・バッグの確認と数量指定移送は `agent_interact` にまとめ、stateの経験値ポイントを追加した。[設置収納・経験値ガイド](PUBLIC_API_V2_STORAGE_XP_20261011.md)。通常環境への導入済み版とは区別する。
 

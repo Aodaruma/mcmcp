@@ -3,7 +3,7 @@
 対象はIssue整理、PRレビュー、検証、配布判断です。[AGENTS.md](../AGENTS.md)の安全契約と[CONTRIBUTING.md](../CONTRIBUTING.md)の作業分離を維持します。CODEOWNERSの担当は **@Aodaruma** です。<br>
 This guide covers issue triage, PR review, verification, and release decisions. Preserve the safety contract in [AGENTS.md](../AGENTS.md) and the isolated workflow in [CONTRIBUTING.md](../CONTRIBUTING.md). The CODEOWNERS owner is **@Aodaruma**.
 
-**現在のowner指示:** 追加の明示指示があるまで変更はPR作成までとし、下記の通常merge手順は適用しません。main統合、タグ、Release公開を自動で行わないでください。公開API v2の目標と現行v1の区別は[PUBLIC_API_V2.md](PUBLIC_API_V2.md)に記録します。
+**2026-11-15のowner指示:** この保守作業では、このPCでの実機確認、合格したPRの通常merge、版更新・Release公開、完了worktree整理まで明示的に依頼された。下記のCI・独立レビュー・実機受入・原状復旧を満たして進める。[最終受入記録](experiments/20261115_release_rc1.md)に対象と限界を残す。通常profile・稼働workerへの変更許可とは扱わない。公開API v2の移行は[PUBLIC_API_V2.md](PUBLIC_API_V2.md)を参照。
 
 ## aod-mimoidのSSH復旧
 

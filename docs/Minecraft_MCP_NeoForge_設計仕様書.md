@@ -1,6 +1,6 @@
 # MCMCP NeoForge — Minecraft MCP Client MOD 設計・仕様書
 
-> この文書の公開Tool・Action DSLに関する記述は、現在のv1実装と既存試験の仕様を記録するものです。公開API v2の開発目標は[PUBLIC_API_V2.md](PUBLIC_API_V2.md)を優先します。v2の実装・検証が完了するまで、両者を同じ公開機能として扱いません。
+> この文書の公開5 Tool・Action DSLに関する記述は、旧v1実装と既存試験の仕様記録です。0.2.0-rc.1の公開面は17ツールのv2へ移行し、[現行catalog](MCMCP_MCP_Tool_Catalog.json)・[公開API v2](PUBLIC_API_V2.md)・[クイックガイド](MCMCP_Public_API_v2_クイックガイド.md)を優先します。旧DSLを現行の公開機能として扱わず、[受入範囲と残件](experiments/20261115_release_rc1.md)を参照してください。
 
 - 文書版: 0.8
 - 作成日: 2026-08-26
