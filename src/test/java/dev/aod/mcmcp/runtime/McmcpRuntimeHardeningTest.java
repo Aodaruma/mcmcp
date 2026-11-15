@@ -1469,12 +1469,13 @@ class McmcpRuntimeHardeningTest {
                 lock, false, null, List.of());
 
         assertThat(state.keySet()).containsExactly(
-                "schema_version", "control", "world", "inventory",
+                "schema_version", "control", "world", "inventory", "held_items",
                 "standard_potions", "placement_materials", "entity_attack_consent", "recipe_query",
                 "policy", "observation", "action");
         assertThat(state).containsEntry("schema_version", 1)
                 .containsEntry("world", null)
                 .containsEntry("inventory", List.of())
+                .containsEntry("held_items", null)
                 .containsEntry("standard_potions", List.of())
                 .containsEntry("recipe_query", null)
                 .containsEntry("observation", null)
@@ -1500,7 +1501,7 @@ class McmcpRuntimeHardeningTest {
         assertThat(policy.get("max_blocks_broken")).isEqualTo(8);
         assertThat(policy.get("max_interactions")).isEqualTo(16);
         var actionDsl = (Map<?, ?>) policy.get("action_dsl");
-        assertThat((List<?>) actionDsl.get("available_operations")).hasSize(40);
+        assertThat((List<?>) actionDsl.get("available_operations")).hasSize(41);
         assertThat(((Map<?, ?>) actionDsl.get("missing_capability_guidance")).get("code"))
                 .isEqualTo("MISSING_CAPABILITY");
         assertThat((List<?>) actionDsl.get("reference_descriptors")).hasSize(7);
