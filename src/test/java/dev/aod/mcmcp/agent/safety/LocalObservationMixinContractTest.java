@@ -202,6 +202,35 @@ class LocalObservationMixinContractTest {
     }
 
     @Test
+    void recoveryLadderHoldUsesTheCurrentBodyAndTheExistingCompleteRungProof() throws Exception {
+        var volume = classNode("/dev/aod/mcmcp/agent/safety/LocalObservationVolume.class");
+        var hold = invocations(method(volume, "canHoldLadder"));
+        assertThat(hold)
+                .anyMatch(call -> call.endsWith("#isAlive"))
+                .anyMatch(call -> call.endsWith("#isPassenger"))
+                .anyMatch(call -> call.endsWith("#getAbilities"))
+                .anyMatch(call -> call.endsWith("#isFallFlying"))
+                .anyMatch(call -> call.endsWith("#getBoundingBox"))
+                .contains("dev/aod/mcmcp/agent/safety/LocalObservationVolume#safeLadderCell")
+                .noneMatch(call -> call.endsWith("#onClimbable"));
+        var proof = invocations(method(volume, "safeLadderCell"));
+        assertThat(proof).contains(
+                "dev/aod/mcmcp/agent/safety/LocalObservationVolume#exactSurvivingLadderAtFeet",
+                "dev/aod/mcmcp/agent/safety/LocalObservationVolume#loadedState",
+                "dev/aod/mcmcp/agent/safety/LocalObservationVolume#fluid",
+                "dev/aod/mcmcp/agent/safety/LocalObservationVolume#damageBlockHazard")
+                .anyMatch(call -> call.endsWith("#noCollision"))
+                .anyMatch(call -> call.endsWith("#collidesWithSuffocatingBlock"));
+        assertThat(invocations(method(volume, "exactSurvivingLadderAtFeet")))
+                .anyMatch(call -> call.endsWith("#isLoaded"))
+                .anyMatch(call -> call.endsWith("#canSurvive"));
+        assertThat(invocations(method(classNode("/dev/aod/mcmcp/runtime/McmcpRuntime.class"),
+                "trackRecoveryDescent"))).containsSubsequence(
+                "dev/aod/mcmcp/agent/safety/LocalObservationVolume#canHoldLadder",
+                "dev/aod/mcmcp/runtime/RecoveryPlanning$RecoveryDescentTracker#update");
+    }
+
+    @Test
     void samplerUsesVanillaShapesSupportAndFluidTypeWithoutRawBlockIdentity() throws Exception {
         var node = classNode("/dev/aod/mcmcp/agent/safety/LocalObservationVolume.class");
         var calls = node.methods.stream()

@@ -1653,6 +1653,14 @@ public final class LocalObservationVolume {
                 locomotion));
     }
 
+    /** Current-body local safety proof; never observes a remote destination. */
+    public static boolean canHoldLadder(LocalPlayer player) {
+        return player != null && player.isAlive() && !player.isPassenger()
+                && !player.getAbilities().flying && !player.isFallFlying()
+                && player.level() instanceof ClientLevel level
+                && safeLadderCell(player, level, point(player.getBoundingBox().getCenter()), player.getBoundingBox());
+    }
+
     private static boolean safeLadderCell(
             LocalPlayer player, ClientLevel level, Point origin, AABB box) {
         if (!exactSurvivingLadderAtFeet(level, origin, box)
