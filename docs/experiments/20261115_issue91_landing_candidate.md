@@ -99,3 +99,20 @@ poolの保存済み開始・終了の流水5層は既存回帰resourceと全cell
 yaw候補へ±5度を補い、既存courseの完全証明をraw intent点の再検査より先に行う。証明成立時だけその結果を同tick/pose/cacheで再利用し、proof失効・上方goal・近いthreatでは特例保持しない。`Selection(course,verifiedTicks)`でselect/replanの証明結果も返し、callerでの二重verifyを除く。同じ20ms期限をpreverify・replan・selectへ通し、予算・期待ground・全支持LOSは変更しない。waterescape処理への変更はない。
 
 strict focused28件・全Java1,955件（通常1,913・harness14・admin28）、`verifyHarnessIsolation build`は成功。r5製品SHA-256は`8f0acfce83f5d0cb7209fa8e27d964f9f90dac355366824cde33832ba737f8b6`、harnessは`06e0293ec654168eeb1d5f1a951385d07c10e506a05071d56bd41a234314ea90`。source/JAR/XML/logを`artifacts/issue91-safe-landing-20261115-r5`へ凍結する。実機はPENDING、installable=falseを維持する。
+
+## r5 nativeの結果とr6の補強
+
+r5 sourceは`73886c16ad2f7d07aceab6b5239964af2b9c6b6d`。上記r5製品・harnessの組合せをこのPCで確認した。
+
+| native case | artifact | 判定 |
+| --- | --- | --- |
+| cold pool | `20261115-local-acceptance/recovery_elytra_pool-104700` | FAIL。完全course成立後に失効し、花火1発を使って距離予算で停止。HP20・water0だが飛行中、stable0。終端後に生存状態で安全床へ復旧。 |
+| warm edge | `20261115-local-acceptance/recovery_elytra_edge-104804` | FAIL。完全courseなし、water1、距離予算で飛行中停止。終端後に生存状態で復旧。 |
+| wide | `20261115-local-acceptance/recovery_elytra-104935` | PASS。乾いた床y101で100tick安定、HP/minimum health20、READY。 |
+| cancel | `20261115-local-acceptance/recovery_elytra_pool-105155` | PASS。client_requestでActionと救助を取消、READY・HP20・water0。入力idle確認後の固定fixture復旧も成功。 |
+
+cold poolではplayer tick1447から完全courseが成立したが、1460で現在courseのproofが失効した。raw intent点周辺が隠れていたため、同じgoalへの完全再計画より先に目標を捨てていた。厳密モデルでは、この時点でも全4遅延・全停止支持LOSを満たす85tickの再計画が成立する。また、完全courseの採用がlanding予約へ反映されず、失効後の上方safeAnchorに向けた不要な花火を許していた。warm edgeの初期状態は非飛行・水平速度0で、真上のsafeAnchorへの水平零距離bearingを0度として元のyaw-90度から回していた。
+
+r6は既存courseの完全再証明と必要時の同goal再計画をraw intent検査より先に行い、同tickの証明結果を再利用する。新courseだけ開始tickを合わせ、失敗時の二重再計画や共有20ms期限の再設定は行わない。完全course採用後はlanding予約を維持して再加速を防ぎ、水平距離がほぼ0の展開時だけ現在yawを保つ。期待ground高さ・全停止支持LOS・4遅延・2,048cell cache・元予算・取消条件とwaterescape処理は変更していない。
+
+strict focused31件が成功した。nativeのlate pool実stateから、raw intent非可視中の完全再計画と乾いた停止域への到達を確認し、既存1420回帰の非可視10tick以上の条件も維持した。landing予約の単調性、水平零距離と通常bearing、権限喪失の拒否を回帰で確認した。r6の全体ビルド・版付きJAR・native edge/pool/wide/cancelは確認待ち。r4/r5の失敗を合格へ読み替えず、PRはDraft・installable=falseを維持する。

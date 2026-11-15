@@ -13,6 +13,15 @@ final class ElytraFlightPlanner {
         boolean fullyVerified() { return verifiedTicks == horizon || landing; }
     }
 
+    static float launchYaw(Vec3 position, Vec3 goal, float currentYaw) {
+        return goal.subtract(position).horizontalDistanceSqr() < 1e-8 ? currentYaw
+                : (float) Math.toDegrees(Math.atan2(position.x - goal.x, goal.z - position.z));
+    }
+
+    static boolean reserveLanding(boolean alreadyReserved, int verifiedCourseTicks) {
+        return alreadyReserved || verifiedCourseTicks > 0;
+    }
+
     static boolean reserveLanding(Vec3 position, Vec3 motion, Vec3 goal, long ticks, double distance, double camera) {
         double drop = Math.max(0, position.y - goal.y);
         return ticks <= Math.max(100, drop * 5 + 60)

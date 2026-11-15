@@ -5,6 +5,29 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ElytraFlightPlannerTest {
+    @Test void verticallyAlignedLaunchKeepsHeadingAndNonzeroGoalsKeepTheirBearing() {
+        var position = new Vec3(2, 30, 3);
+        assertThat(ElytraFlightPlanner.launchYaw(position, position.add(0, 5, 0), -90)).isEqualTo(-90);
+        assertThat(ElytraFlightPlanner.launchYaw(position, position.add(1e-6, 5, -1e-6), 123.5F)).isEqualTo(123.5F);
+        assertThat(ElytraFlightPlanner.launchYaw(position, position.add(5, 0, 0), 17)).isEqualTo(-90);
+        assertThat(ElytraFlightPlanner.launchYaw(position, position.add(-5, 0, 0), 17)).isEqualTo(90);
+        assertThat(ElytraFlightPlanner.launchYaw(position, position.add(0, 0, 5), 17)).isZero();
+        assertThat(ElytraFlightPlanner.launchYaw(position, position.add(0, 0, -5), 17)).isEqualTo(180);
+    }
+
+    @Test void completeCourseReservesLandingAfterItsProofIsLostEvenWhenTheOldAnchorNeedsBoost() {
+        var position = new Vec3(0, 30, 0);
+        boolean reserved = ElytraFlightPlanner.reserveLanding(position, new Vec3(.3, -.1, 0),
+                new Vec3(40, 0, 0), 600, 128, 360);
+        assertThat(reserved).isFalse();
+        assertThat(ElytraFlightPlanner.reserveLanding(reserved, 0)).isFalse();
+        reserved = ElytraFlightPlanner.reserveLanding(reserved, 94);
+        assertThat(reserved).isTrue();
+        reserved = ElytraFlightPlanner.reserveLanding(reserved, 0);
+        assertThat(reserved).isTrue();
+        assertThat(ElytraFlightPlanner.needsBoost(position, new Vec3(0, 100, 0), 32, 4)).isTrue();
+    }
+
     @Test void independentlyWitnessedClientAndDelayedLandingsMayOccurOnDifferentTicks() {
         var plan = ElytraFlightPlanner.plan(new Vec3(0, 2, 0), new Vec3(0, -.1, .6),
                 0, -25, new Vec3(0, 0, 8), .08, 0, false, 4, box -> box.minY > 0,

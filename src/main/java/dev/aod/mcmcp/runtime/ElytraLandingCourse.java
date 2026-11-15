@@ -75,6 +75,17 @@ record ElytraLandingCourse(Vec3 goal, float yaw, int approachTicks, int flareTic
         return null;
     }
 
+    Selection proveOrReplan(Vec3 position, Vec3 motion, float yaw, float pitch, double gravity, int elapsed,
+            int latency, long remainingTicks, double remainingDistance, double remainingCamera,
+            Predicate<AABB> clear, BiPredicate<AABB, Vec3> stoppedLanding, BooleanSupplier allowed) {
+        if (!descendingGoal(position, goal)) return null;
+        int verified = verifiedTicks(position, motion, yaw, pitch, gravity, elapsed, latency,
+                remainingTicks, remainingDistance, remainingCamera, clear, stoppedLanding, allowed);
+        return verified > 0 ? new Selection(this, verified)
+                : replan(position, motion, yaw, pitch, gravity, elapsed, latency,
+                    remainingTicks, remainingDistance, remainingCamera, clear, stoppedLanding, allowed);
+    }
+
     int verifiedTicks(Vec3 position, Vec3 motion, float yaw, float pitch, double gravity, int elapsed, int latency,
             long remainingTicks, double remainingDistance, double remainingCamera,
             Predicate<AABB> clear, BiPredicate<AABB, Vec3> stoppedLanding, BooleanSupplier allowed) {
