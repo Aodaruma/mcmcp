@@ -30,6 +30,7 @@ import dev.aod.mcmcp.routine.MinecraftSemanticActionPort;
 import dev.aod.mcmcp.routine.PhaseFivePort;
 import dev.aod.mcmcp.routine.PhaseFiveRequest;
 import java.util.ArrayList;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -213,7 +214,7 @@ final class MenuPrimitiveExecution {
                                     ((ActionDsl.SmeltKnownRecipe) primitive)
                                             .maxSmelts())
                             : knownMenu
-                                    ? ActionDslCompiler.KNOWN_MENU_OPERATION_TICKS
+                                    ? ActionDslCompiler.knownMenuTicks((ActionDsl.OperateKnownMenu) primitive)
                             : primitive instanceof ActionDsl.TakeKnownContainerStack take
                                     ? ActionDslCompiler.knownContainerTransferOperationTicks(take.maxClicks())
                             : primitive instanceof ActionDsl.StoreKnownContainerStack store
@@ -405,12 +406,18 @@ final class MenuPrimitiveExecution {
             kind = "container_store";
             target = store.target();
             item = store.item();
+        } else if (primitive instanceof ActionDsl.OperateKnownMenu menu && menu.opensStorage()) {
+            kind = "storage_" + menu.operation();
+            target = null;
+            item = menu.item();
         } else {
             throw new IllegalStateException(
                     "container transfer effect has no transfer primitive");
         }
-        String subject = "container:" + target.dimension() + ":"
-                + target.x() + "," + target.y() + "," + target.z() + "/" + item;
+        String subject = target == null
+                ? storageEffectSubject(((ActionDsl.OperateKnownMenu) primitive).operationRef(), item)
+                : "container:" + target.dimension() + ":"
+                    + target.x() + "," + target.y() + "," + target.z() + "/" + item;
         for (var effect : effects) {
             agentActions.recordEffect(
                     actionId,
@@ -422,6 +429,14 @@ final class MenuPrimitiveExecution {
                     effect.clientTick(),
                     worldRevision);
         }
+    }
+
+    static String storageEffectSubject(String operationReference, String item) {
+        // The one-use reference is mixed-case and may contain '_'; effects only expose a
+        // bounded, non-reversible lowercase identity, not the live operation credential.
+        String id = UUID.nameUUIDFromBytes(
+                operationReference.getBytes(StandardCharsets.UTF_8)).toString();
+        return "storage:" + id + "/" + item;
     }
 
     PrimitiveOutcome tickAgentFloorExtension(Minecraft minecraft, WorldSessionTracker.Snapshot session,

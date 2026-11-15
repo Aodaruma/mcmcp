@@ -18,6 +18,49 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AgentInputRoutingContractTest {
     @Test
+    void repeatedAttackChargesNewDestroyStartsAndUseChargesOnlyAfterCooldown() throws Exception {
+        var mode = minecraftClassNode("net/minecraft/client/multiplayer/MultiPlayerGameMode.class");
+        assertThat(invocations(method(mode, "continueDestroyBlock")))
+                .contains("net/minecraft/client/multiplayer/MultiPlayerGameMode#startDestroyBlock");
+        method(mode, "startDestroyBlock", "(Lnet/minecraft/core/BlockPos;Lnet/minecraft/core/Direction;)Z");
+        var hook = method(classNode("/dev/aod/mcmcp/mixin/client/MultiPlayerGameModeBoundedInputMixin.class"),
+                "mcmcp$boundNewBreak");
+        assertThat(injection(hook).values.toString()).contains("startDestroyBlock(", "cancellable, true", "require, 1");
+        assertThat(invocations(hook)).containsSubsequence(
+                "dev/aod/mcmcp/client/AgentInputState#attackActive",
+                "dev/aod/mcmcp/client/AgentInputState#beginBoundedInput",
+                "org/spongepowered/asm/mixin/injection/callback/CallbackInfoReturnable#setReturnValue");
+        assertThat(invocations(method(classNode("/dev/aod/mcmcp/client/AgentUseInputChannel.class"), "onClientPostTick")))
+                .containsSubsequence(
+                        "dev/aod/mcmcp/mixin/client/MinecraftUseItemInvoker#mcmcp$getRightClickDelay",
+                        "net/minecraft/client/player/LocalPlayer#isUsingItem",
+                        "dev/aod/mcmcp/client/AgentInputState#beginBoundedInput",
+                        "dev/aod/mcmcp/mixin/client/MinecraftUseItemInvoker#mcmcp$startUseItem");
+    }
+
+    @Test
+    void ongoingUseHookOnlyInterceptsThePhysicalKeyReleaseInVanilla() throws Exception {
+        var keybinds = method(minecraftClassNode("net/minecraft/client/Minecraft.class"), "handleKeybinds");
+        assertThat(invocations(keybinds).stream().filter(call -> call.equals(
+                "net/minecraft/client/multiplayer/MultiPlayerGameMode#releaseUsingItem"))).hasSize(1);
+        var hook = method(classNode("/dev/aod/mcmcp/mixin/client/MinecraftBoundedUseMixin.class"),
+                "mcmcp$preserveOngoingUse");
+        var redirect = Arrays.asList(hook.visibleAnnotations, hook.invisibleAnnotations).stream()
+                .filter(java.util.Objects::nonNull).flatMap(java.util.Collection::stream)
+                .filter(annotation -> annotation.desc.equals(
+                "Lorg/spongepowered/asm/mixin/injection/Redirect;")).findFirst().orElseThrow();
+        assertThat(redirect.values.toString()).contains("handleKeybinds", "require, 1", "expect, 1");
+        assertThat(invocations(hook)).containsExactly(
+                "dev/aod/mcmcp/client/AgentInputState#global",
+                "dev/aod/mcmcp/client/AgentInputState#maintainsBoundedUse",
+                "net/minecraft/client/multiplayer/MultiPlayerGameMode#releaseUsingItem");
+        try (var stream = getClass().getResourceAsStream("/mcmcp.mixins.json")) {
+            assertThat(new String(stream.readAllBytes(), StandardCharsets.UTF_8)).contains(
+                    "\"client.MinecraftBoundedUseMixin\"", "\"client.MultiPlayerGameModeBoundedInputMixin\"");
+        }
+    }
+
+    @Test
     void neoForgeEventExposesFinalClientInputAndModAppliesAgentStateThere() throws Exception {
         assertThat(MovementInputUpdateEvent.class.getMethod("getInput").getReturnType())
                 .isEqualTo(ClientInput.class);
@@ -86,6 +129,22 @@ class AgentInputRoutingContractTest {
             assertThat(stream).isNotNull();
             assertThat(new String(stream.readAllBytes(), StandardCharsets.UTF_8))
                     .contains("\"client.MinecraftAttackInputMixin\"");
+        }
+    }
+
+    private static ClassNode minecraftClassNode(String resource) throws Exception {
+        // NeoForge's test runtime omits physical-client classes; inspect the artifact used by compileJava.
+        try (var files = java.nio.file.Files.list(java.nio.file.Path.of(
+                System.getProperty("mcmcp.projectDir"), "build/moddev/artifacts"))) {
+            var jars = files.filter(path -> path.getFileName().toString().startsWith("minecraft-patched-")
+                    && path.toString().endsWith(".jar")).toList();
+            assertThat(jars).hasSize(1);
+            try (var jar = new java.util.jar.JarFile(jars.getFirst().toFile());
+                 var stream = jar.getInputStream(jar.getJarEntry(resource))) {
+                var node = new ClassNode();
+                new ClassReader(stream).accept(node, 0);
+                return node;
+            }
         }
     }
 

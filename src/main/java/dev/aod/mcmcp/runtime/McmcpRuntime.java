@@ -120,6 +120,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
     private final ClientRecipeCatalog recipeCatalog = new ClientRecipeCatalog();
     private final ScreenOwnershipSignals screenOwnership = ScreenOwnershipSignals.global();
     private final KnownMenuOperationRefs knownMenuOperationRefs = new KnownMenuOperationRefs();
+    private final KnownStorageRefs knownStorageRefs = new KnownStorageRefs();
     private final FishingSessionRefs fishingSessionRefs = new FishingSessionRefs();
     private final ScopedEntityAttackConsentStore entityAttackConsent =
             new ScopedEntityAttackConsentStore();
@@ -222,7 +223,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 Minecraft::getInstance,
                 sessions::snapshot,
                 ContainerSyncSignals.global(),
-                knownMenuOperationRefs);
+                knownMenuOperationRefs, knownStorageRefs);
         phaseFiveInventoryPort = new MinecraftPhaseFiveInventoryPort(
                 Minecraft::getInstance,
                 sessions::snapshot,
@@ -337,6 +338,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         transientMultiplayerConsentAddress = null;
         evaluationControl.terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.WORLD_CHANGED);
+        recipeCatalog.syncedRecipes().clear();
         clearAgentSessionState();
         stopForLifecycle(minecraft, "disconnect");
         routines.clearSession("disconnect");
@@ -380,6 +382,12 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         memory.detachSession();
         arming.lock("player_respawn");
         publishSession();
+    }
+
+    public void onRecipesReceived(Minecraft minecraft,
+            net.neoforged.neoforge.client.event.RecipesReceivedEvent event) {
+        assertClientThread(minecraft);
+        recipeCatalog.syncedRecipes().receive(minecraft.getConnection(), event);
     }
 
     public void onPauseChanged(boolean paused) {
@@ -849,6 +857,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         clearAutomationPortSession("known_furnace", knownFurnacePort::clearSession);
         clearAutomationPortSession("known_menu", knownMenuPort::clearSession);
         clearAutomationPortSession("known_menu_refs", knownMenuOperationRefs::clear);
+        clearAutomationPortSession("known_storage_refs", knownStorageRefs::clear);
         clearAutomationPortSession("phase_five_inventory", phaseFiveInventoryPort::clearSession);
         clearAutomationPortSession("phase_five_world", phaseFiveWorldPort::clearSession);
         clearAutomationPortSession("phase_five_router", phaseFivePort::clearSession);
@@ -905,6 +914,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         evaluationControl.terminateActiveEvaluationOnClient(
                 minecraft, EvaluationTurnControl.ReleaseReason.CLIENT_SHUTDOWN);
         shutdown = true;
+        recipeCatalog.syncedRecipes().clear();
         entityAttackConsent.clear();
         clearAgentSessionState();
         sessions.stopping();
@@ -1681,6 +1691,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         Map<String, Object> merchantOffers = null;
         Map<String, Object> knownMenu = null;
         Map<String, Object> world = null;
+        Map<String, Object> heldItems = null;
 
         if (session.worldReady() && minecraft.player != null && minecraft.level != null) {
             var player = minecraft.player;
@@ -1712,6 +1723,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     .toList());
 
             var playerInventory = player.getInventory();
+            heldItems = HeldItemView.capture(player);
             for (int slot = 0; slot < playerInventory.getContainerSize(); slot++) {
                 var stack = playerInventory.getItem(slot);
                 if (!stack.isEmpty()) {
@@ -1767,6 +1779,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                         minecraft.isMultiplayerServer() && multiplayerPolicyAllows(minecraft),
                         McmcpClientConfig.visualRadiusBlocks(),
                         McmcpClientConfig.raysPerTick()));
+        result.put("held_items", heldItems);
         result.put(
                 "entity_attack_consent",
                 ActionWireMapper.entityAttackConsentPayload(entityAttackConsentSnapshot(session, lock)));
@@ -1779,6 +1792,10 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         }
         if (knownMenu != null) {
             result.put("known_menu", knownMenu);
+        }
+        if (session.worldReady() && lock.mode() == LocalArmingState.Mode.READY) {
+            result.put("known_storages", knownStorageRefs.payload(minecraft, session));
+            result.put("storage_inspection", knownStorageRefs.inspection(session.worldSessionId()));
         }
         result.put("observation", agentObservations.frames().announceLatestSummary()
                 .map(ObservationWireMapper::summary)

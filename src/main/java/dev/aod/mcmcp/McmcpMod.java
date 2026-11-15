@@ -68,6 +68,7 @@ public final class McmcpMod {
         eventBus.addListener(this::onPostTick);
         eventBus.addListener(this::onLoggingIn);
         eventBus.addListener(this::onLoggingOut);
+        eventBus.addListener(this::onRecipesReceived);
         eventBus.addListener(this::onPlayerClone);
         eventBus.addListener(this::onLevelUnload);
         eventBus.addListener(this::onPauseChanged);
@@ -120,6 +121,10 @@ public final class McmcpMod {
 
     private void onLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
         runtime.onLoggingOut(Minecraft.getInstance());
+    }
+
+    private void onRecipesReceived(net.neoforged.neoforge.client.event.RecipesReceivedEvent event) {
+        runtime.onRecipesReceived(Minecraft.getInstance(), event);
     }
 
     private void onPlayerClone(ClientPlayerNetworkEvent.Clone event) {

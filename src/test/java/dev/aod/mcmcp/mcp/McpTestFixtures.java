@@ -13,13 +13,7 @@ final class McpTestFixtures {
     }
 
     static Map<String, Object> state() {
-        var result = new LinkedHashMap<>(baseState());
-        result.put("placement_materials", List.of());
-        return Map.copyOf(result);
-    }
-
-    private static Map<String, Object> baseState() {
-        return Map.of(
+        var result = new LinkedHashMap<>(Map.of(
                 "schema_version", 1,
                 "control", Map.of(
                         "mode", "off",
@@ -68,7 +62,10 @@ final class McpTestFixtures {
                                 "missing_capability_guidance",
                                 ActionDslOperationManifest.missingCapabilityGuidance()))),
                 "observation", nullValue(),
-                "action", nullValue());
+                "action", nullValue()));
+        result.put("held_items", nullValue());
+        result.put("placement_materials", List.of());
+        return result;
     }
 
     static Map<String, Object> stateWithEmptyRecipeQuery() {
@@ -84,7 +81,14 @@ final class McpTestFixtures {
                         "known", 0,
                         "matched", 0,
                         "returned", 0,
-                        "truncated", false),
+                        "truncated", false,
+                        "scope", "unlocked",
+                        "scope_label", "解放済みのレシピのみ",
+                        "absence_proven", false,
+                        "additional_source", Map.of(
+                                "source", "neoforge_recipes_received", "status", "not_selected",
+                                "dependency", "existing_mod_recipe_sync", "recipe_types", List.of(),
+                                "omitted_without_display", 0, "limited", false, "failed", false)),
                 "recipes", List.of()));
         return result;
     }

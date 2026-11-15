@@ -38,7 +38,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
- * Session-scoped view of recipes the server actually synchronized into the client recipe book.
+ * Session-scoped view of client recipe-book displays and optional public synchronized displays.
  *
  * <p>This class deliberately never reads an integrated server {@code RecipeManager}. Recipe
  * display ids are connection-local integers, so callers receive opaque references that are
@@ -51,6 +51,9 @@ public final class ClientRecipeCatalog {
     private static final int MAX_INGREDIENT_ALTERNATIVES = 128;
 
     private final SecureRandom random;
+    private final ClientSyncedRecipes syncedRecipes = new ClientSyncedRecipes();
+    private RecipeScope scope = RecipeScope.UNLOCKED;
+    private ClientSyncedRecipes.Snapshot sourceSnapshot = ClientSyncedRecipes.Snapshot.unavailable();
     private UUID worldSessionId;
     private long clientTick;
     private long revision;
@@ -66,6 +69,8 @@ public final class ClientRecipeCatalog {
         this.random = Objects.requireNonNull(random, "random");
     }
 
+    public ClientSyncedRecipes syncedRecipes() { return syncedRecipes; }
+
     /** Refreshes from the public client recipe-book collections, never from server internals. */
     public synchronized Snapshot refreshFromClient(
             Minecraft minecraft, UUID expectedWorldSessionId, long observedClientTick) {
@@ -79,7 +84,9 @@ public final class ClientRecipeCatalog {
                 entries.put(entry.id().index(), entry);
             }
         }
-        return refresh(expectedWorldSessionId, observedClientTick, entries.values());
+        return refresh(expectedWorldSessionId, observedClientTick, entries.values(),
+                dev.aod.mcmcp.client.McmcpClientConfig.recipeScope(),
+                syncedRecipes.forConnection(minecraft.getConnection()));
     }
 
     /** Package-visible seam used by deterministic unit tests and packet-level adapters. */
@@ -87,6 +94,13 @@ public final class ClientRecipeCatalog {
             UUID expectedWorldSessionId,
             long observedClientTick,
             Collection<RecipeDisplayEntry> knownEntries) {
+        return refresh(expectedWorldSessionId, observedClientTick, knownEntries,
+                RecipeScope.UNLOCKED, ClientSyncedRecipes.Snapshot.unavailable());
+    }
+
+    synchronized Snapshot refresh(UUID expectedWorldSessionId, long observedClientTick,
+                                  Collection<RecipeDisplayEntry> knownEntries, RecipeScope requestedScope,
+                                  ClientSyncedRecipes.Snapshot received) {
         Objects.requireNonNull(expectedWorldSessionId, "expectedWorldSessionId");
         Objects.requireNonNull(knownEntries, "knownEntries");
         if (observedClientTick < 0) {
@@ -106,7 +120,28 @@ public final class ClientRecipeCatalog {
         for (var entry : byId.values()) {
             extracted.add(extract(entry));
         }
-        String signature = signature(extracted);
+        var activeSource = requestedScope == RecipeScope.ALL_CRAFTABLE
+                ? received : ClientSyncedRecipes.Snapshot.unavailable();
+        var displayed = new HashSet<DisplayKey>();
+        for (var entry : byId.values()) {
+            displayed.add(new DisplayKey(entry.display(), entry.category()));
+        }
+        boolean extractionFailed = false;
+        for (var entry : activeSource.entries()) {
+            try {
+                if (displayed.add(new DisplayKey(entry.display(), entry.category()))) {
+                    extracted.add(extract(entry));
+                }
+            } catch (RuntimeException | LinkageError failure) {
+                extractionFailed = true;
+            }
+        }
+        if (extractionFailed) {
+            activeSource = new ClientSyncedRecipes.Snapshot(activeSource.generation(), activeSource.available(),
+                    activeSource.entries(), activeSource.recipeTypes(), activeSource.omittedWithoutDisplay(),
+                    activeSource.limited(), true);
+        }
+        String signature = requestedScope.name() + ":" + activeSource.generation() + ":" + signature(extracted);
         boolean newSession = !expectedWorldSessionId.equals(worldSessionId);
         if (newSession || !Objects.equals(signature, contentSignature)) {
             revision = newSession ? 1 : Math.addExact(revision, 1);
@@ -124,6 +159,8 @@ public final class ClientRecipeCatalog {
         }
         worldSessionId = expectedWorldSessionId;
         clientTick = observedClientTick;
+        scope = requestedScope;
+        sourceSnapshot = activeSource;
         return snapshot();
     }
 
@@ -136,7 +173,8 @@ public final class ClientRecipeCatalog {
 
         List<CatalogRecipe> matched = recipes.stream()
                 .filter(recipe -> query.matches(recipe.extracted()))
-                .sorted(Comparator.comparing(recipe -> recipe.extracted().fingerprint()))
+                .sorted(Comparator.comparing((CatalogRecipe recipe) -> recipe.extracted().displayId().index() < 0)
+                        .thenComparing(recipe -> recipe.extracted().fingerprint()))
                 .toList();
         List<RecipeView> returned = matched.stream()
                 .limit(maxResults)
@@ -144,7 +182,8 @@ public final class ClientRecipeCatalog {
                 .toList();
         return new QueryResult(
                 new Basis(worldSessionId, clientTick, revision),
-                new Coverage(recipes.size(), matched.size(), returned.size(), matched.size() > returned.size()),
+                new Coverage(recipes.size(), matched.size(), returned.size(), matched.size() > returned.size(),
+                        scope, sourceSnapshot),
                 returned);
     }
 
@@ -156,7 +195,7 @@ public final class ClientRecipeCatalog {
             return Optional.empty();
         }
         CatalogRecipe recipe = byOpaqueRef.get(recipeRef);
-        if (recipe == null || !MessageDigest.isEqual(
+        if (recipe == null || recipe.extracted().displayId().index() < 0 || !MessageDigest.isEqual(
                 recipe.extracted().fingerprint().getBytes(StandardCharsets.UTF_8),
                 advertisedFingerprint.getBytes(StandardCharsets.UTF_8))) {
             return Optional.empty();
@@ -184,6 +223,7 @@ public final class ClientRecipeCatalog {
         contentSignature = null;
         recipes = List.of();
         byOpaqueRef = Map.of();
+        sourceSnapshot = ClientSyncedRecipes.Snapshot.unavailable();
     }
 
     private void requireSession(UUID expectedWorldSessionId) {
@@ -309,6 +349,12 @@ public final class ClientRecipeCatalog {
         if (result.alternatives().size() != 1 || !result.deterministic()) {
             unsupportedReason = unsupportedReason == null ? "non_deterministic_result" : unsupportedReason;
         }
+        if (entry.id().index() < 0) {
+            unsupportedReason = "client_synced_lookup_only";
+            // A display can be static while assemble inherits components from its input.
+            // Its item/count is a lookup hint, never proof of the actual crafted stack.
+            result = new Result(false, result.alternatives());
+        }
         boolean supported = unsupportedReason == null;
 
         var resultTags = new HashSet<String>();
@@ -395,6 +441,8 @@ public final class ClientRecipeCatalog {
             for (var recipe : recipes) {
                 out.writeInt(recipe.displayId().index());
                 writeString(out, recipe.fingerprint());
+                out.writeInt(recipe.resultTags().size());
+                for (String tag : recipe.resultTags().stream().sorted().toList()) writeString(out, tag);
             }
             out.flush();
             return sha256(bytes.toByteArray());
@@ -536,7 +584,8 @@ public final class ClientRecipeCatalog {
         }
     }
 
-    public record Coverage(int known, int matched, int returned, boolean truncated) {
+    public record Coverage(int known, int matched, int returned, boolean truncated,
+                           RecipeScope scope, ClientSyncedRecipes.Snapshot synced) {
         public Map<String, Object> toMap() {
             var map = new LinkedHashMap<String, Object>();
             map.put("source", "client_known_recipe_displays");
@@ -545,6 +594,18 @@ public final class ClientRecipeCatalog {
             map.put("matched", matched);
             map.put("returned", returned);
             map.put("truncated", truncated);
+            map.put("scope", scope.name().toLowerCase(java.util.Locale.ROOT));
+            map.put("scope_label", scope.label());
+            map.put("absence_proven", false);
+            map.put("additional_source", Map.of(
+                    "source", "neoforge_recipes_received",
+                    "status", scope == RecipeScope.UNLOCKED ? "not_selected"
+                            : synced.available() ? "partial" : "unavailable",
+                    "dependency", "existing_mod_recipe_sync",
+                    "recipe_types", synced.recipeTypes(),
+                    "omitted_without_display", synced.omittedWithoutDisplay(),
+                    "limited", synced.limited(),
+                    "failed", synced.failed()));
             return map;
         }
     }
@@ -595,6 +656,10 @@ public final class ClientRecipeCatalog {
             map.put("result", result.toMap());
             map.put("ingredients", ingredients.stream().map(IngredientView::toMap).toList());
             map.put("shape", shape == null ? null : shape.toMap());
+            map.put("materials_status", "not_assessed");
+            map.put("equipment_status", "not_assessed");
+            map.put("source", "client_synced_lookup_only".equals(unsupportedReason)
+                    ? "neoforge_recipes_received" : "client_known_recipe_displays");
             return map;
         }
     }
@@ -673,6 +738,8 @@ public final class ClientRecipeCatalog {
             }
         }
     }
+
+    private record DisplayKey(RecipeDisplay display, RecipeBookCategory category) { }
 
     private record CatalogRecipe(String opaqueRef, ExtractedRecipe extracted) {
         private CatalogRecipe {
