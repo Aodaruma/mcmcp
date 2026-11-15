@@ -5357,9 +5357,12 @@
                       "enum": [
                         "block_place",
                         "block_break",
+                        "block_interact",
                         "inventory_swap",
                         "container_take",
                         "container_store",
+                        "storage_take",
+                        "storage_store",
                         "frame_item_remove",
                         "frame_item_insert",
                         "fishing_cast",
