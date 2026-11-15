@@ -6,6 +6,7 @@ import com.google.gson.JsonParser;
 import dev.aod.mcmcp.agent.action.AgentActionStore;
 import dev.aod.mcmcp.agent.action.AgentPrimitivePlanner;
 import dev.aod.mcmcp.agent.dsl.ActionDslCompiler;
+import dev.aod.mcmcp.agent.dsl.ActionDslValidator;
 import dev.aod.mcmcp.agent.dsl.ActionDslOperationManifest;
 import dev.aod.mcmcp.brewing.StandardPotionPolicy;
 import dev.aod.mcmcp.routine.KnownContainerPolicy;
@@ -1247,11 +1248,26 @@ class McpToolCatalogTest {
                 .getAsJsonObject("effect_aggregate")
                 .getAsJsonObject("properties")
                 .getAsJsonObject("dispatched_attacks")
-                .get("maximum").getAsInt()).isEqualTo(AgentActionStore.MAX_RECORDED_INTERACTIONS);
+                .get("maximum").getAsInt()).isEqualTo(ActionDslValidator.MAX_KILL_ZONE_ATTACKS);
         assertThat(actionOutput.getAsJsonObject("properties")
                 .getAsJsonObject("trace").getAsJsonObject("items")
                 .getAsJsonObject("properties").getAsJsonObject("tick")
                 .get("maximum").getAsInt()).isEqualTo(AgentActionStore.MAX_RECORDED_TICKS);
+    }
+
+    @Test
+    void attackAggregateSchemaKeepsItsSeparateKillZoneBound() {
+        var schema = legacyActionOutputSchema().getAsJsonObject("properties")
+                .getAsJsonObject("effect_aggregate");
+        var aggregate = new GsonBuilder().create().toJsonTree(Map.of(
+                "total_effects", 0, "retained_effects", 0, "confirmed_effects", 0,
+                "qualified_effects", 0, "unknown_effects", 0,
+                "dispatched_attacks", ActionDslValidator.MAX_KILL_ZONE_ATTACKS,
+                "confirmed_attacks", 0, "unknown_attacks", 0));
+        assertThat(CatalogSchemaValidator.matches(schema, aggregate)).isTrue();
+        aggregate.getAsJsonObject().addProperty("dispatched_attacks",
+                ActionDslValidator.MAX_KILL_ZONE_ATTACKS + 1);
+        assertThat(CatalogSchemaValidator.matches(schema, aggregate)).isFalse();
     }
 
     @Test
