@@ -38,4 +38,10 @@
 
 `RecoveryDescentTracker`はground/水以外の下降をすべて加算し、梯子の毎tick約0.15blockの下降でも3blockを超えると通常の危険落下としていた。現在bodyのloaded・存続rung/支柱・clearance・液体/危険物なしを`canHoldLadder`で証明できたtickだけ、落下距離の累積を解除する候補を追加した。onGroundやhazardを置換せず、接触喪失後の実落下は新たに累積する。
 
-回帰には40tick/6blockの梯子下降、rung喪失後の1/4block落下、再接触による停止と再喪失を追加した。新sourceのfocused118件と全Java1,380件（main1,340・harness13・admin27）、`verifyHarnessIsolation build`は成功した。新製品SHA-256は`8fd3da0cc6e52b48019ce086b5f8082ceb9339751ecb56a134488cbc8499b183`。実機試験は未実施。別件として同じfixtureの横床移動が14tickで`unverified_actual_movement`、15tickで`replanned_route_remaining_occurrence`となったため、こちらの原因調査と再確認も残る。予算上限や安全gateの緩和は本候補に含めない。
+回帰には40tick/6blockの梯子下降、rung喪失後の1/4block落下、再接触による停止と再喪失を追加した。新sourceのfocused118件と全Java1,380件（main1,340・harness13・admin27）、`verifyHarnessIsolation build`は成功した。新製品SHA-256は`8fd3da0cc6e52b48019ce086b5f8082ceb9339751ecb56a134488cbc8499b183`。予算上限や安全gateの緩和は本候補に含めない。
+
+同じ製品JARの隔離Docker再試験では、公開MCPだけで下端201から206→211→213へ上昇し、213→208→203→201へ区間下降、下床へ退出した。各途中の`ladder_hold=true`と2秒の高さ保持、退出時のhold解除、HP20/READYを確認した。8Actions/91checks/52requests成功。取消→保持→再開と短下降も4Actions/36checks/23requests成功、計12Actions/127checks/75requestsの下降・取消回帰が合格した。sourceは`d158759`と同じ内容を本branchの`c093254`へ取り込んだ。
+
+横床は引き続き未合格。rung208から北床(202,208,199)へのActionは15tick、距離1.4604756397858605で`BUDGET_EXCEEDED`、`replanned_route_remaining_occurrence`となる。14tick時の`unverified_actual_movement`を先に解決する必要があり、予算を増やして隠さない。対岸の南床は今回未試験。Esc/OFF・欠損・水・低天井・死亡・disconnectの実機注入も未実施で、PRはDraftを維持する。
+
+試験後は元66ファイル（world61件）のSHA-256を全件一致で復元し、container停止・lease解放、元から動作していたDocker Desktopの維持を確認した。証拠ZIP SHA-256は`55FF4846F7256E76E37D3DDB535F450C256DC8D68968F7ADCC81BB86550C5CEB`、remote/local一致。通常profileは変更していない。
