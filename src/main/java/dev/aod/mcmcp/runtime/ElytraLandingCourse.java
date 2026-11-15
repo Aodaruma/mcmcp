@@ -24,9 +24,13 @@ record ElytraLandingCourse(Vec3 goal, float yaw, int approachTicks, int flareTic
 
     record Selection(ElytraLandingCourse course, int verifiedTicks) { }
 
-    static BooleanSupplier boundedSearch(BooleanSupplier allowed) {
-        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(20);
-        return () -> allowed.getAsBoolean() && System.nanoTime() - deadline < 0;
+    record SearchBudget(BooleanSupplier allowed, long deadline) implements BooleanSupplier {
+        @Override public boolean getAsBoolean() { return allowed.getAsBoolean() && !expired(); }
+        boolean expired() { return System.nanoTime() - deadline >= 0; }
+    }
+
+    static SearchBudget boundedSearch(BooleanSupplier allowed) {
+        return new SearchBudget(allowed, System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(20));
     }
 
     float pitch(int elapsed) {

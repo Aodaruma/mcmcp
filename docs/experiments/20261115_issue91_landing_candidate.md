@@ -132,3 +132,19 @@ r7は汎用yaw候補へ対称の±2度を追加し、offsetを最内loopへ移�
 strict focused32件が成功。645と647の両開始stateから各tickの全停止域proof・予算内停止を確認する1回帰を追加し、既存1329 edge、1420の非可視10tick以上、late poolの非可視再計画も維持した。r7 source `af9b23812493ed6153d06dbbd2fcbdc9bd83384b`で全Java1,961件（通常1,917・harness16・admin28）、`verifyHarnessIsolation build`が成功、failure/error/skipは0。r6のSkipJava source checks成功後の追加変更はJava/test/本記録だけのため、同じmock群は再実行していない。
 
 版`0.2.0-rc.1`の製品SHA-256は`05effab60d9b5662abddec8369766273eb1c30bb3612aed257c5873621f15153`、harnessは`a6ec51bd01bb32ecef55d874424555b933d14454e1310516034f776761828bf1`、fixture adminは`feb649f2557e395b8dea976869df6857ca1d0e7151318cea1bf05ee39f3c9fb2`。版metadataと製品内fixtureクラス不在を確認し、`artifacts/issue91-safe-landing-20261115-r7`へソース全体・JAR・XML・ログを凍結した。overlay SHA-256は`061445dbfb338ec9403114524a83c0979a31d9b1e866368e375b25e8c55edc9b`。Gradle daemon停止済み。r7 native edge/pool/wide/cancelはPENDING、Draft・installable=falseを維持する。
+
+## r7 nativeの結果とr8の検索時間切れへの対応
+
+r7の`recovery_elytra_pool-113538`は未合格。元Action `d98ae7e8-402c-4688-abcc-7e12895c7871`が救助へ移譲した後、完全courseは0件、花火1、水接触0、HP20だが飛行中のまま136tick・移動129.23blockで予算停止した。終端後に生存状態で固定安全床へ復旧した。`recovery_elytra_edge-113651`は乾いた床で100tick安定・HP20、236tick・移動45.91block・camera167.22度でPASS。全136profile samplesのflight処理は中央値3.28ms・p95 16.01ms・最大23.76msだった。edge成功でpool失敗を置き換えない。
+
+poolの流水5層は開始・終了とも回帰resourceと全205行一致する。今回は初期展開が1tick異なり、770tickで北東の乾いたgoalを選んだ。現在selectの期限を外した厳密モデルでは770と771に完全courseが成立するが、20ms付きの検索は失敗した。旧fallbackがpitch40へ下げた後の772以降は全候補を調べても成立しない。完全courseを採用する前だったためlanding予約はまだなく、goalが失効した786tickに上方anchorへ花火を使っていた。
+
+現在yaw/pitchを変えず、boostを使わない20tickのprefixは、その時点の同じ観測で全てclearだった。20msのselectが時間切れになった後も同じWitness/cacheでprefix全体を確認し、3tick保持後には現在の全停止支持を証明する112tick courseが19.28msで成立した。そこから各tickで完全再証明・有限再計画すると、122tick・移動46.15block・camera57.02度で乾いた停止域へ達した。このモデルは実機合格ではない。
+
+r8は検索の20ms期限だけを`SearchBudget.expired`で識別し、救助中・飛行中・boost継続なし・元権限ありの場合にだけ無操舵のcoastを試す。現在bodyと、既存の有限horizon全tick（上限100、残tick/距離以内）のswept bodyを同じ`FlightObservation`/2,048cell cacheで証明する。元の権限を各stepとdispatch前に確認し、未知・液体・危険・遮蔽・cache不足なら認可せず従来fallbackへ戻る。horizonが無効、積算距離が非有限の場合も拒否する。
+
+coastは現在yaw/pitch固定で新boostがないため、操舵とphaseの全遅延経路が同じ軌道になる。camera移動は0、`boost=false`・`landing=false`であり、支持の未確認を着地へ昇格させない。元の完全course proof・共有20ms検索期限・停止支持LOS・予算は変更しない。単なる候補不成立や空target全般のguidanceには適用しない。
+
+strict focused38件が成功。native770の時間切れから同cacheのcoast3tickを挟んで完全courseへ移り、毎tickの厳密proofと停止まで確認する回帰を追加した。現在body・後半prefixの未知、実流水、2,048cell cache、時間/距離、権限喪失、無効horizon・非有限距離、固定姿勢・非着地/非boostの失敗条件も確認した。r8 nativeはPENDINGで、Draft・installable=falseを維持する。
+
+全Java1,967件（通常1,923・harness16・admin28）、`verifyHarnessIsolation build`も成功し、failure/error/skipは0。r6で成功したSkipJavaの対象toolsに追加変更はないため同mockは再実行していない。版`0.2.0-rc.1`の製品SHA-256は`534acfc1f16037a27305fdfa739d56ca9c101c1429e8c4cc70a2a31ec99b290d`、harnessは`a6ec51bd01bb32ecef55d874424555b933d14454e1310516034f776761828bf1`、fixture adminは`feb649f2557e395b8dea976869df6857ca1d0e7151318cea1bf05ee39f3c9fb2`。対応ソース全体・JAR・XML・検証ログは`artifacts/issue91-safe-landing-20261115-r8`へ凍結し、Gradle daemon停止後にnative再確認へ渡す。

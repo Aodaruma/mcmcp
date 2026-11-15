@@ -75,6 +75,42 @@ class ElytraLandingCourseTest {
                 -62.31413f, -9, 121, 241, 0);
     }
 
+    @Test void aTimedOutSearchCanCoastOnCurrentEvidenceUntilAFullCourseIsAdmitted() throws Exception {
+        var position = new Vec3(310.60044722708494, 119.88169569133191, 310.48503149011594);
+        var motion = new Vec3(.0467804657904617, -.3498281062551076, -.014968509884056683);
+        var goal = new Vec3(347.14081006201536, 101, 294.2157994554327);
+        double distance = 0;
+        for (int tick = 0; tick < 3; tick++) {
+            var witness = new Witness(position);
+            var expired = new ElytraLandingCourse.SearchBudget(() -> true, System.nanoTime() - 1);
+            assertThat(ElytraLandingCourse.select(position, motion, -114, 0, goal, .08, 4,
+                    595 - tick, 126 - distance, 320, witness::clear, witness::stoppedLanding, expired)).isNull();
+            assertThat(expired.expired()).isTrue();
+            var coast = ElytraFlightPlanner.coast(position, motion, -114, 0, .08, 4,
+                    595 - tick, 126 - distance, witness::clear, () -> true);
+            assertThat(coast).isNotNull();
+            assertThat(coast.landing()).isFalse();
+            assertThat(coast.boost()).isFalse();
+            assertThat(witness.supports).isEmpty();
+            motion = ElytraFlightPlanner.velocity(motion, coast.yaw(), coast.pitch(), .08, false);
+            position = position.add(motion);
+            distance += motion.length();
+        }
+        reachesBank(position, motion, goal, -114, 0, 126 - distance, 320, 0);
+    }
+
+    @Test void aCoastCannotAuthorizeRecordedWaterAsAirOrUseAnExhaustedObservationCache() throws Exception {
+        var position = new Vec3(330, 107, 310);
+        var witness = new Witness(position);
+        assertThat(witness.clear(body(position).inflate(.2))).isTrue();
+        assertThat(ElytraFlightPlanner.coast(position, new Vec3(0, -.3, 0), -90, 0, .08, 4,
+                600, 128, witness::clear, () -> true)).isNull();
+        witness = new Witness(START);
+        for (int index = 0; index < 2048; index++) witness.cells.put(new BlockPos(index, -1000, 0), true);
+        assertThat(ElytraFlightPlanner.coast(START, MOTION, -90, 0, .08, 4,
+                600, 128, witness::clear, () -> true)).isNull();
+    }
+
     @Test void onlyACurrentCompleteProofCanRetainADescendingGoalAwayFromAThreat() throws Exception {
         var witness = new Witness(START);
         var selected = ElytraLandingCourse.select(START, MOTION, -90, 0, GOAL, .08, 4,
@@ -199,8 +235,13 @@ class ElytraLandingCourseTest {
         var search = ElytraLandingCourse.boundedSearch(authorized::get);
         Thread.sleep(30);
         assertThat(search.getAsBoolean()).isFalse();
+        assertThat(search.expired()).isTrue();
         assertThat(authorized).isTrue();
         assertThat(ElytraLandingCourse.boundedSearch(authorized::get).getAsBoolean()).isTrue();
+        var denied = new ElytraLandingCourse.SearchBudget(() -> false,
+                System.nanoTime() + java.util.concurrent.TimeUnit.MINUTES.toNanos(1));
+        assertThat(denied.getAsBoolean()).isFalse();
+        assertThat(denied.expired()).isFalse();
     }
 
     private static AABB body(Vec3 p) { return new AABB(p.x - .3, p.y, p.z - .3, p.x + .3, p.y + .6, p.z + .3); }

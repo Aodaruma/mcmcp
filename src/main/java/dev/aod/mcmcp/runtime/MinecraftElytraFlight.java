@@ -91,7 +91,7 @@ final class MinecraftElytraFlight implements AutoCloseable {
             var info = minecraft.getConnection().getPlayerInfo(player.getUUID());
             if (info != null) latency = Math.max(4, (info.getLatency() + 49) / 50 + 2);
         }
-        BooleanSupplier landingAllowed = null;
+        ElytraLandingCourse.SearchBudget landingAllowed = null;
         int provenCourseTicks = 0;
         if (rescue && player.isFallFlying() && boostedTicks == 0 && landingCourse != null
                 && landingCourse.goal().equals(landingTarget)) {
@@ -218,6 +218,11 @@ final class MinecraftElytraFlight implements AutoCloseable {
                         verified, verified, 0, true);
             }
         }
+        if (plan == null && rescue && player.isFallFlying() && boostedTicks == 0
+                && landingAllowed != null && landingAllowed.expired() && allowed.getAsBoolean())
+            plan = ElytraFlightPlanner.coast(player.position(), player.getDeltaMovement(),
+                    player.getYRot(), player.getXRot(), player.getGravity(), latency,
+                    remainingTicks, remainingDistance, observation::clear, allowed);
         if (plan == null) plan = wantBoost ? ElytraFlightPlanner.plan(player.position(), player.getDeltaMovement(),
                 player.getYRot(), player.getXRot(), goal, player.getGravity(), newBoostTicks, true, latency,
                 observation::clear, observation::landing, Math.max(0, remainingCamera - 16)) : null;
