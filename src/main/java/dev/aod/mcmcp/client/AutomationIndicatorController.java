@@ -120,7 +120,7 @@ public final class AutomationIndicatorController {
         setupNoticeShown = true;
         Path userHome = Path.of(System.getProperty("user.home", "."));
         if (!McpClientAutoConfigurator.anyClientConfigured(
-                userHome, McmcpClientConfig.port())) {
+                minecraft.gameDirectory.toPath(), userHome, McmcpClientConfig.port())) {
             minecraft.player.sendOverlayMessage(
                     Component.translatable("gui.mcmcp.setup.first_notice"));
         }
@@ -342,6 +342,12 @@ public final class AutomationIndicatorController {
                             .build());
                 }
                 options.addChild(Button.builder(
+                                Component.translatable("gui.mcmcp.setup.codex_isolated"),
+                                ignored -> openSetupConfirmation(
+                                        McpClientAutoConfigurator.Target.CODEX_ISOLATED, parent))
+                        .width(Math.min(240, availableWidth))
+                        .build());
+                options.addChild(Button.builder(
                                 Component.translatable("gui.mcmcp.setup.cancel"),
                                 ignored -> onClose())
                         .width(Math.min(200, availableWidth))
@@ -368,10 +374,16 @@ public final class AutomationIndicatorController {
     private void openSetupConfirmation(
             McpClientAutoConfigurator.Target target, Screen parent) {
         var minecraft = Minecraft.getInstance();
-        String targetName = target == McpClientAutoConfigurator.Target.CODEX
-                ? "Codex" : "Claude Code";
-        String configPath = target == McpClientAutoConfigurator.Target.CODEX
-                ? ".codex/config.toml" : ".claude.json";
+        String targetName = target == McpClientAutoConfigurator.Target.CLAUDE_CODE
+                ? "Claude Code" : "Codex";
+        String configPath = switch (target) {
+            case CODEX -> "~/.codex/config.toml";
+            case CODEX_ISOLATED -> "minecraft/config/mcmcp/codex-home/config.toml";
+            case CLAUDE_CODE -> "~/.claude.json";
+        };
+        String diagnosis = McpClientAutoConfigurator.diagnose(target,
+                minecraft.gameDirectory.toPath(), Path.of(System.getProperty("user.home", ".")),
+                McmcpClientConfig.port());
         minecraft.setScreenAndShow(new ConfirmScreen(
                 accepted -> {
                     if (!accepted) {
@@ -390,12 +402,14 @@ public final class AutomationIndicatorController {
                                     : "gui.mcmcp.setup.failure",
                             targetName,
                             result.success()
-                                    ? Component.translatable("gui.mcmcp.setup.restart_required")
+                                    ? Component.translatable(target == McpClientAutoConfigurator.Target.CODEX_ISOLATED
+                                            ? "gui.mcmcp.setup.isolated_required"
+                                            : "gui.mcmcp.setup.restart_required")
                                     : result.code()));
                 },
                 Component.translatable("gui.mcmcp.setup.confirm_title", targetName),
                 Component.translatable(
-                        "gui.mcmcp.setup.confirm_message", configPath),
+                        "gui.mcmcp.setup.confirm_message", configPath, diagnosis),
                 Component.translatable("gui.mcmcp.setup.confirm"),
                 Component.translatable("gui.mcmcp.setup.back")) {
             @Override

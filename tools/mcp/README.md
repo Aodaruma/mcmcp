@@ -50,10 +50,11 @@ Success returns `ok:true` with schema-validated `result`; failure returns `ok:fa
 | 診断 / Diagnostic | 次の確認 / Next check |
 | --- | --- |
 | `token_unavailable` | 起動中のゲームのtokenファイルと権限 / Active game's token path and permissions |
-| `http_non_success`・401 | ゲームから接続設定をやり直す。token値は共有しない / Re-run in-game setup; do not share the token |
+| `http_non_success`・401 | [プロファイル参照診断と復旧](../../docs/MCMCP_導入と接続ガイド.md#windowsのプロファイル参照診断と復旧)を先に確認。別profileは分離設定を使い、常用登録を置換しない / Check the helper's profile; use isolated config for another profile |
 | `rate_limited`・429 | 呼び出し頻度を下げる。自動再送なし / Reduce request frequency; no automatic retry |
 | `http_request_failed` / `request_timeout` | 起動状態・portを確認。送信済み操作は未確認扱い / Check the running game and port; sent mutations remain uncertain |
 | `jsonrpc_error` | methodやprotocolの不一致。通信実装を都度書き換えない / Method or protocol mismatch; use the fixed transport |
+| `discovery_mismatch` | server/versionの不一致。対応JAR・クライアントを確認 / Server or protocol version mismatch |
 | `tool_rejected` | `error.code/message/recoverable` でMCPの拒否理由を確認 / Read the server's domain error |
 | `invalid_tool_arguments` / `invalid_success_schema` | catalogとJARの組合せ、JSONの必須項目・型 / Matching catalog/JAR, required fields and types |
 | `action_wait_timeout` | 返された `action_id` を再照会。開始操作は再送しない / Query the returned ID; do not restart the Action |
