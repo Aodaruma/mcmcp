@@ -148,3 +148,7 @@ coastは現在yaw/pitch固定で新boostがないため、操舵とphaseの全�
 strict focused38件が成功。native770の時間切れから同cacheのcoast3tickを挟んで完全courseへ移り、毎tickの厳密proofと停止まで確認する回帰を追加した。現在body・後半prefixの未知、実流水、2,048cell cache、時間/距離、権限喪失、無効horizon・非有限距離、固定姿勢・非着地/非boostの失敗条件も確認した。r8 nativeはPENDINGで、Draft・installable=falseを維持する。
 
 全Java1,967件（通常1,923・harness16・admin28）、`verifyHarnessIsolation build`も成功し、failure/error/skipは0。r6で成功したSkipJavaの対象toolsに追加変更はないため同mockは再実行していない。版`0.2.0-rc.1`の製品SHA-256は`534acfc1f16037a27305fdfa739d56ca9c101c1429e8c4cc70a2a31ec99b290d`、harnessは`a6ec51bd01bb32ecef55d874424555b933d14454e1310516034f776761828bf1`、fixture adminは`feb649f2557e395b8dea976869df6857ca1d0e7151318cea1bf05ee39f3c9fb2`。対応ソース全体・JAR・XML・検証ログは`artifacts/issue91-safe-landing-20261115-r8`へ凍結し、Gradle daemon停止後にnative再確認へ渡す。
+
+追加レビューで、pose切替の境目では予測用glider高0.6と現在の実AABBが一致しない可能性を確認した。coast採用callerへ、同じ観測で実際の`player.getBoundingBox().inflate(.2)`がclearであることを必須にする1predicateを加えた。予測用の全prefix検査も維持する。gliderならclearでも現在のstanding bodyが頭上lipへ当たる形状回帰と、時間切れ判定後の実body検査のfalse分岐がcoastを迂回する接続回帰を追加した。
+
+この補強後のfocused40件、全Java1,969件（通常1,925・harness16・admin28）、`verifyHarnessIsolation build`が成功し、failure/error/skipは0。実機用の現在候補を製品SHA-256 `93966e9bb33e4ea31675c0f961d48a25600387e11048c592e17143ee4cce96f3`へ更新した。版とharness/adminは同じ。対応ソース全体・JAR・XML・ログを別の`artifacts/issue91-safe-landing-20261115-r8-actualbody`へ凍結し、Gradle daemon停止を確認した。534acf候補は実機未実施のまま保存し、実body補強後候補のnativeもPENDINGとする。

@@ -111,6 +111,17 @@ class ElytraLandingCourseTest {
                 600, 128, witness::clear, () -> true)).isNull();
     }
 
+    @Test void aClearGlidingPrefixDoesNotProveATallerCurrentPlayerBodyUnderALip() throws Exception {
+        var position = new Vec3(316, 118.5, 310.5);
+        var witness = new Witness(position);
+        assertThat(witness.clear(body(position).inflate(.2))).isTrue();
+        assertThat(ElytraFlightPlanner.coast(position, new Vec3(.3, -.1, 0), -90, 0, .08, 4,
+                600, 128, witness::clear, () -> true)).isNotNull();
+        var currentStandingBody = new AABB(position.x - .3, position.y, position.z - .3,
+                position.x + .3, position.y + 1.8, position.z + .3);
+        assertThat(witness.clear(currentStandingBody.inflate(.2))).isFalse();
+    }
+
     @Test void onlyACurrentCompleteProofCanRetainADescendingGoalAwayFromAThreat() throws Exception {
         var witness = new Witness(START);
         var selected = ElytraLandingCourse.select(START, MOTION, -90, 0, GOAL, .08, 4,

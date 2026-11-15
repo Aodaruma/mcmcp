@@ -219,7 +219,8 @@ final class MinecraftElytraFlight implements AutoCloseable {
             }
         }
         if (plan == null && rescue && player.isFallFlying() && boostedTicks == 0
-                && landingAllowed != null && landingAllowed.expired() && allowed.getAsBoolean())
+                && landingAllowed != null && landingAllowed.expired() && allowed.getAsBoolean()
+                && observation.clear(player.getBoundingBox().inflate(.2)))
             plan = ElytraFlightPlanner.coast(player.position(), player.getDeltaMovement(),
                     player.getYRot(), player.getXRot(), player.getGravity(), latency,
                     remainingTicks, remainingDistance, observation::clear, allowed);
