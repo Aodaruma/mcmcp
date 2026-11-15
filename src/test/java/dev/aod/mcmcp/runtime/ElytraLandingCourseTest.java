@@ -64,6 +64,17 @@ class ElytraLandingCourseTest {
         assertThat(replansWithHiddenIntent).isPositive();
     }
 
+    @Test void nativeColdPoolCanAdmitAnIntermediateBearingAndReproveItUntilStopped() throws Exception {
+        reachesBank(new Vec3(313.6599713426558, 116.62836115826624, 310.0783677973563),
+                new Vec3(.28443661293351635, -.18175430358695083, -.012404228753377367),
+                new Vec3(349.1407972436873, 101, 328.5475560107047),
+                -74.51059f, -25, 122, 269, 0);
+        reachesBank(new Vec3(314.2513740472922, 116.28766251190576, 310.1097553350223),
+                new Vec3(.2993803127995384, -.1669337725760785, .025665165850017015),
+                new Vec3(349.1407972436873, 101, 328.5475560107047),
+                -62.31413f, -9, 121, 241, 0);
+    }
+
     @Test void onlyACurrentCompleteProofCanRetainADescendingGoalAwayFromAThreat() throws Exception {
         var witness = new Witness(START);
         var selected = ElytraLandingCourse.select(START, MOTION, -90, 0, GOAL, .08, 4,

@@ -40,11 +40,11 @@ record ElytraLandingCourse(Vec3 goal, float yaw, int approachTicks, int flareTic
         if (!descendingGoal(position, goal) || latency > 20) return null;
         float bearing = (float) Math.toDegrees(Math.atan2(position.x - goal.x, goal.z - position.z));
         // These are control intervals, not destinations or a guarantee that a landing exists.
-        for (int offset : new int[] {0, -5, 5, -15, 15})
-            for (int approach : new int[] {0, 8, 16})
-                for (int flare : new int[] {16, 32, 48, 64})
-                    for (int coast : new int[] {8, 20, 24, 32})
-                        for (float finalPitch : new float[] {-45, -50, -55, -60, -65, -70}) {
+        for (int approach : new int[] {0, 8, 16})
+            for (int flare : new int[] {16, 32, 48, 64})
+                for (int coast : new int[] {8, 20, 24, 32})
+                    for (float finalPitch : new float[] {-45, -50, -55, -60, -65, -70})
+                        for (int offset : new int[] {0, -2, 2, -5, 5, -15, 15}) {
                             if (!allowed.getAsBoolean()) return null;
                             var course = new ElytraLandingCourse(goal, bearing + offset, approach, flare, coast, finalPitch);
                             int verified = course.verifiedTicks(position, motion, yaw, pitch, gravity, 0, latency,

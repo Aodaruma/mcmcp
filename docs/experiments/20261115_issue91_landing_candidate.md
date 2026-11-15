@@ -120,3 +120,13 @@ strict focused31件が成功した。nativeのlate pool実stateから、raw inte
 feature `0f51bae1d5ba823752765cc1df66c1308f58b9a2`へ通常mergeしたr6 source `0eaba1bc2fbecf885df7abdb95baa6991c44e23a`で、全Java1,960件（通常1,916・harness16・admin28）、`verifyHarnessIsolation build`、`tools/check-source.ps1 -SkipJava`がすべて成功した。failure/error/skipは0。版は`0.2.0-rc.1`、製品SHA-256は`552e7af4c83d9cc1258f79f23cb8f86d37b52fb7be73d71c68357e93278015f7`、読取診断harnessは`a6ec51bd01bb32ecef55d874424555b933d14454e1310516034f776761828bf1`、fixture adminは`feb649f2557e395b8dea976869df6857ca1d0e7151318cea1bf05ee39f3c9fb2`。製品JARの版metadataとfixtureクラス不在を確認した。
 
 `artifacts/issue91-safe-landing-20261115-r6`へ対応ソース全体・featureとの差分overlay・JAR・XML・ログを凍結した。overlay SHA-256は`64e9c805cb3e3b5eab191f4b7ef2613a2368353496977a3049d84fba337ff490`。Gradle daemon停止を確認し、親担当のnative edge/pool/wide/cancelへ渡した。r6実機はPENDINGで、r4/r5の失敗を合格へ読み替えず、PRはDraft・installable=falseを維持する。
+
+## r6 nativeの結果とr7の角度探索
+
+上記r6の版付きpairで、このPCの隔離profileを使った。`recovery_elytra_pool-111433`は未合格。完全landing planは0件、花火0、水接触0、HP20だったが、276tick・移動128.01blockで予算停止し、まだ飛行中だった。終端後に生存状態で固定安全床へ復旧した。`recovery_elytra_edge-111549`は乾いた接地で100tick安定、HP20、移動46.28block・camera85.05度・234tickでPASS。`recovery_elytra-111844`も乾いた接地で100tick安定・HP20のPASS。`recovery_elytra_edge-112426`はclient_requestでActionと救助を取消し、READY・HP20・water0、入力idle確認後の固定fixture復旧に成功した。edgeやwideの成功はpool不合格へ代用しない。
+
+poolの開始・終了の流水5層は回帰resourceと全205行一致した。player tick645で選んだ南東goalは支持があり直接見えていたが、既存のyaw0/±5/±15の全1,440courseを期限なしで調べても成立しなかった。一方、bearing+2度、approach0/flare48/coast24/final-70なら全停止域を完全に証明できる。毎tickの厳密再証明・有限再計画で113tick・42.60block・camera44.01度の乾いた停止域へ到達した。647tickの実stateからも+2度、0/32/24/-55が成立し、112tick・42.46block・camera48.17度で停止した。未観測支持や予測prefixを着地として扱っていない。
+
+r7は汎用yaw候補へ対称の±2度を追加し、offsetを最内loopへ移して、各区間候補で各角度を順に検査する。候補ごとの完全proof、共有20ms期限、2,048cell、4遅延、元Action予算と取消経路の本体は変更しない。647の同じ実stateによる独立Javaのwarm検索は7.9～9.9msで完全courseを選べたが、645では20ms期限切れも起きた。これはオフライン計測であり、cold実機の時間保証や受入合格ではない。
+
+strict focused32件が成功。645と647の両開始stateから各tickの全停止域proof・予算内停止を確認する1回帰を追加し、既存1329 edge、1420の非可視10tick以上、late poolの非可視再計画も維持した。r7の全体ビルドと版付きpairは準備中。native edge/pool/wide/cancelはPENDING、Draft・installable=falseを維持する。
