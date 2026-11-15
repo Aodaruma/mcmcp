@@ -1,10 +1,10 @@
 # 公開API v2 クイックガイド
 
-2026-10-11追加：開発候補は公開17ツール。床延長と大量のscript施工は[施工ガイド](PUBLIC_API_V2_BUILDING.md)、JSON/CSVの専用施工は[agent_build](PUBLIC_API_V2_BLUEPRINT_TOOL.md)を参照。実機結果と通常profileの版は[最新状態](PUBLIC_API_V2_STATUS_20260928.md)で確認する。以下の過去の候補・制限に関する記載は、記載時点の履歴を含む。
+公開API v2は17ツールです。床延長と大量のscript施工は[施工ガイド](PUBLIC_API_V2_BUILDING.md)、JSON/CSVの専用施工は[agent_build](PUBLIC_API_V2_BLUEPRINT_TOOL.md)を参照。実機結果と導入版は[最新状態](PUBLIC_API_V2_STATUS_20260928.md)で確認してください。
 
-> 材料データ、MOD破壊、水中／乗り物、整理、条件・外部ファイルの追加実装は[2026-10-09の追加ガイド](PUBLIC_API_V2_PRIORITIES_20261009.md)を参照。今回の実機最終検証は準備中。
+> 材料データ、MOD破壊、水中／乗り物、整理、条件・外部ファイルは[追加ガイド](PUBLIC_API_V2_PRIORITIES_20261009.md)を参照。過去の候補・制限に関する記録は、その記載時点の履歴です。
 
-開発中のv2用。[基本操作](experiments/20260928_public_api_v2_local.md)と[所持収納・使用中停止](experiments/20260929_v2_storage_stop_local.md)の実機smokeを通過しました。未実装機能と追加検証は[進捗メモ](PUBLIC_API_V2_STATUS_20260928.md)を参照し、配布済みv1と区別してください。旧`agent_start_action`／JSON Action DSLは公開しません。
+0.1系から公開APIが変わります。旧`agent_start_action`／JSON Action DSLは公開しません。クライアントを再起動してツール一覧を更新し、以下の座標・数量を指定する行動へ移行してください。未実装機能と実機検証の範囲は[進捗メモ](PUBLIC_API_V2_STATUS_20260928.md)に記録しています。
 
 ## 公開ツール
 

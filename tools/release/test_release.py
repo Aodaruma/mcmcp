@@ -3,10 +3,18 @@ from pathlib import Path
 import unittest
 import zipfile
 
-from build_release import guide_markdown, verify_jar, version_from_tag
+from build_release import guide_markdown, public_api_markdown, verify_jar, version_from_tag
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_portable_api_guide_links_to_the_exact_release_source(self):
+        source = 'https://github.com/Aodaruma/mcmcp/tree/v0.2.0-rc.1'
+        text = public_api_markdown(source)
+        self.assertIn(source + '/docs/PUBLIC_API_V2_BUILDING.md', text)
+        self.assertIn(source + '/docs/experiments/', text)
+        self.assertNotIn('](PUBLIC_API_', text)
+        self.assertNotIn('](experiments/', text)
+
     def test_tag_versions_and_prereleases(self):
         for tag in ('v0.1.0-rc3', 'v0.1.0', 'v1.2.3-beta.2'):
             self.assertEqual(version_from_tag(tag), tag[1:])
