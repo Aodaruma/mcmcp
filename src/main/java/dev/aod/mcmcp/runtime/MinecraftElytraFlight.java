@@ -35,6 +35,8 @@ final class MinecraftElytraFlight implements AutoCloseable {
     private int rockets, boostedTicks, settled, relaunches;
     private String failure;
     private ElytraFlightPlanner.Plan lastPlan;
+    private ElytraLandingCourse landingCourse;
+    private long landingCourseStarted;
     private double observationRadius;
     private int observationCells;
     private Vec3 landingTarget;
@@ -84,10 +86,37 @@ final class MinecraftElytraFlight implements AutoCloseable {
         var observation = new FlightObservation(minecraft);
         landingReserved |= ElytraFlightPlanner.reserveLanding(player.position(), player.getDeltaMovement(),
                 landingTarget == null ? goal : landingTarget, remainingTicks, remainingDistance, remainingCamera);
+        int latency = 4;
+        if (player.isFallFlying()) {
+            var info = minecraft.getConnection().getPlayerInfo(player.getUUID());
+            if (info != null) latency = Math.max(4, (info.getLatency() + 49) / 50 + 2);
+        }
+        ElytraLandingCourse.SearchBudget landingAllowed = null;
+        int provenCourseTicks = 0;
+        if (rescue && player.isFallFlying() && boostedTicks == 0 && landingCourse != null
+                && landingCourse.goal().equals(landingTarget)) {
+            landingAllowed = ElytraLandingCourse.boundedSearch(allowed);
+            double landingHeight = landingTarget.y;
+            var proven = landingCourse.proveOrReplan(player.position(), player.getDeltaMovement(),
+                    player.getYRot(), player.getXRot(), player.getGravity(),
+                    (int) Math.min(Integer.MAX_VALUE, tick - landingCourseStarted), latency,
+                    remainingTicks, remainingDistance, Math.max(0, remainingCamera - 16), observation::clear,
+                    (body, motion) -> observation.stoppedLanding(body, motion, landingHeight), landingAllowed);
+            if (proven == null) landingCourse = null;
+            else {
+                if (landingCourse != proven.course()) landingCourseStarted = tick;
+                landingCourse = proven.course();
+                provenCourseTicks = proven.verifiedTicks();
+            }
+        }
         if (rescue || landingReserved) {
-            if (!observation.supportedLanding(landingTarget)
+            // The intent point may be hidden while every actual stopping support is visible.
+            // Only this tick's complete course proof can replace its ordinary point check.
+            if ((!ElytraLandingCourse.retainsProvenGoal(player.position(), landingTarget, threat, provenCourseTicks)
+                        && !observation.supportedLanding(landingTarget))
+                    || rescue && !ElytraLandingCourse.descendingGoal(player.position(), landingTarget)
                     || threat != null && landingTarget.distanceToSqr(threat) < 36) {
-                landingTarget = !rescue && observation.supportedLanding(goal) ? goal : observation.findLanding(goal, threat);
+                landingTarget = !rescue && observation.supportedLanding(goal) ? goal : observation.findLanding(goal, threat, rescue);
             }
             if (landingTarget != null) goal = landingTarget;
         }
@@ -127,7 +156,7 @@ final class MinecraftElytraFlight implements AutoCloseable {
             if (tick - started > 100 || player.isInWater()) return fail("elytra_deploy_failed");
             if (player.onGround() && !new FlightObservation(minecraft).clear(player.getBoundingBox().move(0, 1, 0)))
                 return fail("elytra_takeoff_obstructed");
-            float launchYaw = (float) Math.toDegrees(Math.atan2(player.getX() - goal.x, goal.z - player.getZ()));
+            float launchYaw = ElytraFlightPlanner.launchYaw(player.position(), goal, player.getYRot());
             if (player.onGround() && !observation.clear(player.getBoundingBox().move(0, 1, 0)
                     .expandTowards(Vec3.directionFromRotation(0, launchYaw).scale(12))))
                 return fail("elytra_takeoff_corridor_unobserved");
@@ -154,9 +183,6 @@ final class MinecraftElytraFlight implements AutoCloseable {
         if (jump != null) { jump.close(owner); jump = null; }
         AgentInputState.global().clearElytraDeployment(player);
         if (equipping) return Result.RUNNING;
-        int latency = 4;
-        var info = minecraft.getConnection().getPlayerInfo(player.getUUID());
-        if (info != null) latency = Math.max(4, (info.getLatency() + 49) / 50 + 2);
         boolean wantBoost = !landingReserved && rockets < rocketLimit && boostedTicks == 0 && use == null && !uncertainUse
                 && latency <= 20
                 && player.position().distanceTo(goal) > 8 && player.getDeltaMovement().length() < 1.6
@@ -164,7 +190,41 @@ final class MinecraftElytraFlight implements AutoCloseable {
         if (wantBoost && !select("minecraft:firework_rocket", MinecraftElytraFlight::safeRocket, tick)) wantBoost = false;
         int newBoostTicks = wantBoost ? 10 * (1 + player.getMainHandItem().get(DataComponents.FIREWORKS).flightDuration()) + 11 : 0;
         wantBoost &= ElytraFlightPlanner.needsBoost(player.position(), goal, newBoostTicks, latency);
-        var plan = wantBoost ? ElytraFlightPlanner.plan(player.position(), player.getDeltaMovement(),
+        ElytraFlightPlanner.Plan plan = null;
+        if (rescue && landingTarget != null && boostedTicks == 0) {
+            if (landingAllowed == null) landingAllowed = ElytraLandingCourse.boundedSearch(allowed);
+            double landingHeight = landingTarget.y;
+            java.util.function.BiPredicate<net.minecraft.world.phys.AABB, Vec3> stoppedLanding =
+                    (body, motion) -> observation.stoppedLanding(body, motion, landingHeight);
+            if (landingCourse != null && !landingCourse.goal().equals(landingTarget)) landingCourse = null;
+            int elapsed = (int) Math.min(Integer.MAX_VALUE, tick - landingCourseStarted);
+            int verified = landingCourse == null ? 0 : provenCourseTicks;
+            // Every course needs the current padded body to be clear. Do not spend its finite
+            // search while still under a lip; retry fresh evidence next tick, including after
+            // the shared search deadline expires, instead of missing a brief admission window.
+            if (landingCourse == null && observation.clear(player.getBoundingBox().inflate(.2))) {
+                var selected = ElytraLandingCourse.select(player.position(), player.getDeltaMovement(),
+                        player.getYRot(), player.getXRot(), landingTarget, player.getGravity(), latency,
+                        remainingTicks, remainingDistance, Math.max(0, remainingCamera - 16),
+                        observation::clear, stoppedLanding, landingAllowed);
+                landingCourse = selected == null ? null : selected.course();
+                verified = selected == null ? 0 : selected.verifiedTicks();
+                landingCourseStarted = tick;
+                elapsed = 0;
+            }
+            if (landingCourse != null && verified > 0) {
+                landingReserved = ElytraFlightPlanner.reserveLanding(landingReserved, verified);
+                plan = new ElytraFlightPlanner.Plan(landingCourse.yaw(), landingCourse.pitch(elapsed), false,
+                        verified, verified, 0, true);
+            }
+        }
+        if (plan == null && rescue && player.isFallFlying() && boostedTicks == 0
+                && landingAllowed != null && landingAllowed.expired() && allowed.getAsBoolean()
+                && observation.clear(player.getBoundingBox().inflate(.2)))
+            plan = ElytraFlightPlanner.coast(player.position(), player.getDeltaMovement(),
+                    player.getYRot(), player.getXRot(), player.getGravity(), latency,
+                    remainingTicks, remainingDistance, observation::clear, allowed);
+        if (plan == null) plan = wantBoost ? ElytraFlightPlanner.plan(player.position(), player.getDeltaMovement(),
                 player.getYRot(), player.getXRot(), goal, player.getGravity(), newBoostTicks, true, latency,
                 observation::clear, observation::landing, Math.max(0, remainingCamera - 16)) : null;
         if (plan == null) plan = ElytraFlightPlanner.plan(player.position(), player.getDeltaMovement(),
@@ -188,6 +248,7 @@ final class MinecraftElytraFlight implements AutoCloseable {
         // Gliding continues physically after a rejected corridor; reobserve within the rescue budget without turning or boosting.
         if (plan == null && rescue) return Result.RUNNING;
         if (plan == null) return fail("flight_no_observed_escape_corridor");
+        if (!allowed.getAsBoolean()) return fail("flight_context_changed");
         if (view == null) view = NavigationViewLease.acquire(player, owner);
         if (!view.matches(owner)) return fail("flight_view_changed");
         // Even with no turns left, keep observing a witnessed coast until landing or the other finite limits.

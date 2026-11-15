@@ -5,6 +5,80 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ElytraFlightPlannerTest {
+    @Test void aCoastProvesItsWholeHorizonWithoutTurningBoostingOrAuthorizingLanding() {
+        var position = new Vec3(0, 20, 0);
+        var motion = new Vec3(.3, -.1, 0);
+        for (int latency : new int[] {4, 12, 20}) {
+            var plan = ElytraFlightPlanner.coast(position, motion, -90, 0, .08, latency,
+                    600, 128, box -> box.minY > 0, () -> true);
+            assertThat(plan).isNotNull();
+            assertThat(plan.yaw()).isEqualTo(-90);
+            assertThat(plan.pitch()).isZero();
+            assertThat(plan.boost()).isFalse();
+            assertThat(plan.landing()).isFalse();
+            assertThat(plan.verifiedTicks()).isEqualTo(ElytraFlightPlanner.horizon(motion.length(), 0, latency));
+            assertThat(plan.horizon()).isEqualTo(plan.verifiedTicks()).isLessThanOrEqualTo(100);
+        }
+    }
+
+    @Test void aCoastRejectsAnUnsafeCurrentBodyOrAnUnwitnessedCellLaterInItsPrefix() {
+        var position = new Vec3(0, 20, 0);
+        var motion = new Vec3(.3, -.1, 0);
+        assertThat(ElytraFlightPlanner.coast(position, motion, -90, 0, .08, 4,
+                600, 128, box -> false, () -> true)).isNull();
+        assertThat(ElytraFlightPlanner.coast(position, motion, -90, 0, .08, 4,
+                600, 128, box -> box.maxX < 3, () -> true)).isNull();
+    }
+
+    @Test void aCoastHonorsItsOriginalTimeDistanceAndPermissionBounds() {
+        var position = new Vec3(0, 20, 0);
+        var motion = new Vec3(.3, -.1, 0);
+        var evidence = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.function.Predicate<net.minecraft.world.phys.AABB> clear = box -> { evidence.incrementAndGet(); return true; };
+        assertThat(ElytraFlightPlanner.coast(position, motion, -90, 0, .08, 4,
+                0, 128, clear, () -> true)).isNull();
+        assertThat(ElytraFlightPlanner.coast(position, motion, -90, 0, .08, 4,
+                600, 128, clear, () -> false)).isNull();
+        assertThat(evidence).hasValue(0);
+        assertThat(ElytraFlightPlanner.coast(position, motion, -90, 0, .08, 4,
+                600, 0, clear, () -> true)).isNull();
+        var permissionChecks = new java.util.concurrent.atomic.AtomicInteger();
+        assertThat(ElytraFlightPlanner.coast(position, motion, -90, 0, .08, 4,
+                600, 128, clear, () -> permissionChecks.incrementAndGet() < 4)).isNull();
+    }
+
+    @Test void aCoastRejectsAnOverflowedHorizonAndNonfinitePredictedDistance() {
+        var position = new Vec3(0, 20, 0);
+        assertThat(ElytraFlightPlanner.coast(position, new Vec3(.3, -.1, 0), -90, 0, .08, Integer.MAX_VALUE,
+                600, 128, box -> { throw new AssertionError("invalid horizon read evidence"); }, () -> true)).isNull();
+        for (double speed : new double[] {Double.NaN, Double.POSITIVE_INFINITY})
+            assertThat(ElytraFlightPlanner.coast(position, new Vec3(speed, -.1, 0), -90, 0, .08, 4,
+                    600, 128, box -> true, () -> true)).isNull();
+    }
+
+    @Test void verticallyAlignedLaunchKeepsHeadingAndNonzeroGoalsKeepTheirBearing() {
+        var position = new Vec3(2, 30, 3);
+        assertThat(ElytraFlightPlanner.launchYaw(position, position.add(0, 5, 0), -90)).isEqualTo(-90);
+        assertThat(ElytraFlightPlanner.launchYaw(position, position.add(1e-6, 5, -1e-6), 123.5F)).isEqualTo(123.5F);
+        assertThat(ElytraFlightPlanner.launchYaw(position, position.add(5, 0, 0), 17)).isEqualTo(-90);
+        assertThat(ElytraFlightPlanner.launchYaw(position, position.add(-5, 0, 0), 17)).isEqualTo(90);
+        assertThat(ElytraFlightPlanner.launchYaw(position, position.add(0, 0, 5), 17)).isZero();
+        assertThat(ElytraFlightPlanner.launchYaw(position, position.add(0, 0, -5), 17)).isEqualTo(180);
+    }
+
+    @Test void completeCourseReservesLandingAfterItsProofIsLostEvenWhenTheOldAnchorNeedsBoost() {
+        var position = new Vec3(0, 30, 0);
+        boolean reserved = ElytraFlightPlanner.reserveLanding(position, new Vec3(.3, -.1, 0),
+                new Vec3(40, 0, 0), 600, 128, 360);
+        assertThat(reserved).isFalse();
+        assertThat(ElytraFlightPlanner.reserveLanding(reserved, 0)).isFalse();
+        reserved = ElytraFlightPlanner.reserveLanding(reserved, 94);
+        assertThat(reserved).isTrue();
+        reserved = ElytraFlightPlanner.reserveLanding(reserved, 0);
+        assertThat(reserved).isTrue();
+        assertThat(ElytraFlightPlanner.needsBoost(position, new Vec3(0, 100, 0), 32, 4)).isTrue();
+    }
+
     @Test void independentlyWitnessedClientAndDelayedLandingsMayOccurOnDifferentTicks() {
         var plan = ElytraFlightPlanner.plan(new Vec3(0, 2, 0), new Vec3(0, -.1, .6),
                 0, -25, new Vec3(0, 0, 8), .08, 0, false, 4, box -> box.minY > 0,
