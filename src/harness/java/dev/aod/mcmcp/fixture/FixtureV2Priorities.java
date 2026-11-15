@@ -125,8 +125,13 @@ final class FixtureV2Priorities {
                         if (!inputIdle()) throw new IllegalStateException("input owned");
                         // Fixed arena preparation must work even when the owner starts far away.
                         boolean emergency = kind.startsWith("recovery_") || kind.startsWith("flight_");
-                        for (int x = (emergency ? 290 : 300) >> 4; x <= (emergency ? 350 : 320) >> 4; x++) {
-                            for (int z = (emergency ? 290 : 300) >> 4; z <= (emergency ? 330 : 320) >> 4; z++) player.level().getChunk(x, z);
+                        boolean ladderSide = kind.equals("ladder_side");
+                        int minX = ladderSide ? 199 : emergency ? 290 : 300;
+                        int maxX = ladderSide ? 205 : emergency ? 350 : 320;
+                        int minZ = ladderSide ? 197 : emergency ? 290 : 300;
+                        int maxZ = ladderSide ? 203 : emergency ? 330 : 320;
+                        for (int x = minX >> 4; x <= maxX >> 4; x++) {
+                            for (int z = minZ >> 4; z <= maxZ >> 4; z++) player.level().getChunk(x, z);
                         }
                         var commands = commands(kind);
                         var source = player.createCommandSourceStack().withMaximumPermission(server.operatorUserPermissions()).withSuppressedOutput();
@@ -453,6 +458,7 @@ final class FixtureV2Priorities {
     }
 
     private static List<String> commands(String kind) {
+        if (kind.equals("ladder_side")) return FixtureV2PrioritiesConfig.ladderSideCommands();
         // Preserve previously observed roof edges while returning to the fixed ground start.
         if (kind.equals("scaffold_detour_start")) return List.of("tp @s 305.5 101 305.5 -90 0");
         var result = new ArrayList<>(List.of("gamemode creative @s", "ride @s dismount",

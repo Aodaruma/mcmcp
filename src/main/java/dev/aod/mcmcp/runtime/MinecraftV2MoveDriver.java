@@ -41,7 +41,6 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
     private long arcFallBaseline;
     private RoutePlan wholeRoute;
     private int nextEdge, chunkEnd;
-    private boolean aligning;
     private MinecraftGroundTraversalExecutor arc;
     private int jumps, drops;
     private dev.aod.mcmcp.agent.action.ExactPositionPrimitive exactApproach;
@@ -60,7 +59,7 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
     }
 
     KnownTraversabilitySnapshot augment(KnownTraversabilitySnapshot map) {
-        return active() && !aligning || request.sneak() ? map : ObservedEntityObstacles.filter(
+        return active() || request.sneak() ? map : ObservedEntityObstacles.filter(
                 MinecraftGroundTransferMap.augment(map, minecraft.player, fallBudget.remaining()), minecraft);
     }
 
@@ -159,12 +158,7 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
 
     private void beginChunk() {
         var edge = wholeRoute.edges().get(nextEdge);
-        if (edge.locomotion().ballistic()) {
-            aligning = true;
-            // Center on supported ground before committing to the arc.
-            beginOrdinary(new RoutePlan(wholeRoute.worldSessionId(), wholeRoute.dimension(), wholeRoute.worldRevision(),
-                    java.util.List.of(edge.key().from()), java.util.List.of(), 0, 0, 36, 1800), 0.12);
-        } else {
+        if (!edge.locomotion().ballistic()) {
             chunkEnd = nextEdge + 1;
             while (chunkEnd < wholeRoute.edges().size() && !wholeRoute.edges().get(chunkEnd).locomotion().ballistic()) chunkEnd++;
             beginOrdinary(wholeRoute.segment(nextEdge, chunkEnd), 0.12);
@@ -219,6 +213,22 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
 
     private MinecraftActionPrimitiveExecutor.TickResult tickRoute(KnownTraversabilitySnapshot map,
             double remainingDistance, long clientTick, BooleanSupplier outputAllowed) {
+        if (arc == null && wholeRoute != null && wholeRoute.edges().get(nextEdge).locomotion().ballistic()) {
+            var edge = wholeRoute.edges().get(nextEdge);
+            if (!minecraft.player.onGround() || !edge.key().from().equals(
+                    ActionPlanning.playerCell(minecraft.player, wholeRoute.dimension())))
+                return new MinecraftActionPrimitiveExecutor.TickResult(MinecraftActionPrimitiveExecutor.Status.REPLAN_REQUIRED,
+                        MinecraftActionPrimitiveExecutor.Reason.ROUTE_EDGE_CHANGED);
+            // Prove the live body immediately before input; centering can invalidate a narrow corridor.
+            var plan = GroundTraversal.discover(minecraft.player, minecraft.player.getBoundingBox(),
+                    edge.key().to().x(), edge.key().to().z(), edge.locomotion(), fallBudget.remaining()).orElse(null);
+            if (plan == null || Math.abs(plan.landing().minY - edge.key().to().y()) > 0.21
+                    || !fallBudget.begin(plan.predictedDamage(minecraft.player)))
+                return new MinecraftActionPrimitiveExecutor.TickResult(MinecraftActionPrimitiveExecutor.Status.REPLAN_REQUIRED,
+                        MinecraftActionPrimitiveExecutor.Reason.ROUTE_EDGE_CHANGED);
+            arcFallBaseline = damageEvidence.falls();
+            arc = new MinecraftGroundTraversalExecutor(minecraft, plan);
+        }
         if (arc != null) {
             var step = arc.tick(map, remainingDistance, clientTick, outputAllowed);
             if (step.status() != MinecraftActionPrimitiveExecutor.Status.SUCCEEDED) return step;
@@ -239,19 +249,6 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
         }
         if (wholeRoute != null && step.status() == MinecraftActionPrimitiveExecutor.Status.SUCCEEDED) {
             executor.close();
-            if (aligning) {
-                aligning = false;
-                var edge = wholeRoute.edges().get(nextEdge);
-                var plan = GroundTraversal.discover(minecraft.player, minecraft.player.getBoundingBox(),
-                        edge.key().to().x(), edge.key().to().z(), edge.locomotion(), fallBudget.remaining()).orElse(null);
-                if (plan == null || Math.abs(plan.landing().minY - edge.key().to().y()) > 0.21
-                        || !fallBudget.begin(plan.predictedDamage(minecraft.player)))
-                    return new MinecraftActionPrimitiveExecutor.TickResult(MinecraftActionPrimitiveExecutor.Status.REPLAN_REQUIRED,
-                            MinecraftActionPrimitiveExecutor.Reason.ROUTE_EDGE_CHANGED);
-                arcFallBaseline = damageEvidence.falls();
-                arc = new MinecraftGroundTraversalExecutor(minecraft, plan);
-                return arc.tick(map, remainingDistance, clientTick, outputAllowed);
-            }
             nextEdge = chunkEnd;
             return nextChunk();
         }
@@ -295,7 +292,7 @@ final class MinecraftV2MoveDriver implements CoordinateMoveJobExecution.Movement
     public void close() {
         try { executor.close(); }
         finally {
-            releasePosture(); pendingRoute = null; wholeRoute = null; aligning = false;
+            releasePosture(); pendingRoute = null; wholeRoute = null;
             if (exactApproach != null) { exactApproach.close(); exactApproach = null; }
             if (arc != null) { arc.close(); arc = null; fallBudget.finish(); }
         }

@@ -5,6 +5,7 @@ import dev.aod.mcmcp.agent.safety.GroundTraversal;
 import dev.aod.mcmcp.agent.safety.Locomotion;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.util.Mth;
+import net.minecraft.world.phys.AABB;
 import java.util.*;
 
 /** Bounded local collision queries, kept out of the shared observation map. */
@@ -27,8 +28,7 @@ final class MinecraftGroundTransferMap {
         int count = 0;
         for (var source : sources) {
             if (++count > 32) break;
-            var body = player.getBoundingBox();
-            var start = body.move(source.x() + 0.5 - player.getX(), source.y() - body.minY, source.z() + 0.5 - player.getZ());
+            var start = sourceBody(player.getBoundingBox(), current, source);
             for (var direction : DIRECTIONS) for (var mode : List.of(Locomotion.GAP_JUMP, Locomotion.DROP)) {
                 int length = mode == Locomotion.GAP_JUMP ? 2 : 1;
                 int x = source.x() + direction[0] * length, z = source.z() + direction[1] * length;
@@ -46,5 +46,11 @@ final class MinecraftGroundTransferMap {
             }
         }
         return map.withGroundTransfers(additions, damage, allowance);
+    }
+
+    static AABB sourceBody(AABB body, NavCell current, NavCell source) {
+        // A centered future waypoint must not replace the actual takeoff corridor.
+        return source.equals(current) ? body : body.move(source.x() + 0.5 - body.getCenter().x,
+                source.y() - body.minY, source.z() + 0.5 - body.getCenter().z);
     }
 }
