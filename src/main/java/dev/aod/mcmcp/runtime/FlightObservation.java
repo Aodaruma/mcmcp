@@ -151,7 +151,7 @@ final class FlightObservation {
 
     private record LandingSupport(BlockPos position, double height) { }
 
-    Vec3 findLanding(Vec3 preferred, Vec3 threat) {
+    Vec3 findLanding(Vec3 preferred, Vec3 threat, boolean descending) {
         var player = minecraft.player;
         Vec3 best = null;
         double bestScore = Double.POSITIVE_INFINITY;
@@ -164,6 +164,7 @@ final class FlightObservation {
                     ClipContext.Fluid.ANY, player));
             if (hit.getType() != HitResult.Type.BLOCK || hit.getDirection() != net.minecraft.core.Direction.UP) continue;
             var feet = hit.getLocation();
+            if (descending && !ElytraLandingCourse.descendingGoal(player.position(), feet)) continue;
             if (eye.distanceTo(feet) > radius || !minecraft.level.isLoaded(hit.getBlockPos())) continue;
             var sight = minecraft.level.clip(new ClipContext(eye, feet.add(0, .02, 0),
                     ClipContext.Block.COLLIDER, ClipContext.Fluid.ANY, player));

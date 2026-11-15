@@ -13,6 +13,10 @@ import java.util.function.Predicate;
 record ElytraLandingCourse(Vec3 goal, float yaw, int approachTicks, int flareTicks, int coastTicks, float finalPitch) {
     private static final int MAX_TICKS = 128;
 
+    static boolean descendingGoal(Vec3 position, Vec3 goal) {
+        return goal != null && goal.y < position.y;
+    }
+
     static BooleanSupplier boundedSearch(BooleanSupplier allowed) {
         long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(20);
         return () -> allowed.getAsBoolean() && System.nanoTime() - deadline < 0;
@@ -26,7 +30,7 @@ record ElytraLandingCourse(Vec3 goal, float yaw, int approachTicks, int flareTic
     static ElytraLandingCourse select(Vec3 position, Vec3 motion, float yaw, float pitch, Vec3 goal,
             double gravity, int latency, long remainingTicks, double remainingDistance, double remainingCamera,
             Predicate<AABB> clear, BiPredicate<AABB, Vec3> stoppedLanding, BooleanSupplier allowed) {
-        if (goal.y >= position.y || latency > 20) return null;
+        if (!descendingGoal(position, goal) || latency > 20) return null;
         float bearing = (float) Math.toDegrees(Math.atan2(position.x - goal.x, goal.z - position.z));
         // These are control intervals, not destinations or a guarantee that a landing exists.
         for (int offset : new int[] {0, -15, 15})

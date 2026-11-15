@@ -88,8 +88,9 @@ final class MinecraftElytraFlight implements AutoCloseable {
                 landingTarget == null ? goal : landingTarget, remainingTicks, remainingDistance, remainingCamera);
         if (rescue || landingReserved) {
             if (!observation.supportedLanding(landingTarget)
+                    || rescue && !ElytraLandingCourse.descendingGoal(player.position(), landingTarget)
                     || threat != null && landingTarget.distanceToSqr(threat) < 36) {
-                landingTarget = !rescue && observation.supportedLanding(goal) ? goal : observation.findLanding(goal, threat);
+                landingTarget = !rescue && observation.supportedLanding(goal) ? goal : observation.findLanding(goal, threat, rescue);
             }
             if (landingTarget != null) goal = landingTarget;
         }

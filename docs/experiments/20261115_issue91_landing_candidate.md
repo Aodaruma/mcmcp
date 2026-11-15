@@ -51,3 +51,13 @@ baseは`a44089b81198151fe82dd37669ad06d7287b920c`。レビュー前の初回候�
 - source overlay・製品・harness・検証ログを`artifacts/v2-issue91-landing-20261115-reviewed1`へ凍結した。旧B9AAF候補とは区別し、この新JARで実機受入を行う。
 
 新候補の凍結後、Gradle daemonを停止した。製品・harness・source checksのログを同じartifactへ保存し、実機起動中の追加ローカルGradleは行わない。
+
+## このPCでの初回受入と着地点の再選択
+
+隔離profileのコピーと新しい平坦worldで、製品5b005979版とPR #92の検証harnessを使った。`recovery_elytra_edge`は未合格。275ticks、128.045blocksでrecovery_budget_exhaustedとなり、HP20だが飛行中だった。終端後に固定fixtureを再準備して安全床へ戻した。開始時に選んだ上段床y=121を、プレイヤーがy=120.92へ落ちた後も保持していた。新コースは下降着地用なので上方目標を認可せず、旧fallbackだけで滑空した。
+
+広い乾いた床の`recovery_elytra`はHP20、y=101に接地し100ticks安定、距離37.215blocks、204ticksで救助を完了した。元の入力Actionの終端preempted_for_recoveryは、入力を再実行しない現在の契約どおり。広い床の成功は狭岸の合格へ代用しない。
+
+この結果から、救助用の下降着地では現在位置以上の高さの目標を失効させ、新規候補からも除外する。通常の非救助飛行は変更しない。床の支持・視認条件を緩めず、同じ候補選択と元予算を使う。上段床・同じ高さ・下側岸・欠測の高さ境界回帰を追加した。
+
+再修正のfocused24件と製品jar生成は成功。候補SHA-256は`5240b704b55b50906de35c1b31a816b828f7c356114e73fd2b4486cf02c4c653`。初回の失敗を成功へ読み替えず、この候補の実機を別に確認する。

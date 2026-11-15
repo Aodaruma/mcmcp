@@ -16,6 +16,14 @@ class ElytraLandingCourseTest {
     private static final Vec3 MOTION = new Vec3(.05952456415649368, -.2869482726471545, 0);
     private static final Vec3 GOAL = new Vec3(349.33973759412766, 101, 290.5011074542999);
 
+    @Test void aSupportedPlatformAboveTheCurrentFlightCannotRemainADescendingGoal() {
+        var fallen = new Vec3(314.65, 120.92, 310.5);
+        assertThat(ElytraLandingCourse.descendingGoal(fallen, new Vec3(322.65, 121, 310.5))).isFalse();
+        assertThat(ElytraLandingCourse.descendingGoal(fallen, new Vec3(322.65, 120.92, 310.5))).isFalse();
+        assertThat(ElytraLandingCourse.descendingGoal(fallen, GOAL)).isTrue();
+        assertThat(ElytraLandingCourse.descendingGoal(fallen, null)).isFalse();
+    }
+
     @Test void recordedFloodedBankCanBeReachedAndStoppedWithoutWeakeningTheObservation() throws Exception {
         var witness = new Witness(START);
         var course = ElytraLandingCourse.select(START, MOTION, -90, 0, GOAL, .08, 4,
