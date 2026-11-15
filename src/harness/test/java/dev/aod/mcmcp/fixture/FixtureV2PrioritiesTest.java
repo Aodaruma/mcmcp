@@ -3,6 +3,47 @@ package dev.aod.mcmcp.fixture;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.*;
 class FixtureV2PrioritiesTest {
+    @Test void ladderSideIsAClosedFixedCaseWithBoundedLocalCommands() {
+        assertThat(FixtureV2PrioritiesConfig.validRequest("1:ladder_side")).isTrue();
+        for (String request : java.util.List.of("ladder_side", "1:ladder_side_command", "1:ladder_side 1 2 3",
+                "1:ladder_side\n2:report", "123456789:ladder_side"))
+            assertThat(FixtureV2PrioritiesConfig.validRequest(request)).isFalse();
+        var commands = FixtureV2PrioritiesConfig.ladderSideCommands();
+        assertThat(commands).hasSize(16).containsSubsequence(
+                "fill 199 201 197 205 216 203 minecraft:air",
+                "fill 200 200 198 204 200 202 minecraft:stone",
+                "fill 203 201 200 203 214 200 minecraft:stone",
+                "fill 202 201 200 202 214 200 minecraft:ladder[facing=west]",
+                "setblock 201 212 200 minecraft:stone",
+                "setblock 202 207 199 minecraft:stone", "setblock 202 207 201 minecraft:stone",
+                "tp @s 202.5 201 199.5 -90 0");
+        for (String command : commands) {
+            if (!command.startsWith("fill ")) continue;
+            var parts = command.split(" ");
+            int minX = Integer.parseInt(parts[1]), minY = Integer.parseInt(parts[2]), minZ = Integer.parseInt(parts[3]);
+            int maxX = Integer.parseInt(parts[4]), maxY = Integer.parseInt(parts[5]), maxZ = Integer.parseInt(parts[6]);
+            assertThat((maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1)).isLessThanOrEqualTo(784);
+            assertThat(minX >> 4).isEqualTo(12); assertThat(maxX >> 4).isEqualTo(12);
+            assertThat(minZ >> 4).isEqualTo(12); assertThat(maxZ >> 4).isEqualTo(12);
+        }
+        assertThat(commands).noneMatch(command -> command.contains("300") || command.startsWith("execute "));
+    }
+
+    @Test void ladderSidePreloadAndCommandsRemainBehindOwnerAndInputGuards() throws Exception {
+        var source = java.nio.file.Files.readString(java.nio.file.Path.of(
+                "src/harness/java/dev/aod/mcmcp/fixture/FixtureV2Priorities.java"));
+        int owner = source.indexOf("if (!decision.allowed()) throw");
+        int input = source.indexOf("if (!inputIdle()) throw", owner);
+        int preload = source.indexOf("player.level().getChunk(x, z)", input);
+        int reauthorize = source.indexOf("FixtureSecurity.reauthorize(decision.context())", preload);
+        int command = source.indexOf("performPrefixedCommand(source, command)", reauthorize);
+        assertThat(owner).isGreaterThanOrEqualTo(0);
+        assertThat(input).isGreaterThan(owner); assertThat(preload).isGreaterThan(input);
+        assertThat(reauthorize).isGreaterThan(preload); assertThat(command).isGreaterThan(reauthorize);
+        assertThat(source).contains("int minX = ladderSide ? 199", "int maxX = ladderSide ? 205",
+                "int minZ = ladderSide ? 197", "int maxZ = ladderSide ? 203");
+    }
+
     @Test void onlyFixedCasesWithAnExplicitNewRequestNumberAreAccepted() {
         for (var suffix : java.util.List.of("", "_full", "_bow", "_shield", "_water", "_flight", "_cancel", "_locked"))
             assertThat(FixtureV2PrioritiesConfig.validRequest("8:recovery_equipment" + suffix)).isTrue();

@@ -24,8 +24,8 @@ public final class ActionDslCompiler {
             ActionDslValidator.MAX_BOUNDED_INPUT_TICKS,
             NavigationDistanceBudget.MAX_DISTANCE_BLOCKS,
             ActionDslValidator.MAX_ACTION_CAMERA_DEGREES,
-            ActionDslValidator.MAX_KILL_ZONE_ATTACKS,
-            ActionDslValidator.MAX_COBBLESTONE_GENERATOR_BREAKS,
+            ActionDslValidator.MAX_BOUNDED_INPUT_TICKS,
+            ActionDslValidator.MAX_BOUNDED_INPUT_TICKS,
             ActionDslValidator.MAX_BLOCKS_PLACED);
     private static final long NOMINAL_TICK_MILLIS = 50;
     private static final long BLOCK_PLAN_TICKS_PER_ENTRY = 300;
@@ -43,6 +43,14 @@ public final class ActionDslCompiler {
     public static final long KNOWN_MENU_OPERATION_DURATION_MILLIS =
             KNOWN_MENU_OPERATION_TICKS * NOMINAL_TICK_MILLIS;
     public static final long KNOWN_MENU_OPERATION_INTERACTIONS = 1L;
+
+    public static long knownMenuTicks(ActionDsl.OperateKnownMenu menu) {
+        return menu.opensStorage() && !"inspect".equals(menu.operation()) ? 1600L : KNOWN_MENU_OPERATION_TICKS;
+    }
+
+    public static long knownMenuInteractions(ActionDsl.OperateKnownMenu menu) {
+        return menu.opensStorage() && !"inspect".equals(menu.operation()) ? 16L : 1L;
+    }
     public static final long KNOWN_FISHING_TICKS = 80L;
     public static final int KILL_ZONE_EFFECT_RESERVE_TICKS = 10;
     public static final long KNOWN_FISHING_DURATION_MILLIS =
@@ -192,6 +200,7 @@ public final class ActionDslCompiler {
                 || node instanceof ActionDsl.HarvestKnownWheatBatch
                 || node instanceof ActionDsl.OpenKnownFenceGate
                 || node instanceof ActionDsl.OpenKnownPassage
+                || node instanceof ActionDsl.SetKnownLever
                 || node instanceof ActionDsl.InspectKnownContainer
                 || node instanceof ActionDsl.TakeKnownContainerStack
                 || node instanceof ActionDsl.StoreKnownContainerStack
@@ -237,6 +246,8 @@ public final class ActionDslCompiler {
                 requireMutationCost(cost, 1, 0, 0, "open_known_fence_gate");
             } else if (node instanceof ActionDsl.OpenKnownPassage) {
                 requireMutationCost(cost, 1, 0, 0, "open_known_passage");
+            } else if (node instanceof ActionDsl.SetKnownLever) {
+                requireMutationCost(cost, 1, 0, 0, "set_known_lever");
             } else if (node instanceof ActionDsl.InspectKnownContainer) {
                 requireMutationCost(cost, 1, 0, 0, "inspect_known_container");
             } else if (node instanceof ActionDsl.TakeKnownContainerStack take) {
@@ -266,12 +277,12 @@ public final class ActionDslCompiler {
                         || cost.ticks() != knownSmeltingTicks(smelt.maxSmelts())) {
                     throw unprovable("smelt_known_recipe has an invalid primitive time bound");
                 }
-            } else if (node instanceof ActionDsl.OperateKnownMenu) {
+            } else if (node instanceof ActionDsl.OperateKnownMenu menu) {
                 requireMutationCost(
-                        cost, KNOWN_MENU_OPERATION_INTERACTIONS, 0, 0,
+                        cost, knownMenuInteractions(menu), 0, 0,
                         "operate_known_menu");
-                if (cost.durationMillis() != KNOWN_MENU_OPERATION_DURATION_MILLIS
-                        || cost.ticks() != KNOWN_MENU_OPERATION_TICKS
+                if (cost.durationMillis() != knownMenuTicks(menu) * 50L
+                        || cost.ticks() != knownMenuTicks(menu)
                         || cost.cameraDegrees() != 0) {
                     throw unprovable("operate_known_menu has an invalid primitive bound");
                 }
@@ -374,8 +385,8 @@ public final class ActionDslCompiler {
                 ticks,
                 movement ? NavigationDistanceBudget.MAX_DISTANCE_BLOCKS : 0.0D,
                 0.0D,
-                use ? 1L : 0L,
-                attack ? 1L : 0L,
+                hold.repeatTarget() ? ticks : use ? 1L : 0L,
+                attack ? hold.repeatTarget() ? ticks : 1L : 0L,
                 0L);
     }
 

@@ -47,7 +47,11 @@ side-effect profileをitem IDだけから推測せず、trusted Runtimeが実sta
 
 ## 観測を絞る
 
+最初のpageは`frame_id=null,cursor=null`で呼ぶと、呼出し時点で最新のpublish済みimmutable frameを原子的に選べます。responseの具体的な`frame_id`を保持し、`next_cursor`がある続きpageでは両方をそのまま渡してください。frame未生成は`NO_FRAME`、保持外の具体IDは`FRAME_EXPIRED`、不正なcursorは`INVALID_CURSOR`です。この選択は観測時刻やTTLを更新しません。
+
 `agent_get_observation.filter`は、既にpolicy-visibleな同一frameから不要なrecordを削るdelivery-only filterです。record kindに適用可能な複数条件はANDで適用され、観測範囲やAction認可を拡張しません。
+
+`next_cursor`があるqueryを途中で打ち切るときは、`agent_get_observation`へ`{"schema_version":1,"release_cursor":"<next_cursor>"}`だけを渡します。`release_status=released`なら未完了leaseを解放済み、`completed`なら既に最終pageまで完了しており変更なしです。不明・期限切れ・別world sessionのcursorはすべて`INVALID_CURSOR`になります。解放呼出しは観測配送としてACKされず、以前に配送済みの認可やTTLも更新しません。
 
 - 作物: `block_ids=["minecraft:wheat"]`と`crop_mature=true|false`
 - 面: `faces=["up","north"]`（`down/up/north/south/west/east`。同一blockの代表面を選ぶ前に適用）
@@ -194,6 +198,16 @@ entry IDと変換後targetはplan内で一意、処理順は`entries`の入力�
 
 このnodeはtop-level bodyの最後に1回だけ置き、30秒、600 ticks、1 interactionを確保します。raw slot / GUI座標を推測せず、refが期限切れ、別画面、別revision、source変更なら新しいstateを取得します。Sophisticated Backpacksではopen upgrade tab、extra slot、inaccessible / oversized stackを受理しません。player 2x2、専用workstation、backpack内craft/smelt、widget / canvas操作はまだこのsliceに含みません。
 
+## 既設レバーのON/OFF
+
+`set_known_lever`はActionの唯一のtop-level nodeとし、移動や待機を同じActionへ含めません。元の配送leaseを受付から通常use直前まで維持します。描画情報の欠測時は元の期限・予算内だけ待機し、復帰後に元の面・state・現在のfog/LOSを再検証します。配送期限切れや不一致は操作せず失敗します。この検証は操作不要の成功にも適用し、送信済みのACK待機・cleanupには逆適用しません。
+
+`set_known_lever:{id,op,target,expected_state,powered}`は可視のVanilla lever 1個を指定状態にします。`target`と完全な`expected_state`（`face`、`facing`、文字列の`powered`）は最新の`visible_surface`からコピーし、希望値の`powered`だけbooleanで指定します。位置・完全state・現在のfog/LOS/reachを受付・JIT・通常use直前に検証し、既存の安全な空MAIN_HAND準備と通常useを1回だけ使います。すでに希望状態ならクリックしません。leverの可視state公開は建築材料の許可には転用しません。
+
+予算は15,000 ms、300 ticks、360 camera degrees、1 interactionを確保し、移動・破壊・設置は0にします。サーバーACKと完全な希望stateを確認してから成功とし、`block_interact` effectへ直前の可視stateとserver確認後のstateを残します。送信後の取消・期限切れ・例外はafterを捏造せず`unknown`を1回だけ残します。未知結果を再送せず、必ず再観測してください。
+
+接続された装置全体の安全性・出力は保証しません。Action終了や取消は自動OFFを意味しないため、装置から離れる前に最新stateを再取得して別のOFF Actionを実行し、停止を確認してください。長時間の機械運転は停止手段・回収容量・帰還経路を別に確認してから行います。
+
 ## レッドストーンの最小slice
 
 `apply_known_redstone_spec`は、lever 1入力からlampへ同じ値を出す3種の固定identityだけを扱います。直接1出力は`anchor`のlampとrotation方向`+1`のleverを使う`2x1x1`、2出力fan-outは`+2`に`output_2` lampを加える`3x1x1`です。直線wire版は`anchor`のlamp、`+1`の`wire/wire/minecraft:redstone_wire`、`+2`のleverを使う`3x1x1`で、3 blockすべてに可視なglass UP supportが必要です。runtimeはOFF→ON→OFFを同一tickのlive集合で確認し、wire版では直線shapeと`power=0→15→0`も完全一致させます。可変長・曲がり・wire付きfan-out・repeater・NOT・任意回路の合成は未対応です。
@@ -231,3 +245,34 @@ budgetは成功予想ではなく、worst-caseを収める停止上限です。�
 schema違反はcatalog順に最大4件、budget不足は不足component名をまとめて返します。提出値や未知property名は診断へ反射されません。mutationやdrop生成後の`TARGET_UNKNOWN`をfield推測で直すのではなく、Actionを区切って新しいframeを観測してください。
 
 具体的な最小JSONは`docs/action-templates/`にあります。template内の座標は例であり、実行時には必ず同じworld/sessionの最新policy-visible recordから置き換えます。
+
+
+## 対象の再生成を待つ有限長押し
+
+`hold_bounded_inputs` は有限時間だけ入力を保持します。`target_guard` の座標・面は最新の配送済み観測からコピーし、`expected_state` は省略しません。完全stateがあればそのまま指定し、`state:null` なら `expected_state:null` と観測のblockをコピーした `expected_block` を指定します。両方にblock IDがある場合は一致が必須です。非公開propertyを推測する必要はありません。
+
+`target_guard.match_face` の既定は `true` で、観測面と実際のcrosshair面も一致させます。雪の採掘などでは `match_face:false` を明示すると、同じ座標・blockへ実際に当たった別の面を許可できます。`face` は観測記録の値として引き続き必須です。許可する入力は `attack` または `attack` と `sneak` の組合せだけで、面により効果が変わる `use` ではfalseを拒否します。通常reach、実BLOCK hit、loaded/world border、手持ち、静止・安全条件、非null時の完全state一致は維持します。実際に当たった面をVanillaへ渡し、照準や面を合成しません。
+
+既定の `repeat_target:false` は厳密停止です。現在のcrosshairが座標・block・指定state（`match_face:true` では面も）から外れると拒否を保持し、同じAction内では再開しません。
+
+`repeat_target:true` と有限の `duration_ticks` を明示すると、同じActionの中で対象の再生成を待てます。対象消失、MISS、entity、別の座標・block・state（`match_face:true` では別の面も）への照準中は新しい採掘・使用を出さず、同じ対象条件が戻ると再開します。照準を自動で動かしません。開始済みの弓・飲食等の使用は一時的な対象不一致だけでは解除せず、次の使用開始には改めて一致を要求します。
+
+回数指定の `max_repetitions` は廃止しました。反復モードでは1 client tickにつき最大1回の新規開始とし、`duration_ticks` から必要な試行枠を算出します。`budget.max_interactions` と、attackでは `budget.max_blocks_broken` に、それぞれ `duration_ticks` 以上を指定してください。時間分に満たない予算は実行前に拒否し、受理したActionを64回・2,048回など時間と独立した回数上限で打ち切りません。最大時間は1,728,000tick・86,400,000ms（24時間）です。通常のVanilla採掘・使用の新規開始ごとに1 interactionを記録し、継続・cooldown・待機tickは追加消費しません。同一tickの重複開始や予算を超える開始は送信前に拒否します。旧 `max_repetitions` fieldと移動だけの反復は拒否します。他のActionの予算上限は変更しません。
+
+例えば、観測済みの雪を現在の照準で最大60tickだけ採掘するnodeは次の形です。座標・面・block・手持ちは実観測から置き換え、programの唯一のbody nodeとして `block_break` capabilityで提出します。
+
+```json
+{
+  "id": "hold_attack", "op": "hold_bounded_inputs", "inputs": ["attack"],
+  "duration_ticks": 60, "repeat_target": true,
+  "target_guard": {
+    "target": {"dimension": "minecraft:overworld", "x": 204, "y": 200, "z": 194},
+    "face": "south", "match_face": false, "expected_state": null, "expected_block": "minecraft:snow"
+  },
+  "selected_item": "minecraft:wooden_shovel"
+}
+```
+
+この例のbudgetは `max_duration_ms:3000`、`max_ticks:60`、`max_interactions:60`、`max_blocks_broken:60`、その他の枠は0です。待機も元の時間・tick予算へ数え、対象復帰で期限を延長しません。実際のsimulation pauseは既存規則通り入力を中立化してactive timeを凍結し、再開時に検証します。
+
+位置・手持ち変更、reach外、health低下、Screen・overlay、安全中断、Esc、OFF、cancel、期限、world/session変更では既存の入力解放経路へ進みます。 対象照合の固定診断は `bounded_input_target_not_focused`、`target_position_changed`、`target_face_changed`、`target_block_changed`、`target_state_changed`、`target_unloaded`、`target_outside_world_border`、`target_out_of_reach`（後続も同じ `bounded_input_` 接頭辞）に分け、面不一致を距離外等と混同しません。入力開始直前にも再検証し、例外や安全違反は解除までラッチします。開始回数は保守的な試行数であり、破壊成功数・回収数・server確認済みeffectではありません。道具交換・耐久保護・収集量保証はありません。

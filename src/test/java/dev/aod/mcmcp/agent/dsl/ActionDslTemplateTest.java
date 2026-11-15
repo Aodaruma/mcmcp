@@ -17,7 +17,7 @@ class ActionDslTemplateTest {
         var examples = LegacyActionSchema.inputSchema().getAsJsonArray("examples");
         try (var files = Files.list(templateDirectory)) {
             var templates = files.filter(path -> path.toString().endsWith(".json")).toList();
-            assertThat(templates).hasSize(13);
+            assertThat(templates).hasSize(14);
             for (var template : templates) {
                 String json = Files.readString(template);
                 assertThat(ActionDslParser.parse(json).schemaVersion())

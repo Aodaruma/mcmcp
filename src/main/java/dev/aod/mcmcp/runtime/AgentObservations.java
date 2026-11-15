@@ -10,6 +10,7 @@ import dev.aod.mcmcp.agent.observation.DeliveredPolicyEvidenceStore;
 import dev.aod.mcmcp.agent.observation.ObservationFilter;
 import dev.aod.mcmcp.agent.observation.ObservationFrame;
 import dev.aod.mcmcp.agent.observation.ObservationFrameStore;
+import dev.aod.mcmcp.agent.observation.ObservationFrameStore.CursorReleaseStatus;
 import dev.aod.mcmcp.agent.observation.ObservationKind;
 import dev.aod.mcmcp.agent.observation.ObservationPage;
 import dev.aod.mcmcp.agent.observation.ObservationStoreException;
@@ -100,23 +101,19 @@ final class AgentObservations {
         if (agentObserver != null) agentObserver.reset();
     }
 
-    PreparedObservationPage getAgentObservation(Map<String, Object> arguments) {
+    PreparedObservationResponse getAgentObservation(Map<String, Object> arguments) {
         return getAgentObservation(arguments, this::readBlockEntityData);
     }
 
-    PreparedObservationPage getAgentObservation(Map<String, Object> arguments,
+    PreparedObservationResponse getAgentObservation(Map<String, Object> arguments,
             java.util.function.BiFunction<List<VisibleSurface>, Boolean, Map<String, Object>> blockData) {
         boolean includeNbt = arguments.containsKey("include_nbt")
                 && RuntimeArguments.booleanArgument(arguments, "include_nbt");
         boolean compact = arguments.isEmpty() || arguments.keySet().equals(Set.of("include_nbt"));
         if (compact) {
-            String frameId = agentObservationFrames.announceLatestSummary()
-                    .orElseThrow(() -> new RuntimeInvocationException(
-                            "frame_expired", "No observation frame is available yet.", true, Map.of()))
-                    .latestFrameId();
             arguments = new LinkedHashMap<>();
             arguments.put("schema_version", 1);
-            arguments.put("frame_id", frameId);
+            arguments.put("frame_id", null);
             arguments.put("kinds", List.of(
                     ObservationKind.VISIBLE_SURFACE.wireName(),
                     ObservationKind.VISIBLE_ENTITY.wireName(),
@@ -126,16 +123,24 @@ final class AgentObservations {
         }
         Set<String> required = Set.of("schema_version", "frame_id", "kinds", "cursor", "limit");
         RuntimeArguments.requireAllowedKeys(arguments, "agent_get_observation",
-                Set.of("schema_version", "frame_id", "kinds", "filter", "cursor", "limit", "include_nbt"));
+                Set.of("schema_version", "frame_id", "kinds", "filter", "cursor", "limit", "include_nbt", "release_cursor"));
+        if (RuntimeArguments.intArgument(arguments, "schema_version") != 1) {
+            throw new IllegalArgumentException("schema_version must be 1");
+        }
+        if (arguments.containsKey("release_cursor")) {
+            if (!arguments.keySet().equals(Set.of("schema_version", "release_cursor"))) {
+                throw new IllegalArgumentException(
+                        "release_cursor must not be combined with page query fields");
+            }
+            return releaseObservationCursor(
+                    RuntimeArguments.stringArgument(arguments, "release_cursor"));
+        }
         if (!arguments.keySet().containsAll(required)
                 || arguments.size() < required.size()
                 || arguments.size() > required.size() + 2) {
             throw new IllegalArgumentException(
                     "agent_get_observation must contain schema_version, frame_id, kinds, cursor, "
                             + "and limit; filter and include_nbt are optional");
-        }
-        if (RuntimeArguments.intArgument(arguments, "schema_version") != 1) {
-            throw new IllegalArgumentException("schema_version must be 1");
         }
         Object rawKinds = arguments.get("kinds");
         if (!(rawKinds instanceof List<?> values)) {
@@ -152,7 +157,7 @@ final class AgentObservations {
         ObservationFilter filter = RuntimeArguments.observationFilterArgument(arguments);
         try {
             ObservationPage page = agentObservationFrames.page(
-                    RuntimeArguments.stringArgument(arguments, "frame_id"),
+                    nullableFrameId(arguments.get("frame_id")),
                     kinds,
                     filter,
                     cursor,
@@ -165,13 +170,9 @@ final class AgentObservations {
                     ? ObservationWireMapper.compactPage(page, placementStateRefs)
                     : ObservationWireMapper.page(page, placementStateRefs);
             wirePage = BlockEntityObservation.enrich(wirePage, page, includeNbt, blockData);
-            return new PreparedObservationPage(wirePage, receiptId);
+            return new PreparedObservationResponse(wirePage, receiptId);
         } catch (ObservationStoreException failure) {
-            throw new RuntimeInvocationException(
-                    failure.code().name().toLowerCase(Locale.ROOT),
-                    failure.getMessage(),
-                    failure.code() != ObservationStoreException.Code.INVALID_CURSOR,
-                    Map.of());
+            throw observationFailure(failure);
         }
     }
 
@@ -195,6 +196,33 @@ final class AgentObservations {
         return BlockEntityObservation.unavailable("not_currently_visible", includeNbt);
     }
 
+    private static String nullableFrameId(Object value) {
+        if (value == null || value instanceof String) {
+            return (String) value;
+        }
+        throw new IllegalArgumentException("frame_id must be a string or null");
+    }
+
+    private PreparedObservationResponse releaseObservationCursor(String cursor) {
+        try {
+            CursorReleaseStatus status = agentObservationFrames.releaseCursor(cursor);
+            return new PreparedObservationResponse(Map.of(
+                    "schema_version", 1,
+                    "release_status", status.name().toLowerCase(Locale.ROOT)), null);
+        } catch (ObservationStoreException failure) {
+            throw observationFailure(failure);
+        }
+    }
+
+    private static RuntimeInvocationException observationFailure(
+            ObservationStoreException failure) {
+        return new RuntimeInvocationException(
+                failure.code().name().toLowerCase(Locale.ROOT),
+                failure.getMessage(),
+                failure.code() != ObservationStoreException.Code.INVALID_CURSOR,
+                Map.of());
+    }
+
     void abandonUnconfirmedDelivery(RuntimeReply reply) {
         if (reply != null
                 && reply.deliveryReceipt()
@@ -203,12 +231,11 @@ final class AgentObservations {
         }
     }
 
-    record PreparedObservationPage(Map<String, Object> wirePage, UUID receiptId) {
-        PreparedObservationPage {
-            wirePage = java.util.Collections.unmodifiableMap(
+    record PreparedObservationResponse(Map<String, Object> wireResponse, UUID receiptId) {
+        PreparedObservationResponse {
+            wireResponse = java.util.Collections.unmodifiableMap(
                     new java.util.LinkedHashMap<>(
-                            Objects.requireNonNull(wirePage, "wirePage")));
-            Objects.requireNonNull(receiptId, "receiptId");
+                            Objects.requireNonNull(wireResponse, "wireResponse")));
         }
     }
 

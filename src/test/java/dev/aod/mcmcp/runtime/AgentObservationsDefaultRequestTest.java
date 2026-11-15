@@ -43,7 +43,7 @@ class AgentObservationsDefaultRequestTest {
                         new UnknownBoundary(
                                 position, UnknownBoundaryReason.UNLOADED, position, 9, 0))));
 
-        var compact = observations.getAgentObservation(Map.of()).wirePage();
+        var compact = observations.getAgentObservation(Map.of()).wireResponse();
         assertThat(compact.get("frame_id")).isEqualTo("obs-0000000000000001");
         assertThat((List<?>) compact.get("records")).singleElement().satisfies(record -> {
             @SuppressWarnings("unchecked")
@@ -62,11 +62,11 @@ class AgentObservationsDefaultRequestTest {
         explicit.put("kinds", List.of("unknown_boundary"));
         explicit.put("cursor", null);
         explicit.put("limit", 1);
-        var detailed = observations.getAgentObservation(explicit).wirePage();
+        var detailed = observations.getAgentObservation(explicit).wireResponse();
         assertThat((List<?>) detailed.get("records")).hasSize(1);
 
         explicit.put("kinds", List.of("traversability"));
-        var detailedRoute = observations.getAgentObservation(explicit).wirePage();
+        var detailedRoute = observations.getAgentObservation(explicit).wireResponse();
         assertThat((List<?>) detailedRoute.get("records")).hasSize(1);
     }
 }

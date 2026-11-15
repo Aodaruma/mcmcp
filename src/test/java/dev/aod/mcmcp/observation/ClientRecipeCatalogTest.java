@@ -45,6 +45,91 @@ class ClientRecipeCatalogTest {
     }
 
     @Test
+    void unlockedDisplayTakesPriorityOverTheSameClientSyncedDisplay() {
+        var catalog = new ClientRecipeCatalog();
+        UUID session = UUID.randomUUID();
+        var known = shapeless(1, Items.STONE, Items.STICK, 1);
+        var source = new ClientSyncedRecipes.Snapshot(1, true,
+                List.of(shapeless(-1, Items.STONE, Items.STICK, 1),
+                        shapeless(-2, Items.DIRT, Items.STICK, 1)),
+                List.of("minecraft:crafting"), 0, false, false);
+
+        catalog.refresh(session, 1, List.of(known), RecipeScope.ALL_CRAFTABLE, source);
+        var result = catalog.query(session, new ClientRecipeCatalog.Query(
+                ClientRecipeCatalog.QueryKind.RESULT_ITEM, "minecraft:stick"), 2);
+
+        assertThat(result.coverage().known()).isEqualTo(2);
+        assertThat(result.coverage().matched()).isEqualTo(2);
+        assertThat(result.coverage().truncated()).isFalse();
+        assertThat(result.recipes()).hasSize(2);
+        assertThat(result.recipes().getFirst().supported()).isTrue();
+        assertThat(result.recipes().getFirst().v2CraftSupported()).isTrue();
+        assertThat(result.recipes().getLast().supported()).isFalse();
+        assertThat(result.recipes().getLast().v2CraftSupported()).isFalse();
+    }
+
+    @Test
+    void scopeSwitchAndSourceReloadInvalidateRefsWithoutAuthorizingAdditionalRecipes() {
+        var catalog = new ClientRecipeCatalog();
+        UUID session = UUID.randomUUID();
+        var known = List.of(shapeless(1, Items.OAK_LOG, Items.OAK_PLANKS, 4));
+        var source = new ClientSyncedRecipes.Snapshot(1, true,
+                List.of(shapeless(-1, Items.STONE, Items.STICK, 1)),
+                List.of("minecraft:crafting"), 1, false, false);
+        catalog.refresh(session, 1, known, RecipeScope.UNLOCKED, source);
+        var old = recipe(catalog, session, "minecraft:oak_planks");
+        assertThat(catalog.query(session, new ClientRecipeCatalog.Query(
+                ClientRecipeCatalog.QueryKind.RESULT_ITEM, "minecraft:stick"), 1).recipes()).isEmpty();
+
+        assertThat(catalog.refresh(session, 2, known, RecipeScope.ALL_CRAFTABLE, source)
+                .recipeBookRevision()).isEqualTo(2);
+        assertThat(catalog.resolve(session, old.recipeRef(), old.fingerprint())).isEmpty();
+        var additional = recipe(catalog, session, "minecraft:stick");
+        assertThat(additional.supported()).isFalse();
+        assertThat(additional.v2CraftSupported()).isFalse();
+        assertThat(additional.result().deterministic()).isFalse();
+        assertThat(additional.unsupportedReason()).isEqualTo("client_synced_lookup_only");
+        assertThat(additional.toMap()).containsEntry("materials_status", "not_assessed")
+                .containsEntry("equipment_status", "not_assessed")
+                .containsEntry("source", "neoforge_recipes_received");
+        assertThat(catalog.resolve(session, additional.recipeRef(), additional.fingerprint())).isEmpty();
+        assertThat(recipe(catalog, session, "minecraft:oak_planks").supported()).isTrue();
+        assertThat(catalog.refresh(session, 3, known, RecipeScope.ALL_CRAFTABLE, source)
+                .recipeBookRevision()).isEqualTo(2);
+        var beforeReload = recipe(catalog, session, "minecraft:oak_planks");
+        var reload = new ClientSyncedRecipes.Snapshot(2, true, source.entries(), source.recipeTypes(), 1, false, false);
+        assertThat(catalog.refresh(session, 4, known, RecipeScope.ALL_CRAFTABLE, reload)
+                .recipeBookRevision()).isEqualTo(3);
+        assertThat(catalog.resolve(session, beforeReload.recipeRef(), beforeReload.fingerprint())).isEmpty();
+        assertThat(catalog.refresh(session, 5, known, RecipeScope.UNLOCKED, reload)
+                .recipeBookRevision()).isEqualTo(4);
+        var unlocked = recipe(catalog, session, "minecraft:oak_planks");
+        var anotherReload = new ClientSyncedRecipes.Snapshot(3, true, reload.entries(),
+                reload.recipeTypes(), 1, false, false);
+        assertThat(catalog.refresh(session, 6, known, RecipeScope.UNLOCKED, anotherReload)
+                .recipeBookRevision()).isEqualTo(4);
+        assertThat(catalog.resolve(session, unlocked.recipeRef(), unlocked.fingerprint())).isPresent();
+    }
+
+    @Test
+    void unavailableOrPartialSourcesAndZeroMatchesNeverProveAbsence() {
+        var catalog = new ClientRecipeCatalog();
+        UUID session = UUID.randomUUID();
+        for (var source : List.of(ClientSyncedRecipes.Snapshot.unavailable(),
+                new ClientSyncedRecipes.Snapshot(1, true, List.of(), List.of("minecraft:crafting"), 2, true, true))) {
+            catalog.refresh(session, 0, List.of(), RecipeScope.ALL_CRAFTABLE, source);
+            var result = catalog.query(session, new ClientRecipeCatalog.Query(
+                    ClientRecipeCatalog.QueryKind.RESULT_ITEM, "minecraft:stick"), 1);
+            assertThat(result.recipes()).isEmpty();
+            assertThat(result.coverage().toMap()).containsEntry("complete", false)
+                    .containsEntry("absence_proven", false)
+                    .containsEntry("scope_label", "すべての作成可能なレシピ");
+            assertThat(((java.util.Map<?, ?>) result.coverage().toMap().get("additional_source")).get("status"))
+                    .isEqualTo(source.available() ? "partial" : "unavailable");
+        }
+    }
+
+    @Test
     void exposesOnlyKnownClientDisplaysWithOpaqueSessionScopedReferences() {
         var catalog = new ClientRecipeCatalog();
         UUID session = UUID.randomUUID();
@@ -132,17 +217,19 @@ class ClientRecipeCatalogTest {
     void craftingRemaindersRemainUnsupportedForLegacyButRetainV2Ingredients() {
         var catalog = new ClientRecipeCatalog();
         UUID session = UUID.randomUUID();
-        catalog.refresh(session, 1, List.of(shapeless(9, Items.MILK_BUCKET, Items.STONE, 1)));
-
-        var recipe = catalog.query(
-                session,
-                new ClientRecipeCatalog.Query(ClientRecipeCatalog.QueryKind.RESULT_ITEM, "minecraft:stone"),
-                1).recipes().getFirst();
-
-        assertThat(recipe.supported()).isFalse();
-        assertThat(recipe.unsupportedReason()).isEqualTo("crafting_remainder");
-        assertThat(recipe.ingredients()).hasSize(1);
-        assertThat(recipe.v2CraftSupported()).isTrue();
+        var entries = List.of(shapeless(9, Items.MILK_BUCKET, Items.STONE, 1));
+        for (RecipeScope scope : RecipeScope.values()) {
+            catalog.refresh(session, 1, entries, scope, ClientSyncedRecipes.Snapshot.unavailable());
+            var recipe = catalog.query(session,
+                    new ClientRecipeCatalog.Query(ClientRecipeCatalog.QueryKind.RESULT_ITEM, "minecraft:stone"),
+                    1).recipes().getFirst();
+            assertThat(recipe.supported()).isFalse();
+            assertThat(recipe.unsupportedReason()).isEqualTo("crafting_remainder");
+            assertThat(recipe.ingredients()).hasSize(1);
+            assertThat(recipe.v2CraftSupported()).isTrue();
+            assertThat(catalog.resolve(session, recipe.recipeRef(), recipe.fingerprint()).orElseThrow().layout())
+                    .containsExactly(List.of("minecraft:milk_bucket"));
+        }
     }
 
     @Test

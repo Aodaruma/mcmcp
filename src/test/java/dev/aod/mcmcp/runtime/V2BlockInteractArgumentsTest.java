@@ -54,6 +54,29 @@ class V2BlockInteractArgumentsTest {
     }
 
     @Test
+    void desiredLeverStateIsIdempotentAndKeepsItsOrientationForConfirmation() {
+        var request = V2BlockInteractArguments.parse(Map.of(
+                "target", "block", "x", 0, "y", 64, "z", 0,
+                "block", "minecraft:lever", "expected_after_properties", Map.of("powered", "true")),
+                "minecraft:overworld");
+        var before = new BlockStateFingerprint("minecraft:lever",
+                Map.of("face", "wall", "facing", "north", "powered", "false"));
+        var desired = new BlockStateFingerprint("minecraft:lever",
+                Map.of("face", "wall", "facing", "north", "powered", "true"));
+        assertThat(MinecraftV2BlockInteractDriver.desiredLeverState(request, before)).isEqualTo(desired);
+        assertThat(MinecraftV2BlockInteractDriver.desiredLeverState(request, desired)).isEqualTo(desired);
+        assertThat(MinecraftV2BlockInteractDriver.matchesExpected(request, before, desired)).isTrue();
+        assertThat(MinecraftV2BlockInteractDriver.matchesExpected(request, before,
+                new BlockStateFingerprint("minecraft:lever",
+                        Map.of("face", "wall", "facing", "south", "powered", "true")))).isFalse();
+        var rawUse = V2BlockInteractArguments.parse(Map.of(
+                "target", "block", "x", 0, "y", 64, "z", 0), "minecraft:overworld");
+        assertThat(MinecraftV2BlockInteractDriver.desiredLeverState(rawUse, desired)).isNull();
+        assertThat(MinecraftV2BlockInteractDriver.desiredLeverState(request,
+                new BlockStateFingerprint("example:machine", before.properties()))).isNull();
+    }
+
+    @Test
     void rejectsUnboundedOrUnknownRequests() {
         assertThatThrownBy(() -> V2BlockInteractArguments.parse(Map.of(
                 "target", "entity", "x", 0, "y", 64, "z", 0),

@@ -17,6 +17,38 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class V2BlockJobExecutionTest {
     private static final UUID SESSION = UUID.randomUUID();
+    @Test void alreadySatisfiedInteractionIsObservedWithoutDispatchOrConfirmedMutation() {
+        var store = new AgentJobStore();
+        var id = store.reserve(AgentJobStore.Kind.INTERACT, SESSION, 10, 100);
+        var request = V2BlockInteractArguments.parse(Map.of(
+                "target", "block", "x", 0, "y", 64, "z", 0,
+                "block", "minecraft:lever", "expected_after_properties", Map.of("powered", "false")),
+                "minecraft:overworld");
+        var state = new BlockStateFingerprint("minecraft:lever", Map.of("powered", "false"));
+        var driver = new V2BlockJobExecution.Driver<V2BlockInteractArguments>() {
+            public String dimension() { return "minecraft:overworld"; }
+            public V2BlockJobExecution.BeginResult begin(NavCell cell,
+                    V2BlockInteractArguments value, BooleanSupplier allowed) {
+                return V2BlockJobExecution.BeginResult.SKIPPED;
+            }
+            public V2BlockJobExecution.StepResult tick(long tick, BooleanSupplier allowed) {
+                throw new AssertionError("already satisfied must not dispatch");
+            }
+            public V2BlockJobExecution.ConfirmedChange confirmedChange() {
+                return new V2BlockJobExecution.ConfirmedChange(state, state);
+            }
+            public void close() { }
+        };
+        var job = new V2BlockJobExecution<>(store, id, SESSION,
+                AgentJobStore.Kind.INTERACT, request, driver, () -> true);
+        store.confirm(id, 1);
+        job.tick(SESSION, 1, 1, true, () -> true);
+        var terminal = job.tick(SESSION, 2, 2, true, () -> true);
+        assertThat(terminal.state()).isEqualTo(AgentJobStore.State.SUCCEEDED);
+        assertThat(terminal.completedOperations()).isZero();
+        assertThat(terminal.result()).containsEntry("confirmed_count", 0).containsEntry("observed_count", 1);
+    }
+
     @Test void leaseDiagnosticsSurviveConfirmedPlacementAndFailedCleanupWithoutReplay() {
         for (boolean placed : List.of(false, true)) {
             var store = new AgentJobStore();

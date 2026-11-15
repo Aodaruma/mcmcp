@@ -1,6 +1,6 @@
 # MCMCP NeoForge — Minecraft MCP Client MOD 設計・仕様書
 
-> この文書の公開Tool・Action DSLに関する記述は、現在のv1実装と既存試験の仕様を記録するものです。公開API v2の開発目標は[PUBLIC_API_V2.md](PUBLIC_API_V2.md)を優先します。v2の実装・検証が完了するまで、両者を同じ公開機能として扱いません。
+> この文書の公開5 Tool・Action DSLに関する記述は、旧v1実装と既存試験の仕様記録です。0.2.0-rc.1の公開面は17ツールのv2へ移行し、[現行catalog](MCMCP_MCP_Tool_Catalog.json)・[公開API v2](PUBLIC_API_V2.md)・[クイックガイド](MCMCP_Public_API_v2_クイックガイド.md)を優先します。旧DSLを現行の公開機能として扱わず、[受入範囲と残件](experiments/20261115_release_rc1.md)を参照してください。
 
 - 文書版: 0.8
 - 作成日: 2026-08-26
@@ -715,20 +715,26 @@ Toolの規範的なname、description、inputSchema、outputSchemaは別紙`MCMC
 
 #### 8.5.1 Observation frame
 
+`frame_id=null,cursor=null`の初回pageは、同じ同期境界で最新のpublish済みimmutable frameを選び、responseへ具体的な`frame_id`を返す。まだ完成frameがなければ`NO_FRAME`を返す。この選択は観測capture、完成tick、鮮度、配送ACK、TTL、fog、JITを更新せず、続きpageは返却された具体IDと`next_cursor`で同じframeへ固定する。具体IDを指定する従来の初回pageも維持する。
+
 `agent_get_state.observation`は、大量の観測recordそのものではなく、`latest_frame_id`、設定観測半径、全方位対応、oldest/newest tick、`sampling_coverage=1`、返却可能なkind別件数、sound切り捨て有無だけを返す。`record_counts.visible_surface`はray face総数ではなく、後述の代表面圧縮後に返却できるunique block position数である。方向ごとの実効終端は`unknown_boundary`で示し、単一の実効半径へ丸めない。world未参加時と最初の完成frame生成前はnullとする。
 
 全周visualは既定8 active ClientTick、設定変更時は`ceil(2048 / rays_per_tick)` tickで1 immutable frameを完成させる。完成前のframeを公開せず、内部rolling保持は最新2 frameとする。これとは別に、`agent_get_state`がLLMへ告知した`latest_frame_id`を最大16件、合計65,536 record以下のLRU handleとして保持する。同じIDの再告知またはそのIDによる初回page取得でidle期限を更新し、最終accessから60秒、handle件数またはrecord予算超過時のLRU evictionで失効する。
 
 `cursor=null`の初回pageが続きpageを必要とする場合だけ、そのframeを別のpagination leaseへpinする。未完了leaseは同時最大2件で、上限中の3件目は`SERVER_BUSY`を返す。`next_cursor=null`の最終pageを生成したleaseは即座に未完了枠を解放するが、同じcursorの再送へ同じpageを返すため、完了leaseを最終access順のLRU最大2件だけ保持する。3件目の完了時は最終accessが最も古い完了leaseと全cursorを破棄し、以後の再送は`INVALID_CURSOR`とする。未完了・完了とも最終accessから60秒、初回accessから最大5分で失効し、時間は`System.nanoTime`で測る。これにより保持量を固定上限へ抑えながら、frame生成速度とLLMの推論待ちを分離し、読み切ったqueryが次のpaginationを不必要に阻害しない。announced handle、rolling frame、pagination leaseのいずれにも保持されないIDは`FRAME_EXPIRED`を返す。world unload、respawn、dimension変更で全frame、announced handle、lease、cursorを破棄する。
 
+未完了pageを読み捨てる場合は、同じ`agent_get_observation`へpage query fieldを付けず`schema_version=1`と`release_cursor`だけを渡し、そのcursorが属する未完了leaseと同leaseの全cursorを明示解放できる。成功は`release_status=released`を返し、観測pageとして扱わず配送receiptを作らない。既に最終pageまで完了したcursorは`release_status=completed`を副作用なしで返し、完了replay leaseのLRU順・idle/absolute期限を更新しない。不明・期限切れ・LRU破棄済み・別world sessionのcursorは区別せず`INVALID_CURSOR`とする。解放は指定cursorのleaseだけを破棄し、他queryのlease、announced frame、rolling frame、配送済みsurface認可、未確認配送、配送ACK、cursor期限、座標証拠TTLを更新しない。`release_cursor`と`frame_id`、`kinds`、`filter`、`cursor`、`limit`の混在はschema違反とする。
+
 `agent_get_observation`入力:
 
-- `frame_id`: `agent_get_state`が返したID
+- `frame_id`: `agent_get_state`が返した具体ID、または初回かつ`cursor=null`で最新publish済みframeを原子的に選ぶ`null`
 - `kinds`: `visible_surface / visible_entity / traversability / hazard / unknown_boundary / sound_clue`の1〜6種
 - `filter`（任意）: `block_ids / entity_types / displayed_items / crop_mature / position_bounds`のうち1項目以上。すでにpolicy許可されたrecordを除外するdelivery projectionであり、観測範囲や認可範囲は拡張しない。record kindに適用可能な条件同士はANDとする
 - `position_bounds`: `{dimension,min_x,min_y,min_z,max_x,max_y,max_z}`の単一inclusive整数block-coordinate box。各軸で`min <= max`を要求し、任意center/radiusや複数領域は受け付けない。anchorは`visible_surface.position`、`visible_entity / hazard / unknown_boundary / sound_clue`の`floor(position)`、`traversability.navigation_target`とする
 - `cursor`: 初回null、続きは直前の`next_cursor`
 - `limit`: 1〜256件
+
+または明示解放専用形として`schema_version=1`と、放棄するleaseが返したopaqueな`release_cursor`だけを渡す。
 
 返却recordは第7章の許可条件に従い、responseには`frame_completed_tick`を含める。1回のroot queryは1目的を原則とし、作物・container・gate・建築copy sourceは`visible_surface`、落下物は`visible_entity`、移動は`traversability`を要求する。作物収穫は`block_ids=[minecraft:wheat], crop_mature=true`、小麦drop回収は`entity_types=[minecraft:item], displayed_items=[minecraft:wheat,minecraft:wheat_seeds]`のprojectionを利用できる。`visible_surface`はblock positionごとに1件へ圧縮する。植付けsupportとなるfarmlandはUPを優先し、それ以外は実ray hitが近い面を代表にする。surfaceの返却順は`crop_mature=true`、`crop_mature=false`、非作物の3群とし、各群では観測距離が近いものを先にする。複数kindを同時要求した場合は、`visible_entity / traversability / hazard / visible_surface / sound_clue / unknown_boundary`の固定順で各kindから1件ずつround-robinし、1種類がpageを占有しないよう公平にinterleaveする。
 
@@ -791,6 +797,7 @@ Action DSL v1の制御構造:
 | apply_known_redstone_spec | camera, block_interact, block_place | 固定lever→lamp 1出力、2出力fan-out、または1 dustの直線identityを設置し、live visualでOFF / ON / OFFを試験する。wire版はlamp / dust / leverの可視glass supportとdustの直線shape・power 0 / 15 / 0も完全一致させる |
 | open_known_fence_gate | camera, block_interact | 可視・既知の閉じたoak fence gate 1個だけを空手の通常useで開き、open=trueを確認 |
 | open_known_passage | camera, block_interact | 可視・既知の木製door / trapdoor / fence gate 1個を通常useで開く。doorは上下2 halfのauthoritative open=trueを確認 |
+| set_known_lever | camera, block_interact | 単独top-level node。配送済みの完全な可視stateを持つVanilla lever 1個を希望するpoweredへ設定。元配送lease・現在fog/LOSを通常use直前と操作不要の成功前にも再検証し、欠測は元期限内だけ待機。不一致・期限切れは操作せず失敗。送信済みACK/cleanupへ逆適用せず、通常use 1回とserver ACKで確認 |
 | inspect_known_container | camera, inventory_transfer | 可視・既知かつreach内の明示allowlist対象Vanilla chest / barrelを通常useで開き、server full-content由来のitem別集計をAction traceへ返す |
 | take_known_container_stack | camera, inventory_transfer | 同じcontainerから指定itemを移送。既定は最大14 whole stacks・896個、transfer_count指定は今回の正確な追加数量。各server ACKと最後1回のfull readbackで確認 |
 | store_known_container_stack | camera, inventory_transfer | playerの指定itemを同じcontainerへ最大14 whole stacks・896個まで移し、各server ACKと最後1回のfull readbackでcontainerの絶対個数を確認 |
@@ -1009,6 +1016,7 @@ templateは`agent_start_action.inputSchema.examples`に掲載し、実装reposit
 - [`break_known_oak_column.json`](action-templates/break_known_oak_column.json): 地上から届く、現在可視な3段oak幹を下から順に破壊する
 - [`wheat_cycle.json`](action-templates/wheat_cycle.json): 2区画をmutation batchで耕し、植え、有限成熟待機後に収穫する
 - [`open_known_passage.json`](action-templates/open_known_passage.json): 可視な木製通路を開く
+- [`set_known_lever.json`](action-templates/set_known_lever.json): 完全な可視stateから既設レバーを指定ON/OFFにする
 - [`inspect_known_container.json`](action-templates/inspect_known_container.json): 明示allowlist対象のVanilla chest / barrelのserver同期済み内容を確認する
 - [`take_wheat_seeds_stack.json`](action-templates/take_wheat_seeds_stack.json): wheat seedsをwhole stack 1回だけ取得する
 - [`copy_known_oak_beam.json`](action-templates/copy_known_oak_beam.json): 完全なoak log stateを90度回転し、現在supportと先行entry dependencyで2 blockの水平梁を設置する
@@ -1092,6 +1100,16 @@ agent_get_stateの返却対象:
 
 生chunk、遮蔽されたentity、本、world seed、tokenはTool resultへ含めない。chat・看板と任意client NBTは§7.6のv2拡張で定める有界な未信頼データとしてのみ公開する。例外としてautomation-ownedな明示allowlist対象Vanilla chest / barrelを通常useで開いた直後のserver full-content packetから作るbounded item集計だけは、そのActionのtraceへ一時的に返せる。許可された観測recordだけを`agent_get_observation`で最大256件ずつ返す。Action traceはagent_get_actionで最大256件まで返す。既に行った移動、破壊、設置、攻撃、item消費はtransactionではなく、cancel時に自動rollbackしない。不可逆primitiveは実行直前にも観測、capability、budgetを再検証する。
 
+#### 手持ちアイテムの公開情報
+
+`agent_get_state.held_items` は現在選択中のhotbar番号（0〜8）と `main_hand` / `off_hand` のimmutable snapshotを返す。world/player不在では全体が `null`、空手はそのhandが `null`。既存 `inventory` は品目IDと合計数の集計を維持する。同種の道具を複数持つ場合も、手持ちの個体を集計から推測しない。
+
+各handはitem ID、個数、表示名、耐久値（`damage` / `maximum` / `remaining`）、エンチャントIDとlevel、現在のhandで表示される標準数値の属性modifierを公開する。要求時に通常のadvanced tooltipを生成し、NeoForge `ItemTooltipEvent` 適用後の最終表示に一致する項目だけを採用する。tooltip本文、lore、任意NBT、component blob、click/hover eventは返さない。表示名は信頼しないデータとして扱う。
+
+耐久値は数値行が見える場合だけ返すため、新品、非耐久品、破壊不能、表示非公開、取得不能では `null` とする。`unbreakable` は表示を確認した `true` または不明の `null`。数値の上書き表示、非表示属性、player基礎値と合算される攻撃力・攻撃速度、表示で丸め落とされる精度は公開しない。属性は最終player能力値や採掘速度ではなくmodifierの値であり、Efficiency Vの標準表示なら採掘効率 `+26` を含む。
+
+非公開/不明の一覧は `null`。空配列は返せる項目がないことを表し、すべての効果の不在を保証しない。文字列256 UTF-16単位、一覧64件、照合するtooltip256行までに制限し、長すぎる表示名は省略する。長すぎるitem IDは `null` とし、制限・取得不能は `truncated` で示す。`tooltip_hidden` は標準componentの全体非表示フラグを表す。道具交換や使用後は再取得し、このsnapshotを後続操作の認可や、耐久力/修繕込みの残作業時間の保証に使わない。
+
 ### 8.6 内部Task state
 
 ~~~text
@@ -1137,6 +1155,7 @@ domain errorのTextContentは次のJSON objectを1件だけ直列化する。sch
 - CAPABILITY_DENIED
 - SERVER_BUSY
 - ACTION_NOT_FOUND
+- NO_FRAME
 - FRAME_EXPIRED
 - INVALID_CURSOR
 
@@ -1320,6 +1339,16 @@ Phase 3完成時に追加する上限:
 
 ### 9.7 crafting・精錬・workstation・MOD互換 — Phase 4
 
+レシピ参照の `mcmcp-client.toml` 設定 `recipe_scope` は `UNLOCKED`（**解放済みのレシピのみ**）を既定とし、`ALL_CRAFTABLE`（**すべての作成可能なレシピ**）へ切り替えられる。「作成可能」はワールドで有効なレシピの参照方針であり、全件取得、手持ち材料・設備の充足、自動craft対応を意味しない。ゲーム内の解放状態は変更しない。
+
+追加情報源はNeoForge 26.2.0.59の公開 `RecipesReceivedEvent` だけとする。既存MODが通常同期したrecipe型の `Recipe.display()` を読み、MCMCP側からserver companion・独自handshake・同期要求を追加しない。JEI固有API・内部cache・integrated serverのRecipeManager・ローカルdatapackは参照しない。同期しない環境でも既存recipe bookを利用できる。追加MODの導入は自動で行わない。
+
+`recipe_query.coverage` は設定名、主情報源と追加情報源、追加同期の利用不能／部分取得、受信型、表示を得られなかったrecipe数、上限打切り、固定失敗フラグを返す。`complete=false`・`absence_proven=false` を維持し、検索0件を不存在と断定しない。受信recipeは最大4,096件、displayは16,384件、公開型名は128件に制限する。表示のない特殊recipeは件数に含めて省略する。追加経路はレシピブックとの重複を含み得るため、既存情報源を優先して検索結果を返す。
+
+各recipeの `supported` は従来の自動craft対応判定であり、材料・設備の現在状態はそれぞれ `materials_status=not_assessed`・`equipment_status=not_assessed` と明示する。追加情報源はすべて `supported=false`、`unsupported_reason=client_synced_lookup_only` とし、実行用resolveでも拒否する。成分継承・独自材料を通常craftとして実行せず、材料表のない表示から材料を推測しない。追加情報源のingredientsは空であり、材料不要を意味しない。
+
+設定切替、接続・world/session境界、公開同期の再受信、既知display内容・結果tag変更でrevision／参照を失効させる。同期済み表示は接続instanceに束縛し、同接続のdimension変更・respawnでは新sessionで参照を再発行する。disconnect／shutdownで受信情報を破棄する。実機のMagnet upgrade取得とJEI固有表示の網羅性は未確認であり、対応完了の証拠にしない。調査根拠と検証条件は [Issue #71の記録](experiments/20260927_issue71_recipe_scope.md) に残す。
+
 現在の公開Action DSLは、既存のrecipe / container / screen同期基盤を直接再利用したcrafting-table限定の`craft_known_recipe`、furnace familyでexact stack 1〜64個を処理する`smelt_known_recipe`、共通Menu kernelの`operate_known_menu`を含む。最後のものは、ユーザーが現在開いているexactなVanilla `generic_9x1`〜`generic_9x6`純storage、または`Sophisticated Backpacks 3.25.90 + Sophisticated Core 1.4.99`の通常`backpack`画面だけを受理し、stateが発行したsingle-use `operation_ref`で通常最大数以下の1 stack全量をplayer inventoryへQUICK_MOVEする。player 2×2、専用workstation、backpack内upgrade / craft / smeltは未実装であり、製品機能として利用可能とは扱わない。
 
 公開Toolは5件のままとし、クラフトやworkstationごとのMCP Tool、raw slot番号・画面座標・key/mouse・packetを追加しない。recipe検索は既存のquery / output / resolve契約を固定5 Toolのread pathへ委譲し、第二の検索文法を作らない。`recipe_ref`とfingerprintはworld sessionとrecipe catalog revisionへ束縛し、`craft_known_recipe`開始時と各craft前に再解決する。実行は`agent_start_action`の閉じたsemantic opcodeだけを使う。
@@ -1362,9 +1391,19 @@ MOD menuは次の2種類に分ける。
 
 すべてのadapterは、通常use / menu openの因果ACK、exact menu ownership、cursorを変化させるclick直前のcursor証明失効とfresh server cursor証明、cursor-invariantなQUICK_MOVEでは直前のserver-confirmed empty cursor維持、絶対inventory差分、有限budget、Esc / UI OFF / world境界、terminal前のScreen・cursor・camera・slot解放を9.6と共通の必須条件とする。途中まで消費・生成されたitemをrollbackしたふりはせず、最初のterminal intentとauthoritative inventoryを保持する。cleanupが証明できない場合は成功・失敗を公開せず、入力隔離を維持してfail closedにする。
 
-#### 9.7.1 共通収納操作への拡張方針（計画・未実装）
+#### 9.7.1 共通収納操作（#70候補・実機未検証）
 
-利用者の方針変更を受け、[Issue #70](https://github.com/Aodaruma/mcmcp/issues/70)ではMODを限定しない収納操作を実装する。既存の共通Menu基盤を拡張し、バックパック専用Toolや独立した転送エンジンは作らない。Sophisticated Backpacksは最初の検証対象とする。ここに記載するMCPからのバッグ開閉、MOD収納の指定個数移送、拡張stack対応は、現時点で利用可能な機能ではない。
+v2の公開経路は`agent_inventory(target="storage", storage_slot=...)`と座標収納操作であり、以下の旧DSL用`known_storages`／`storage_inspection` stateは公開しない。共通provider・移送・cleanup実行器を再利用し、v2のplaced bag・PICKUP容量・保護slot・R23の解放契約を維持する。
+
+利用者の方針変更を受け、[Issue #70](https://github.com/Aodaruma/mcmcp/issues/70)で既存の共通Menu基盤を拡張した。公開Toolは5本のまま、既存`operate_known_menu`へ汎用の`inspect` / `take` / `store`を追加する。MODごとの移送エンジンは作らず、Vanillaの`ExactInventoryTransfer`を両方向の数量計画・照合に再利用する。本節は候補実装の仕様であり、mainの配布版および実機合格とは区別する。
+
+`agent_get_state.known_storages`は現在の所持・装備にある対応収納を最大16件返す。`storage_id`は同一session内で同じ個体を識別するopaque ID、`operation_ref`は現在の位置とstack・player・sessionへ結び付いた1回限りの操作参照である。内容確認後は同じ`storage_id`の新しい`operation_ref`を取得する。参照期限は1,200tick、対象移動・交換・成分変更では期限内でも拒否する。内部のbag UUIDや任意NBTは公開しない。
+
+`operation:"inspect"`では開封→server full-content→空cursorと閉画面を確認し、直近1件の内容を`storage_inspection`へ保持する。結果はstorage ID、消費した参照、実観測tick、packet revision、slotごとのitem/countを持つ履歴であり、再操作の認可ではない。`operation:"take"|"store"`では`item`と`transfer_count`（1..896）を必須とし、同一componentsの固定計画が14click以内で証明できる場合だけ進める。別componentsを合算して数量を満たさない。移送後は同一個体を再開封して全slotの保存則を照合し、閉じる。取り出し・格納は80秒/1,600tick/16interaction、inspectは30秒/600tick/1interaction、移動・camera・破壊・設置は0である。
+
+初期providerは既存のversion/hash固定Sophisticated Backpacks + Coreである。Vanillaの36所持slot、胸装備、offhandを発見し、MOD本来の対象指定開封を呼ぶ。UUID未初期化のバッグ、入れ子・linked storage、独自装備API、worldに設置されたMOD収納の自動開封は今回のproviderの対象外。通常のVanilla chest/barrelと手動で開いた既知menuの従来操作は維持する。通常menu参照に`operation`を付けて数量移送する拡張は未対応であり、数量操作では`known_storages`の参照を使う。
+
+NeoForgeの追加データ付きopenとproviderのfull/slot同期を共通packet ledgerへ接続する。providerが`menu.slots`の外へ持つupgrade slotも全体snapshotへ含め、protectedとして変更を拒否する。storageは最大512slot、全同期slotは最大1,024。open upgrade / extra slots、取り出せないslot、overflow消費hookがある構成は移送を拒否する。未知のversion・class・同期規則は有効化しない。
 
 | 境界 | 担当する処理 |
 | --- | --- |
@@ -1372,11 +1411,11 @@ MOD menuは次の2種類に分ける。
 | 収納の契約 | storage / player / protectedの役割、取り出し・格納可否、item/components、slot容量、通常／拡張stackのclick規則、同期・readback方法を表す。slot順序やplayer slotの位置を操作本体の前提にしない |
 | 共通の実行 | 参照の再検証、個数計画、通常click、fresh server slot/cursor確認、保存則、confirmed/unknown台帳、有限予算、取消・解放を共有する。MOD名・class名・JAR hashの分岐をここへ置かない |
 
-利用者向けには「収納を選ぶ→開く→内容を確認する→指定数を取り出す／格納する→閉じる」を同じ流れで扱う。手動で開いた対応画面にも同じ移送処理を使えるが、手動開封だけでは本対応の完了条件を満たさない。同種のバッグが複数ある場合も、選択後の移動・持ち替え・交換で別の個体を操作しないよう、対象参照を再検証する。
+利用者向けには「収納を選ぶ→内容を確認する→指定数を取り出す／格納する」を同じ流れで扱い、開閉は各Actionに含める。将来のproviderと手動開封・world収納の数量操作もこの共通実行へ接続する。同種のバッグが複数ある場合も、選択後の移動・持ち替え・交換で別の個体を操作しないよう、対象参照を再検証する。
 
 標準の収納契約で扱える画面は共通処理へ載せ、固有の開き方やstack更新規則だけを小さな連携部分で補う。slot数や表示名から未知の画面を純storageと推測せず、加工結果、購入、upgrade、ghost等の操作は収納から分離する。既存profileのversion/hash確認は互換性を検証して移行するまで維持する。新しいMODへ対応するときに数量移送処理を複製する必要をなくすことが目的であり、未検証のすべてのMODへの自動対応を保証するものではない。
 
-Vanillaの`transfer_count`で使う`ExactInventoryTransfer`は共通数量計画・照合の再利用元とする。ただし現在は通常stackと最大14clickのモデルであり、拡張stackには専用のclick規則・上限と同期証拠の検証が必要になる。読み取り、全量移送、指定数移送、拡張stack対応の能力を区別し、未対応操作を実行可能と表示しない。取消時の無条件なcursor救済や未知clickの再送を共通化に含めない。正常終了では空cursorと画面解放を確認し、途中停止では確認済みの移送と不明な結果を保存し、安全な解放を証明できなければ既存の停止方針を維持する。
+`ExactInventoryTransfer`はMenuのPICKUP規則に従い、空cursorの左clickではslot全量、右clickでは半量を持ち上げる。拡張stackではcursorが一時的に通常の最大stack数を超えるため、その状態も各clickで照合する。どちらか一方が通常player slotである組合せだけを有限探索し、14click以内に空cursorへ戻せない数量は実行前に拒否する。slot役割の順序に依存せず、protected slotも毎clickの照合に含める。各clickの前に全slot/cursor、後にfreshなslotと独立したcursor packetを要求する。途中停止では確認済みprefixと結果不明のclickを既存effect台帳へ別々に一度だけ記録する。取消時の無条件なcursor救済や未知clickの再送はしない。開封応答待ちの取消は遅れて来る画面の後片付けまで保持し、空cursor・閉画面を証明できなければOFF lockを維持する。
 
 受入試験はVanillaとMOD収納の異なる実装・slot配置、装備中と所持品内、同種バッグ2個、両方向の指定数移送、拡張stack、容量不足、成分違い、自動補充、対象移動、同期遅延・欠落、各中断境界を含む。単体・結合試験と、利用者が許可したリモートDocker検証環境での軽い実機試験を分けて記録する。コード・候補JARの共有、実機合格、Release公開も別の完了状態とする。
 
@@ -1739,8 +1778,8 @@ mmc-pack.json、既存MOD、world、server設定は書き換えない。
 - agent_get_stateがtop-level `standard_potions` を`[{item,potion,count}]`で返し、自inventoryの標準component完全一致の1本stackだけをitem+potionで集計し、custom Potion、不可能な複数本stack、stand内容を含めない
 - agent_get_stateのoptional `merchant_offers`は現在のVanilla MerchantScreen、player menu、world session、container ID、open packet revisionがlatest merchant packetと一致する場合だけ現れ、typed取引factsと解決済みstored enchantment ID / levelだけを返し、raw slot / component / NBT / lore / text / 未解決IDを含めない
 - agent_get_stateで告知したframe IDはidle 60秒、最大16件のLRU上限内で保持され、上限超過とworld境界で確実に失効する
-- agent_get_observationは任意center/radiusを受け付けず、同じframe_idのpage内容がframe保持中に変わらない
-- 最大256件でpage分割し、壊れたcursorはINVALID_CURSOR、保持外frameはFRAME_EXPIRED
+- agent_get_observationは任意center/radiusを受け付けず、初回の`frame_id=null,cursor=null`は最新publish済みframeを原子的に選んで具体IDを返し、同じframe_idのpage内容がframe保持中に変わらない
+- 最大256件でpage分割し、frame未生成はNO_FRAME、壊れたcursorはINVALID_CURSOR、保持外frameはFRAME_EXPIRED
 - page継続中のframeはleaseでpinされ、rolling frame更新後も同じcursor再送が同じpageを返す
 - visible_surfaceはunique block positionごとの代表面へ圧縮され、mature crop、immature crop、その他の順、各群内は近距離順となる。複数kindはround-robinで公平に混在する
 - visible_surfaceはrequired nullableな`state / placement_item`を常に返し、完全stateは閉じたcopy/support allowlistだけ、対象外はnull、非null stateでは`block == state.block`、`placement_item != null`では`state != null`となる
@@ -2068,6 +2107,37 @@ repository作成直前に、選択したowner配下で`mcmcp`が作成可能か�
 ### チャットから期待したコンテナへの画面遷移
 
 NeoForge 26.2の画面切替は新画面のOpeningの後に旧画面のClosingを通知する。通常操作を許可する非pause ChatScreenから、正確なOpenScreen packetに対応したmenuへ切り替わる場合だけ、EXPECTING_FULL_CONTENTへ進んだ同じclient tick内の旧chatのClosingを1回許可する。所有権は同じsession・container ID・menu typeのfull-content packet確認後に限る。期待前・別tick・重複のchat閉鎖、所有済みコンテナの予期しない閉鎖、別menuのopenは引き続き停止する。
+
+
+## 対象の再生成を待つ有限長押し
+
+`hold_bounded_inputs` は有限時間だけ入力を保持します。`target_guard` の座標・面は最新の配送済み観測からコピーし、`expected_state` は省略しません。完全stateがあればそのまま指定し、`state:null` なら `expected_state:null` と観測のblockをコピーした `expected_block` を指定します。両方にblock IDがある場合は一致が必須です。非公開propertyを推測する必要はありません。
+
+`target_guard.match_face` の既定は `true` で、観測面と実際のcrosshair面も一致させます。雪の採掘などでは `match_face:false` を明示すると、同じ座標・blockへ実際に当たった別の面を許可できます。`face` は観測記録の値として引き続き必須です。許可する入力は `attack` または `attack` と `sneak` の組合せだけで、面により効果が変わる `use` ではfalseを拒否します。通常reach、実BLOCK hit、loaded/world border、手持ち、静止・安全条件、非null時の完全state一致は維持します。実際に当たった面をVanillaへ渡し、照準や面を合成しません。
+
+既定の `repeat_target:false` は厳密停止です。現在のcrosshairが座標・block・指定state（`match_face:true` では面も）から外れると拒否を保持し、同じAction内では再開しません。
+
+`repeat_target:true` と有限の `duration_ticks` を明示すると、同じActionの中で対象の再生成を待てます。対象消失、MISS、entity、別の座標・block・state（`match_face:true` では別の面も）への照準中は新しい採掘・使用を出さず、同じ対象条件が戻ると再開します。照準を自動で動かしません。開始済みの弓・飲食等の使用は一時的な対象不一致だけでは解除せず、次の使用開始には改めて一致を要求します。
+
+回数指定の `max_repetitions` は廃止しました。反復モードでは1 client tickにつき最大1回の新規開始とし、`duration_ticks` から必要な試行枠を算出します。`budget.max_interactions` と、attackでは `budget.max_blocks_broken` に、それぞれ `duration_ticks` 以上を指定してください。時間分に満たない予算は実行前に拒否し、受理したActionを64回・2,048回など時間と独立した回数上限で打ち切りません。最大時間は1,728,000tick・86,400,000ms（24時間）です。通常のVanilla採掘・使用の新規開始ごとに1 interactionを記録し、継続・cooldown・待機tickは追加消費しません。同一tickの重複開始や予算を超える開始は送信前に拒否します。旧 `max_repetitions` fieldと移動だけの反復は拒否します。他のActionの予算上限は変更しません。
+
+例えば、観測済みの雪を現在の照準で最大60tickだけ採掘するnodeは次の形です。座標・面・block・手持ちは実観測から置き換え、programの唯一のbody nodeとして `block_break` capabilityで提出します。
+
+```json
+{
+  "id": "hold_attack", "op": "hold_bounded_inputs", "inputs": ["attack"],
+  "duration_ticks": 60, "repeat_target": true,
+  "target_guard": {
+    "target": {"dimension": "minecraft:overworld", "x": 204, "y": 200, "z": 194},
+    "face": "south", "match_face": false, "expected_state": null, "expected_block": "minecraft:snow"
+  },
+  "selected_item": "minecraft:wooden_shovel"
+}
+```
+
+この例のbudgetは `max_duration_ms:3000`、`max_ticks:60`、`max_interactions:60`、`max_blocks_broken:60`、その他の枠は0です。待機も元の時間・tick予算へ数え、対象復帰で期限を延長しません。実際のsimulation pauseは既存規則通り入力を中立化してactive timeを凍結し、再開時に検証します。
+
+位置・手持ち変更、reach外、health低下、Screen・overlay、安全中断、Esc、OFF、cancel、期限、world/session変更では既存の入力解放経路へ進みます。 対象照合の固定診断は `bounded_input_target_not_focused`、`target_position_changed`、`target_face_changed`、`target_block_changed`、`target_state_changed`、`target_unloaded`、`target_outside_world_border`、`target_out_of_reach`（後続も同じ `bounded_input_` 接頭辞）に分け、面不一致を距離外等と混同しません。入力開始直前にも再検証し、例外や安全違反は解除までラッチします。開始回数は保守的な試行数であり、破壊成功数・回収数・server確認済みeffectではありません。道具交換・耐久保護・収集量保証はありません。
 
 ## 外部平面施工runnerとworld session
 

@@ -15,6 +15,13 @@ class McmcpClientConfigTest {
         assertThat(((ModConfigSpec.ConfigValue<?>) values.get("recovery_waystone_destination")).getDefault()).isEqualTo("");
     }
     @Test
+    void recipeScopeKeepsBackwardCompatibleDefaultAndExactUserLabels() {
+        var scope = (ModConfigSpec.EnumValue<?>) McmcpClientConfig.SPEC.getValues().valueMap().get("recipe_scope");
+        assertThat(scope.getDefault()).isEqualTo(dev.aod.mcmcp.observation.RecipeScope.UNLOCKED);
+        assertThat(dev.aod.mcmcp.observation.RecipeScope.UNLOCKED.label()).isEqualTo("解放済みのレシピのみ");
+        assertThat(dev.aod.mcmcp.observation.RecipeScope.ALL_CRAFTABLE.label()).isEqualTo("すべての作成可能なレシピ");
+    }
+    @Test
     void exposesRequiredPhaseOneClientSettingsWithSafeDefaults() {
         assertThat(McmcpClientConfig.DEFAULT_HUD_OFFSET).isEqualTo(8);
         var values = McmcpClientConfig.SPEC.getValues().valueMap();

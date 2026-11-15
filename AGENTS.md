@@ -20,6 +20,8 @@
 - Action不在の待機中に利用者入力を繰り返し解放しない。手動操作、MCP READY、稼働中のActionを区別する。
 - 斜めの地上移動は、角の支持・観測した実際の姿勢の高さのcorridor・現在revisionの証拠を確認し、各tickの最終安全判定を維持する。
 
+- 有限長押しのtarget_guardは観測済み座標・ブロック種と現在の実BLOCK hitを照合する。面一致は既定trueとし、attackだけ明示match_face:falseで省略できる。useではfalseを拒否し、reach・手持ち・安全条件は維持する。expected_state:nullは明示expected_blockを必須とし、完全state指定時は従来通り全property一致を要求する。nullを無対象入力やhidden propertyの推測に使わない。既定は対象不一致で厳密停止する。明示した反復モードだけは新規入力を抑止して同一対象の復帰を待つ。開始済みuse、時間由来の開始予算、解放条件は設計仕様書を正本とする。
+
 ## 作業と検証
 
 - 変更はIssue単位の専用branch/worktreeで進め、共有`main`を直接編集・pushしない。他担当のworktreeや現場ゲームへ割り込まない。subagentは使用しない。

@@ -33,6 +33,17 @@ class V2CraftPlanTest {
         assertThat(V2CraftPlan.create(request(5, true, true), recipe, Map.of("minecraft:oak_log", 2)).produced()).isEqualTo(8);
     }
 
+    @Test void syncedLookupOnlyDisplayCannotAuthorizeAPlanWithOrdinaryMaterials() {
+        var known = recipe("shapeless", 4, List.of(new ClientRecipeCatalog.IngredientView(
+                0, 1, List.of("minecraft:oak_log"))), null);
+        var lookupOnly = new ClientRecipeCatalog.RecipeView(known.recipeRef(), known.fingerprint(),
+                known.displayKind(), known.requiredScreen(), false, "client_synced_lookup_only",
+                new ClientRecipeCatalog.Result(false, known.result().alternatives()), known.ingredients(), known.shape());
+        assertThat(lookupOnly.v2CraftSupported()).isFalse();
+        assertThat(V2CraftPlan.create(request(4, false, true), lookupOnly,
+                Map.of("minecraft:oak_log", 64)).failure()).isEqualTo("unsupported_recipe");
+    }
+
     @Test void overlappingAlternativesDoNotStealTheOnlyUsableMaterial() {
         var ingredients = List.of(new ClientRecipeCatalog.IngredientView(0, 1, List.of("a", "b")),
                 new ClientRecipeCatalog.IngredientView(1, 1, List.of("a")));

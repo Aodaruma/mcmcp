@@ -1,0 +1,58 @@
+# v2とmain観測・レバー修正の統合候補
+
+- 専用branch: `integrate/v2-main-20261115`
+- v2基点: `19570604563bd183fbd17e5464f892bc668b6b67`
+- 初回merge元: `5015bb7f49ec0619ef45d73528d4cfb8530a0a79`（#88 cursor release、#89 atomic latest、#80 lever）
+- #35/#86/#87はこの初回候補に含まない。#91のflight source、常用設定、ゲームには触れていない。
+
+## 競合と接続
+
+6fileの競合を解消。公開catalogはv2の17toolと軽量state/default compact/NBT/各既存operationを残し、cursor releaseとnullable latestの閉じたschemaを合成した。通常pageだけにdelivery receiptを作り、release responseにはreceiptもblock-entity補足も作らない。compactもframe_id=nullでstore内のatomic latest選択へ渡す。
+
+v2のレバー操作は既存agent_interactのexpected_after_properties.poweredを目的状態として解釈する。通常reach内のfresh可視対象が同値ならuse/aim/hotbar/posture前にSKIPPEDし、before=afterをobserved_cellsへ残す。confirmed_countを増やさず、同値でも空hotbarを要求しない。変更時は既存通常useを1回だけ送り、server ACKとpowered以外のproperties不変を確認する。dispatch前に同値へ変わった場合もuseを省略する。明示条件なしの通常useは従来どおり。自動OFF・未知結果の再送を追加していない。
+
+legacy-action-tool-v1.jsonは非配布の共有実行器regression fixtureであり、mainのlever node/exampleだけを同期した。旧Action DSLを公開17toolへ戻していない。
+
+## 検証
+
+catalog/fixture JSON parse、PowerShell parse、競合marker/未解決indexなし、diff --checkを確認。Javaの新規回帰は、releaseでNBT readerを呼ばず混在fieldを拒否すること、レバー目的状態の同値/向き不変、no-opをconfirmed mutationへ数えないことを追加。既存atomic-latest/store/cursor test、compact/NBT/lightweight state/17tool testsを保持する。
+
+親の指示でこのPCのGradle/Java buildと実機は未実施。親review後、隔離build/CIと実機受入が必要。SkipJava source check結果と最終catalog hashはレビュー報告に記録する。
+
+SkipJava source checkは成功。Python transport 23、building 6、build-worker 6件とbuilding/capability/v2 runner mocksが成功した。最終catalog SHA256は484628a340682fdbe739e061bd51360a16b99f829c5cc3145bf5c47abb5bfeed、Tool surface SHA256は66406fcb52fb7d1678bc0f74585ccebe7ecc8e7ea7619c2b8e71e880e847179f。Java testsは未実行。
+
+## 第2段: main #35の追従候補
+
+初回統合は5346a03で保存・通常push済み。続いてb19f042をmergeし、9fileの競合を解消した。HeldItemViewの本体・単体testはmainのまま取り込み、v2ではsections=["held_items"]を明示したときだけcapture/返却する。軽量stateの既定player/hotbarと17toolを維持する。
+
+mainのbounded-input実dispatch・新規入力開始の課金・継続中use維持hookと、v2のuseMayStartによる弓の再開抑止を併存させる。AgentUseInputChannelはuseMayStartとallowsBoundedDispatchの両方を必要とし、cooldownと現在using判定の後だけbeginBoundedInputで開始課金する。v2既存MultiPlayerGameModeUseMixin、#92の弓解放InputReleaseControllerは保持し、追加の2bounded mixinも登録する。legacy fixtureはmainの22例・target_guard条件へ同期する。旧DSL結果のinteraction最大値もmainの1,728,000へ同期し、v2 job schemaは保持する。
+
+#86は非blocking lock修正中のため未取込み。#87も実機受入待ちで未取込み。この段階のJava/Gradleと実機は未実施。
+
+第2段のSkipJava source checkも成功（Python transport 23、building 6、build-worker 6件＋全building/capability/v2 runner mocks）。catalog SHA256はfb2823f202d73e4670528a88b3d3ba6d0c69268a405241d729bd33759f3a3169、Tool surface SHA256は77b6f92e708de0587fd2e7bed959af77135b3bccbf22a016d8c80ca32e167765。17tool、手持ちschema/sourceのmain一致、全schema参照、mixins重複不在・実class存在、flight/bow cleanup/craft無変更を追加確認した。
+
+## 初回full buildの契約test修正
+
+Java 1973件中1件が、attack aggregate上限へ入力開始progress用MAX_RECORDED_INTERACTIONSを流用した比較で失敗した。EffectAggregateの実runtimeはMAX_KILL_ZONE_ATTACKS=2048を維持しているため、schemaも2048のまま保持し、test比較定数をMAX_KILL_ZONE_ATTACKSへ修正した。2048は受け付け2049は拒否するschema境界回帰を追加する。入力progressの1728000とは別の結果カウンタであり、入力認可や攻撃上限を広げない。初回harness16件、admin29件、isolationは成功。対象testとfullを再実行する。
+
+限定McpToolCatalogTestは成功。続くfullのtest/harnessTest/adminBridgeTest/verifyHarnessIsolation/buildも成功し、本体1974件・harness16件・admin29件が全件合格した。終了後Gradle --stopを実行し、daemon不在を確認した。認証8fileは0417c9fを取り込んだ6c58413で保存済み。常用Codex configと実ゲームは無変更。
+
+## 第3段: main fa359cb収納修正のsource統合候補
+
+main側#82の共通収納はv2で既に実装済みのprovider/slot・座標収納の部分集合であった。15競合はv2のStorageAccess/KnownStorageRefs/SophisticatedStorageAccess、MinecraftKnownMenuPort、KnownMenuProfileSupport、ExactInventoryTransferと対応既存testを土台に解消し、R23のpickupLimit・protected upgrade slot・一度だけのdispatch・uncertain open所有権・cleanup証拠を保持した。mainだけのtest methodがないことを比較し、既存v2回帰を残した。
+
+mainの旧OperateKnownMenu拡張は共有実行器用のgrammar/params/有限budget/safety/effect subjectに合成。非配布legacy fixtureと旧互換action effect kindを同期し、block_interact/storage_take/storage_storeを許可する。公開17toolと既存agent_inventory storage_slot・座標storage経路は保持し、旧DSL用known_storages/storage_inspection stateは再公開しない。
+
+現在のJava占有権は#91診断担当へ渡したため、この第3段はまだJava/Gradle未実行。次のfullは親の調整後に行う。初回baselineの1974/16/29成功と、この未build候補を区別する。
+
+第3段のSkipJava source checkは成功（認証追加分を含むtransport 24、building 6、build-worker 6件＋全building/capability/v2 mocks）。catalog SHA256はf6674aaecb96f8c363e4d6cea9b65c6d3fc66bac477d7f179e565ce24f9d0064、Tool surface SHA256は77b6f92e708de0587fd2e7bed959af77135b3bccbf22a016d8c80ca32e167765。下降のd158759はRecoveryPlanning/McmcpRuntime/Hardening回帰の3filesだけを別commitへ適用する予定で、#83全体のroute/DSLや未合格の横床は取り込まない。
+
+## 第4段: recipe scopeのsource統合候補
+
+canHoldLadderの入口依存をf84bfbaで補完した。d158版と同じ入口から、既存v2のprivate safeLadderCell/exactSurvivingLadderAtFeetを呼び、loaded/存続rungとbacking/clearance/fluid/hazardのproofを再利用する。旧#83 routeは追加せず、接続をASM contract回帰へ追加した。ローカルGradleは禁止のまま。
+
+続いてmain d39ed21（#87）をsource統合した。recipe_scopeと公開RecipesReceivedEvent source、上限・部分取得・接続隔離・revision失効はmainと同じ。v2のlayout/ResolvedRecipe.layout/fingerprintへのlayout算入、通常remainderのingredientsとv2CraftSupportedを保持した。追加同期negative IDは必ずclient_synced_lookup_only/非deterministicとし、resolveは拒否、v2のplan/execute対応には昇格しない。scope切替後も既知remainderのlayoutが保持されること、通常材料が揃っていてもlookup-only表示のplanが拒否される回帰を追加する。
+
+17tool、軽量default、手持ちの明示sectionを保持し、stateのrecipe_query schemaへ新しい診断だけを合成した。#71の材料・設備評価not_assessed等の残件を完了扱いしない。ObservationFrameStoreと同Testは別担当の共通pin修正と競合しないよう変更していない。
+
+第4段もSkipJava source checkは成功（transport 24、building 6、build-worker 6件＋全building/capability/v2 mocks）。catalog SHA256は89b3de4c98b052413b2b2c8f0098ca9b2ce0730cd9f84be6ed63020ed71804a4、Tool surface SHA256は54ec246d305c9df9c89ab77966bf5cdf05958c56fdf7f49fac17908a1f17b2fc。同期source/coverageはmain一致、既存v2 extractはnegative guard以外一致、16tool全体とstate既定契約・store/flight/craft/bow/auth sourceを保持している。helper補完f84bfbaのGitHub CI43660800772は成功したが、このrecipe merge候補のJavaは未実行。

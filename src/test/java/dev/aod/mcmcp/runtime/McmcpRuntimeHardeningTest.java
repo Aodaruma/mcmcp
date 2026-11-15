@@ -1284,13 +1284,36 @@ class McmcpRuntimeHardeningTest {
         var level = new Object();
         var session = UUID.randomUUID();
 
-        assertThat(tracker.update(player, level, session, 70, false, false, 0)).isZero();
-        assertThat(tracker.update(player, level, session, 68, false, false, 0)).isEqualTo(2);
-        assertThat(tracker.update(player, level, session, 69, false, false, 0)).isEqualTo(2);
-        assertThat(tracker.update(player, level, session, 50, false, false, 1)).isEqualTo(2);
-        assertThat(tracker.update(player, level, session, 49, false, false, 1)).isEqualTo(3);
+        assertThat(tracker.update(player, level, session, 70, false, false, false, 0)).isZero();
+        assertThat(tracker.update(player, level, session, 68, false, false, false, 0)).isEqualTo(2);
+        assertThat(tracker.update(player, level, session, 69, false, false, false, 0)).isEqualTo(2);
+        assertThat(tracker.update(player, level, session, 50, false, false, false, 1)).isEqualTo(2);
+        assertThat(tracker.update(player, level, session, 49, false, false, false, 1)).isEqualTo(3);
         assertThat(tracker.current(player, level, session)).isEqualTo(3);
-        assertThat(tracker.update(player, level, session, 48, true, false, 1)).isZero();
+        assertThat(tracker.update(player, level, session, 48, true, false, false, 1)).isZero();
+    }
+
+    @Test
+    void provenLadderDescentIsNotAFreeFallAndLosingTheRungStartsANewDrop() {
+        var tracker = new RecoveryPlanning.RecoveryDescentTracker();
+        var player = new Object();
+        var level = new Object();
+        var session = UUID.randomUUID();
+        double y = 213.21449622092544;
+
+        // Vanilla permits a deliberate ladder descent at 0.15 blocks/tick. Its total
+        // distance can exceed the governor's three-block fall threshold without a fall.
+        for (int tick = 0; tick <= 40; tick++) {
+            assertThat(tracker.update(player, level, session, y, false, false, true, 0)).isZero();
+            y -= .15D;
+        }
+        y += .15D;
+        assertThat(tracker.update(player, level, session, y - 1, false, false, false, 0)).isEqualTo(1);
+        assertThat(tracker.update(player, level, session, y - 4, false, false, false, 0)).isEqualTo(4);
+        // Reacquiring a currently proven rung stops that fall; an unknown/broken rung
+        // must supply false and cannot erase the accumulated evidence.
+        assertThat(tracker.update(player, level, session, y - 4, false, false, true, 0)).isZero();
+        assertThat(tracker.update(player, level, session, y - 8, false, false, false, 0)).isEqualTo(4);
     }
 
     @Test
@@ -1469,12 +1492,13 @@ class McmcpRuntimeHardeningTest {
                 lock, false, null, List.of());
 
         assertThat(state.keySet()).containsExactly(
-                "schema_version", "control", "world", "inventory",
+                "schema_version", "control", "world", "inventory", "held_items",
                 "standard_potions", "placement_materials", "entity_attack_consent", "recipe_query",
                 "policy", "observation", "action");
         assertThat(state).containsEntry("schema_version", 1)
                 .containsEntry("world", null)
                 .containsEntry("inventory", List.of())
+                .containsEntry("held_items", null)
                 .containsEntry("standard_potions", List.of())
                 .containsEntry("recipe_query", null)
                 .containsEntry("observation", null)
@@ -1500,7 +1524,7 @@ class McmcpRuntimeHardeningTest {
         assertThat(policy.get("max_blocks_broken")).isEqualTo(8);
         assertThat(policy.get("max_interactions")).isEqualTo(16);
         var actionDsl = (Map<?, ?>) policy.get("action_dsl");
-        assertThat((List<?>) actionDsl.get("available_operations")).hasSize(40);
+        assertThat((List<?>) actionDsl.get("available_operations")).hasSize(41);
         assertThat(((Map<?, ?>) actionDsl.get("missing_capability_guidance")).get("code"))
                 .isEqualTo("MISSING_CAPABILITY");
         assertThat((List<?>) actionDsl.get("reference_descriptors")).hasSize(7);
@@ -1512,7 +1536,8 @@ class McmcpRuntimeHardeningTest {
         var hotbar = Map.<String, Object>of("selected_slot", 0, "slots", List.of());
         var details = Map.<String, Object>of(
                 "control", Map.of("mode", "ready"),
-                "inventory", List.of(Map.of("item", "minecraft:stone", "count", 64)));
+                "inventory", List.of(Map.of("item", "minecraft:stone", "count", 64)),
+                "held_items", Map.of("selected_hotbar_slot", 0));
 
         assertThat(ActionWireMapper.lightweightStatePayload(
                 player, hotbar, details, Set.of()))
@@ -1524,6 +1549,10 @@ class McmcpRuntimeHardeningTest {
                 player, hotbar, details, Set.of("inventory")))
                 .containsOnlyKeys("schema_version", "player", "hotbar", "inventory")
                 .containsEntry("inventory", details.get("inventory"));
+        assertThat(ActionWireMapper.lightweightStatePayload(
+                player, hotbar, details, Set.of("held_items")))
+                .containsOnlyKeys("schema_version", "player", "hotbar", "held_items")
+                .containsEntry("held_items", details.get("held_items"));
     }
 
     @Test

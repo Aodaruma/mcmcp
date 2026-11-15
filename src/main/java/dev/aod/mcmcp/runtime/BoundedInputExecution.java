@@ -6,8 +6,8 @@ import dev.aod.mcmcp.agent.dsl.ActionDsl;
 import dev.aod.mcmcp.agent.navigation.LocalObservationProjector;
 import dev.aod.mcmcp.client.AgentInputState;
 import dev.aod.mcmcp.client.AgentScreenPolicy;
-import dev.aod.mcmcp.routine.BlockStateFingerprint;
 import dev.aod.mcmcp.routine.BoundedInputLease;
+import dev.aod.mcmcp.routine.BlockStateFingerprint;
 import dev.aod.mcmcp.routine.MinecraftStationaryBreakPort;
 import java.time.Duration;
 import java.util.Objects;
@@ -28,6 +28,7 @@ final class BoundedInputExecution {
     private final ScreenOwnershipSignals screenOwnership;
     private final AgentActionStore agentActions;
     private Hold boundedInputHold;
+    private long lastInputStartTick = -1L;
 
     BoundedInputExecution(Object playerIdentity, UUID worldSessionId,
             ScreenOwnershipSignals screenOwnership, AgentActionStore agentActions) {
@@ -47,6 +48,14 @@ final class BoundedInputExecution {
         var player = Objects.requireNonNull(minecraft.player, "player");
         var level = Objects.requireNonNull(minecraft.level, "level");
         var progress = agentActions.get(action.actionId()).progress();
+        if (boundedInputHold != null && AgentInputState.global().boundedBudgetExhausted()) {
+            return PrimitiveOutcome.failed(AgentActionStore.FailureCode.BUDGET_EXCEEDED, false,
+                    "bounded_input_start_budget");
+        }
+        if (boundedInputHold != null && AgentInputState.global().boundedDispatchRejected()) {
+            return PrimitiveOutcome.failed(AgentActionStore.FailureCode.SAFETY_INTERRUPTED, true,
+                    "bounded_input_dispatch_guard_changed");
+        }
         if (boundedInputHold != null
                 && boundedInputHold.activeTicks >= hold.durationTicks()) {
             if (!close()) {
@@ -65,6 +74,9 @@ final class BoundedInputExecution {
                     "bounded_input_duration_budget");
         }
         String unsafe = boundedInputUnsafeReason(minecraft, session, action, hold, localSafety);
+        if (unsafe == null && (!hold.repeatTarget() || boundedInputHold == null)) {
+            unsafe = boundedTargetMismatch(minecraft, hold);
+        }
         if (unsafe != null) {
             return PrimitiveOutcome.failed(AgentActionStore.FailureCode.SAFETY_INTERRUPTED, true,
                     "bounded_input_" + unsafe);
@@ -78,10 +90,38 @@ final class BoundedInputExecution {
                 var lease = BoundedInputLease.acquire(
                         AgentInputState.global(), inputs, System.nanoTime(), Duration.ofSeconds(1));
                 boundedInputHold = new Hold(
-                        lease, player.position(), player.getHealth() + player.getAbsorptionAmount());
+                        lease, player.position(), player.getHealth() + player.getAbsorptionAmount(),
+                        session, localSafety);
+                boundedInputHold.pausedNanos = pausedNanos;
+                if (hold.targetGuard().isPresent()) {
+                    java.util.function.Supplier<AgentInputState.BoundedDispatchDecision> guard = () -> {
+                        var current = boundedInputHold;
+                        if (current == null || ActionBudgets.activeElapsedNanos(
+                                startedAtNanos, current.pausedNanos, System.nanoTime()) >= durationLimit
+                                || boundedInputUnsafeReason(minecraft, current.session, action, hold,
+                                        current.localSafety) != null) {
+                            return AgentInputState.BoundedDispatchDecision.STOP;
+                        }
+                        if (boundedTargetMismatch(minecraft, hold) == null) {
+                            return AgentInputState.BoundedDispatchDecision.ALLOW;
+                        }
+                        return hold.repeatTarget() ? AgentInputState.BoundedDispatchDecision.WAIT
+                                : AgentInputState.BoundedDispatchDecision.STOP;
+                    };
+                    if (hold.repeatTarget()) {
+                        AgentInputState.global().setRepeatingBoundedDispatchGuard(guard,
+                                () -> reserveInputStart(action, hold));
+                    } else {
+                        AgentInputState.global().setBoundedDispatchGuard(
+                                () -> guard.get() == AgentInputState.BoundedDispatchDecision.ALLOW);
+                    }
+                }
                 acquired = true;
             }
             var execution = boundedInputHold;
+            execution.session = session;
+            execution.localSafety = localSafety;
+            execution.pausedNanos = pausedNanos;
             if (!acquired && !execution.lease.heartbeat(
                     System.nanoTime(), Duration.ofSeconds(1))) {
                 return PrimitiveOutcome.failed(AgentActionStore.FailureCode.SAFETY_INTERRUPTED, true,
@@ -119,6 +159,9 @@ final class BoundedInputExecution {
             return "world_session_changed";
         }
         if (!player.isAlive() || player.isDeadOrDying()) return "player_dead";
+        if (minecraft.gameMode.getPlayerMode() != net.minecraft.world.level.GameType.SURVIVAL) {
+            return "not_survival";
+        }
         if (boundedInputHold != null
                 && player.getHealth() + player.getAbsorptionAmount()
                         < boundedInputHold.effectiveHealthBaseline) {
@@ -152,17 +195,9 @@ final class BoundedInputExecution {
             return "target_dimension_changed";
         }
         var target = new BlockPos(guard.target().x(), guard.target().y(), guard.target().z());
-        if (!level.isLoaded(target) || !level.getWorldBorder().isWithinBounds(target)
-                || !player.isWithinBlockInteractionRange(target, 0.0D)
-                || !(minecraft.hitResult instanceof BlockHitResult hit)
-                || hit.getType() != HitResult.Type.BLOCK || !hit.getBlockPos().equals(target)
-                || hit.getDirection() != Direction.valueOf(guard.face().name())) {
-            return "target_face_or_reach_changed";
-        }
-        var expected = new BlockStateFingerprint(
-                guard.expectedState().block(), guard.expectedState().properties());
-        if (!expected.equals(MinecraftStationaryBreakPort.fingerprintForPolicy(
-                level.getBlockState(target)))) return "target_state_changed";
+        if (!level.isLoaded(target)) return "target_unloaded";
+        if (!level.getWorldBorder().isWithinBounds(target)) return "target_outside_world_border";
+        if (!player.isWithinBlockInteractionRange(target, 0.0D)) return "target_out_of_reach";
         var selected = player.getMainHandItem();
         if (selected.isEmpty() || !hold.selectedItem().orElseThrow().equals(
                 BuiltInRegistries.ITEM.getKey(selected.getItem()).toString())) {
@@ -174,10 +209,51 @@ final class BoundedInputExecution {
         return null;
     }
 
+    private static String boundedTargetMismatch(Minecraft minecraft, ActionDsl.HoldBoundedInputs hold) {
+        if (hold.targetGuard().isEmpty()) return null;
+        var guard = hold.targetGuard().orElseThrow();
+        var target = new BlockPos(guard.target().x(), guard.target().y(), guard.target().z());
+        return boundedTargetMismatch(guard, minecraft.hitResult,
+                () -> MinecraftStationaryBreakPort.fingerprintForPolicy(minecraft.level.getBlockState(target)));
+    }
+
+    /** Shared by initial admission and every dispatch; read state only after the real ray identifies the target. */
+    static String boundedTargetMismatch(ActionDsl.ExactBlockTargetGuard guard, HitResult focus,
+            java.util.function.Supplier<BlockStateFingerprint> currentBlock) {
+        if (!(focus instanceof BlockHitResult hit) || hit.getType() != HitResult.Type.BLOCK) {
+            return "target_not_focused";
+        }
+        var target = new BlockPos(guard.target().x(), guard.target().y(), guard.target().z());
+        if (!hit.getBlockPos().equals(target)) return "target_position_changed";
+        if (guard.matchFace() && hit.getDirection() != Direction.valueOf(guard.face().name())) {
+            return "target_face_changed";
+        }
+        var actual = currentBlock.get();
+        if (!guard.expectedBlock().equals(actual.blockId())) return "target_block_changed";
+        return guard.matches(actual.blockId(), actual.properties()) ? null : "target_state_changed";
+    }
+
+    boolean reserveInputStart(AgentActionStore.Active action, ActionDsl.HoldBoundedInputs hold) {
+        var budget = action.program().effectiveBudget();
+        var progress = agentActions.get(action.actionId()).progress();
+        // At most one start per client tick proves a duration-derived reservation, even
+        // if another hook unexpectedly invokes the Vanilla start twice in that tick.
+        if (progress.ticks() <= lastInputStartTick
+                || progress.interactions() >= hold.durationTicks()
+                || progress.interactions() >= budget.maxInteractions()
+                || hold.inputs().contains(ActionDsl.BoundedInput.ATTACK)
+                        && progress.interactions() >= budget.maxBlocksBroken()) return false;
+        // Starts are conservative attempts, not confirmed breaks or inventory effects.
+        agentActions.recordInteraction(action.actionId());
+        lastInputStartTick = progress.ticks();
+        return true;
+    }
+
     boolean close() {
         if (boundedInputHold == null) return true;
         try {
             boundedInputHold.lease.close();
+            AgentInputState.global().clearBoundedDispatchGuard();
             boundedInputHold = null;
             return true;
         } catch (RuntimeException | LinkageError failure) {
@@ -211,9 +287,13 @@ final class BoundedInputExecution {
         private Vec3 lastPosition;
         private long activeTicks;
         private int stalledTicks;
+        private long pausedNanos;
+        private WorldSessionTracker.Snapshot session;
+        private LocalObservationProjector.CurrentSafety localSafety;
 
         private Hold(
-                BoundedInputLease lease, Vec3 startPosition, float effectiveHealthBaseline) {
+                BoundedInputLease lease, Vec3 startPosition, float effectiveHealthBaseline,
+                WorldSessionTracker.Snapshot session, LocalObservationProjector.CurrentSafety localSafety) {
             this.lease = Objects.requireNonNull(lease, "lease");
             this.startPosition = Objects.requireNonNull(startPosition, "startPosition");
             this.lastPosition = startPosition;
@@ -221,6 +301,8 @@ final class BoundedInputExecution {
                 throw new IllegalArgumentException("bounded input health baseline must be positive");
             }
             this.effectiveHealthBaseline = effectiveHealthBaseline;
+            this.session = session;
+            this.localSafety = localSafety;
         }
 
         private void observeMovement(Vec3 current, boolean expectsHorizontalMovement) {
