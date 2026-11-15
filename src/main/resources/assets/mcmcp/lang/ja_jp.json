@@ -26,7 +26,7 @@
   "gui.mcmcp.setup.choose": "設定するMCPクライアントを選んでください。",
   "gui.mcmcp.setup.codex": "Codexを自動設定",
   "gui.mcmcp.setup.codex_isolated": "Codexの分離設定（検証用）",
-  "gui.mcmcp.setup.isolated_required": "接続ガイドに従い、生成先codex-homeをCODEX_HOMEに指定して起動してください",
+  "gui.mcmcp.setup.isolated_required": "生成先codex-homeをCODEX_HOMEに指定して起動",
   "gui.mcmcp.setup.claude_code": "Claude Codeを自動設定",
   "gui.mcmcp.setup.cancel": "キャンセル",
   "gui.mcmcp.setup.confirm_title": "%sを設定しますか？",

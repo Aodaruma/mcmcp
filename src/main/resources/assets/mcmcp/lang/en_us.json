@@ -26,7 +26,7 @@
   "gui.mcmcp.setup.choose": "Choose an MCP client to configure.",
   "gui.mcmcp.setup.codex": "Configure Codex",
   "gui.mcmcp.setup.codex_isolated": "Isolated Codex setup (validation)",
-  "gui.mcmcp.setup.isolated_required": "Follow the connection guide: launch with CODEX_HOME pointing to the generated codex-home directory",
+  "gui.mcmcp.setup.isolated_required": "Restart with CODEX_HOME set to the generated codex-home",
   "gui.mcmcp.setup.claude_code": "Configure Claude Code",
   "gui.mcmcp.setup.cancel": "Cancel",
   "gui.mcmcp.setup.confirm_title": "Configure %s?",
