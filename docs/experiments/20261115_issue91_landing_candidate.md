@@ -129,4 +129,6 @@ poolの開始・終了の流水5層は回帰resourceと全205行一致した。p
 
 r7は汎用yaw候補へ対称の±2度を追加し、offsetを最内loopへ移して、各区間候補で各角度を順に検査する。候補ごとの完全proof、共有20ms期限、2,048cell、4遅延、元Action予算と取消経路の本体は変更しない。647の同じ実stateによる独立Javaのwarm検索は7.9～9.9msで完全courseを選べたが、645では20ms期限切れも起きた。これはオフライン計測であり、cold実機の時間保証や受入合格ではない。
 
-strict focused32件が成功。645と647の両開始stateから各tickの全停止域proof・予算内停止を確認する1回帰を追加し、既存1329 edge、1420の非可視10tick以上、late poolの非可視再計画も維持した。r7の全体ビルドと版付きpairは準備中。native edge/pool/wide/cancelはPENDING、Draft・installable=falseを維持する。
+strict focused32件が成功。645と647の両開始stateから各tickの全停止域proof・予算内停止を確認する1回帰を追加し、既存1329 edge、1420の非可視10tick以上、late poolの非可視再計画も維持した。r7 source `af9b23812493ed6153d06dbbd2fcbdc9bd83384b`で全Java1,961件（通常1,917・harness16・admin28）、`verifyHarnessIsolation build`が成功、failure/error/skipは0。r6のSkipJava source checks成功後の追加変更はJava/test/本記録だけのため、同じmock群は再実行していない。
+
+版`0.2.0-rc.1`の製品SHA-256は`05effab60d9b5662abddec8369766273eb1c30bb3612aed257c5873621f15153`、harnessは`a6ec51bd01bb32ecef55d874424555b933d14454e1310516034f776761828bf1`、fixture adminは`feb649f2557e395b8dea976869df6857ca1d0e7151318cea1bf05ee39f3c9fb2`。版metadataと製品内fixtureクラス不在を確認し、`artifacts/issue91-safe-landing-20261115-r7`へソース全体・JAR・XML・ログを凍結した。overlay SHA-256は`061445dbfb338ec9403114524a83c0979a31d9b1e866368e375b25e8c55edc9b`。Gradle daemon停止済み。r7 native edge/pool/wide/cancelはPENDING、Draft・installable=falseを維持する。
