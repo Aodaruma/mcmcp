@@ -152,3 +152,9 @@ strict focused38件が成功。native770の時間切れから同cacheのcoast3ti
 追加レビューで、pose切替の境目では予測用glider高0.6と現在の実AABBが一致しない可能性を確認した。coast採用callerへ、同じ観測で実際の`player.getBoundingBox().inflate(.2)`がclearであることを必須にする1predicateを加えた。予測用の全prefix検査も維持する。gliderならclearでも現在のstanding bodyが頭上lipへ当たる形状回帰と、時間切れ判定後の実body検査のfalse分岐がcoastを迂回する接続回帰を追加した。
 
 この補強後のfocused40件、全Java1,969件（通常1,925・harness16・admin28）、`verifyHarnessIsolation build`が成功し、failure/error/skipは0。実機用の現在候補を製品SHA-256 `93966e9bb33e4ea31675c0f961d48a25600387e11048c592e17143ee4cce96f3`へ更新した。版とharness/adminは同じ。対応ソース全体・JAR・XML・ログを別の`artifacts/issue91-safe-landing-20261115-r8-actualbody`へ凍結し、Gradle daemon停止を確認した。534acf候補は実機未実施のまま保存し、実body補強後候補のnativeもPENDINGとする。
+
+## r8実AABB補強後の実機受入
+
+source `f21fe71213c645718812c73c720853f6299195a4`・上記93966e9b製品で、cold pool・edge・wide・cancel・warm poolの5ケースが合格した。[受入記録](20261115_issue91_r8_native_acceptance.md)へ、coastから完全courseへの移行、乾いた床での100tick安定、取消時の入力解放、cold処理時間と各Action/JAR hashを保存した。過去候補の不合格は本記録に維持する。
+
+本Issueの5ケースの受入と、通常profile 288ファイルの最終復旧照合・PR #95の最終統合JAR受入は分ける。後二者は親担当の最終作業として確認待ちであり、この記録だけで全体Releaseの合格とはしない。
