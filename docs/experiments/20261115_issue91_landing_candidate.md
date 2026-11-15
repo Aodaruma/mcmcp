@@ -115,4 +115,8 @@ cold poolではplayer tick1447から完全courseが成立したが、1460で現�
 
 r6は既存courseの完全再証明と必要時の同goal再計画をraw intent検査より先に行い、同tickの証明結果を再利用する。新courseだけ開始tickを合わせ、失敗時の二重再計画や共有20ms期限の再設定は行わない。完全course採用後はlanding予約を維持して再加速を防ぎ、水平距離がほぼ0の展開時だけ現在yawを保つ。期待ground高さ・全停止支持LOS・4遅延・2,048cell cache・元予算・取消条件とwaterescape処理は変更していない。
 
-strict focused31件が成功した。nativeのlate pool実stateから、raw intent非可視中の完全再計画と乾いた停止域への到達を確認し、既存1420回帰の非可視10tick以上の条件も維持した。landing予約の単調性、水平零距離と通常bearing、権限喪失の拒否を回帰で確認した。r6の全体ビルド・版付きJAR・native edge/pool/wide/cancelは確認待ち。r4/r5の失敗を合格へ読み替えず、PRはDraft・installable=falseを維持する。
+strict focused31件が成功した。nativeのlate pool実stateから、raw intent非可視中の完全再計画と乾いた停止域への到達を確認し、既存1420回帰の非可視10tick以上の条件も維持した。landing予約の単調性、水平零距離と通常bearing、権限喪失の拒否を回帰で確認した。
+
+feature `0f51bae1d5ba823752765cc1df66c1308f58b9a2`へ通常mergeしたr6 source `0eaba1bc2fbecf885df7abdb95baa6991c44e23a`で、全Java1,960件（通常1,916・harness16・admin28）、`verifyHarnessIsolation build`、`tools/check-source.ps1 -SkipJava`がすべて成功した。failure/error/skipは0。版は`0.2.0-rc.1`、製品SHA-256は`552e7af4c83d9cc1258f79f23cb8f86d37b52fb7be73d71c68357e93278015f7`、読取診断harnessは`a6ec51bd01bb32ecef55d874424555b933d14454e1310516034f776761828bf1`、fixture adminは`feb649f2557e395b8dea976869df6857ca1d0e7151318cea1bf05ee39f3c9fb2`。製品JARの版metadataとfixtureクラス不在を確認した。
+
+`artifacts/issue91-safe-landing-20261115-r6`へ対応ソース全体・featureとの差分overlay・JAR・XML・ログを凍結した。overlay SHA-256は`64e9c805cb3e3b5eab191f4b7ef2613a2368353496977a3049d84fba337ff490`。Gradle daemon停止を確認し、親担当のnative edge/pool/wide/cancelへ渡した。r6実機はPENDINGで、r4/r5の失敗を合格へ読み替えず、PRはDraft・installable=falseを維持する。
