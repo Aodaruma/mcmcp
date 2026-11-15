@@ -3223,6 +3223,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         Map<String, Object> world = null;
         Map<String, Object> playerPayload = null;
         Map<String, Object> hotbarPayload = null;
+        Map<String, Object> heldItems = null;
 
         if (session.worldReady() && minecraft.player != null && minecraft.level != null) {
             var player = minecraft.player;
@@ -3257,6 +3258,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                     .toList());
 
             var playerInventory = player.getInventory();
+            if (sections.contains("held_items")) heldItems = HeldItemView.capture(player);
             if (sections.contains("inventory") || sections.contains("standard_potions")
                     || sections.contains("placement_materials")) {
                 for (int slot = 0; slot < playerInventory.getContainerSize(); slot++) {
@@ -3323,6 +3325,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
         if (sections.contains("inventory")) {
             result.put("inventory_sync", PlayerMenuSyncSignals.global().diagnostic(minecraft));
         }
+        if (sections.contains("held_items")) result.put("held_items", heldItems);
         if (sections.contains("entity_attack_consent")) {
             result.put("entity_attack_consent",
                     ActionWireMapper.entityAttackConsentPayload(entityAttackConsentSnapshot(session, lock)));

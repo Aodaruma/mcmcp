@@ -20,3 +20,13 @@ catalog/fixture JSON parse、PowerShell parse、競合marker/未解決indexな�
 親の指示でこのPCのGradle/Java buildと実機は未実施。親review後、隔離build/CIと実機受入が必要。SkipJava source check結果と最終catalog hashはレビュー報告に記録する。
 
 SkipJava source checkは成功。Python transport 23、building 6、build-worker 6件とbuilding/capability/v2 runner mocksが成功した。最終catalog SHA256は484628a340682fdbe739e061bd51360a16b99f829c5cc3145bf5c47abb5bfeed、Tool surface SHA256は66406fcb52fb7d1678bc0f74585ccebe7ecc8e7ea7619c2b8e71e880e847179f。Java testsは未実行。
+
+## 第2段: main #35の追従候補
+
+初回統合は5346a03で保存・通常push済み。続いてb19f042をmergeし、9fileの競合を解消した。HeldItemViewの本体・単体testはmainのまま取り込み、v2ではsections=["held_items"]を明示したときだけcapture/返却する。軽量stateの既定player/hotbarと17toolを維持する。
+
+mainのbounded-input実dispatch・新規入力開始の課金・継続中use維持hookと、v2のuseMayStartによる弓の再開抑止を併存させる。AgentUseInputChannelはuseMayStartとallowsBoundedDispatchの両方を必要とし、cooldownと現在using判定の後だけbeginBoundedInputで開始課金する。v2既存MultiPlayerGameModeUseMixin、#92の弓解放InputReleaseControllerは保持し、追加の2bounded mixinも登録する。legacy fixtureはmainの22例・target_guard条件へ同期する。旧DSL結果のinteraction最大値もmainの1,728,000へ同期し、v2 job schemaは保持する。
+
+#86は非blocking lock修正中のため未取込み。#87も実機受入待ちで未取込み。この段階のJava/Gradleと実機は未実施。
+
+第2段のSkipJava source checkも成功（Python transport 23、building 6、build-worker 6件＋全building/capability/v2 runner mocks）。catalog SHA256はfb2823f202d73e4670528a88b3d3ba6d0c69268a405241d729bd33759f3a3169、Tool surface SHA256は77b6f92e708de0587fd2e7bed959af77135b3bccbf22a016d8c80ca32e167765。17tool、手持ちschema/sourceのmain一致、全schema参照、mixins重複不在・実class存在、flight/bow cleanup/craft無変更を追加確認した。

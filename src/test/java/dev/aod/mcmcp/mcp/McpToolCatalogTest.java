@@ -105,6 +105,42 @@ class McpToolCatalogTest {
     }
 
     @Test
+    void boundedFaceOptOutSchemaAcceptsOnlyAttackAndKeepsEvidenceRequired() {
+        var schema = LegacyActionSchema.inputSchema();
+        var request = schema.getAsJsonArray("examples").asList().stream().map(JsonElement::getAsJsonObject)
+                .filter(example -> example.getAsJsonObject("program").get("name").getAsString()
+                        .equals("repeat_attack_on_observed_snow")).findFirst().orElseThrow().deepCopy();
+        var node = request.getAsJsonObject("program").getAsJsonArray("body").get(0).getAsJsonObject();
+        var guard = node.getAsJsonObject("target_guard");
+        assertThat(guard.get("match_face").getAsBoolean()).isFalse();
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+        for (String inputs : List.of("[\"attack\"]", "[\"attack\",\"sneak\"]", "[\"sneak\",\"attack\"]")) {
+            node.add("inputs", JsonParser.parseString(inputs));
+            assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+        }
+        for (String inputs : List.of("[\"use\"]", "[\"attack\",\"use\"]", "[\"sneak\"]", "[\"attack\",\"forward\"]")) {
+            node.add("inputs", JsonParser.parseString(inputs));
+            assertThat(CatalogSchemaValidator.matches(schema, request)).isFalse();
+        }
+        node.add("inputs", JsonParser.parseString("[\"use\"]"));
+        guard.addProperty("match_face", true);
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+        guard.remove("match_face");
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+        node.add("inputs", JsonParser.parseString("[\"attack\"]"));
+        for (String value : List.of("null", "\"false\"", "0")) {
+            guard.add("match_face", JsonParser.parseString(value));
+            assertThat(CatalogSchemaValidator.matches(schema, request)).isFalse();
+        }
+        guard.addProperty("match_face", false);
+        for (String field : List.of("target", "face", "expected_state", "expected_block")) {
+            var saved = guard.remove(field);
+            assertThat(CatalogSchemaValidator.matches(schema, request)).isFalse();
+            guard.add(field, saved);
+        }
+    }
+
+    @Test
     void leverSchemaIsClosedAndDocumentsIdempotencyAndMachineStopResponsibility() {
         var catalog = new McpToolCatalog();
         var interact = catalog.listResult().getAsJsonArray("tools").asList().stream()
@@ -142,6 +178,79 @@ class McpToolCatalogTest {
             assertThat(node.get("description").getAsString())
                     .contains("14 clicks", "empty cursor", "69000 ms", "16 interactions", "rescue clicks");
         }
+    }
+
+    @Test
+    void heldItemOutputIsNullableClosedAndBounded() {
+        var state = new McpToolCatalog().outputSchema("agent_get_state");
+        assertThat(state.getAsJsonArray("required").asList())
+                .doesNotContain(new com.google.gson.JsonPrimitive("held_items"));
+        assertThat(CatalogSchemaValidator.matches(new McpToolCatalog().inputSchema("agent_get_state"),
+                JsonParser.parseString("{\"sections\":[\"held_items\"]}"))).isTrue();
+        var schema = state.getAsJsonObject("$defs").getAsJsonObject("held_item");
+        var item = JsonParser.parseString("""
+                {"item":"minecraft:diamond_shovel","count":1,"tooltip_hidden":false,
+                 "display_name":"aod shovel","durability":{"damage":194,"maximum":1561,"remaining":1367},
+                 "unbreakable":null,"enchantments":[{"enchantment":"minecraft:efficiency","level":5}],
+                 "attribute_modifiers":[{"attribute":"minecraft:mining_efficiency","amount":26,"operation":"add_value"}],
+                 "truncated":false}
+                """).getAsJsonObject();
+        assertThat(CatalogSchemaValidator.matches(schema, item)).isTrue();
+        item.addProperty("custom_nbt", "private");
+        assertThat(CatalogSchemaValidator.matches(schema, item)).isFalse();
+        item.remove("custom_nbt");
+        item.addProperty("item", "test:" + "a".repeat(256));
+        assertThat(CatalogSchemaValidator.matches(schema, item)).isFalse();
+        item.add("item", com.google.gson.JsonNull.INSTANCE);
+        item.addProperty("truncated", true);
+        assertThat(CatalogSchemaValidator.matches(schema, item)).isTrue();
+        item.addProperty("display_name", "a".repeat(257));
+        assertThat(CatalogSchemaValidator.matches(schema, item)).isFalse();
+        for (String field : List.of("display_name", "durability", "unbreakable", "enchantments", "attribute_modifiers")) {
+            item.add(field, com.google.gson.JsonNull.INSTANCE);
+        }
+        assertThat(CatalogSchemaValidator.matches(schema, item)).isTrue();
+        item.remove("durability");
+        assertThat(CatalogSchemaValidator.matches(schema, item)).isFalse();
+    }
+
+    @Test
+    void repeatHoldSchemaUsesFiniteTimeWithoutARepetitionCountField() {
+        var schema = LegacyActionSchema.inputSchema();
+        var request = schema.getAsJsonArray("examples").asList().stream()
+                .map(JsonElement::getAsJsonObject)
+                .filter(example -> example.getAsJsonObject("program").get("name").getAsString()
+                        .equals("repeat_attack_on_observed_snow")).findFirst().orElseThrow().deepCopy();
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+        var node = request.getAsJsonObject("program").getAsJsonArray("body").get(0).getAsJsonObject();
+        // The lightweight validator does not interpret if/then/not; the DSL parser enforces these.
+        var condition = schema.getAsJsonObject("$defs").getAsJsonObject("holdBoundedInputsNode")
+                .getAsJsonArray("allOf").get(1).getAsJsonObject();
+        assertThat(condition.getAsJsonObject("then").getAsJsonObject("properties")
+                .getAsJsonObject("inputs").getAsJsonObject("contains")
+                .getAsJsonArray("enum").toString()).isEqualTo("[\"attack\",\"use\"]");
+        assertThat(node.has("max_repetitions")).isFalse();
+        for (int count : List.of(0, 64, 65)) {
+            node.addProperty("max_repetitions", count);
+            assertThat(CatalogSchemaValidator.matches(schema, request)).isFalse();
+        }
+        node.remove("max_repetitions");
+        node.addProperty("duration_ticks", 1_728_000);
+        request.getAsJsonObject("budget").addProperty("max_ticks", 1_728_000);
+        request.getAsJsonObject("budget").addProperty("max_duration_ms", 86_400_000);
+        request.getAsJsonObject("budget").addProperty("max_interactions", 1_728_000);
+        request.getAsJsonObject("budget").addProperty("max_blocks_broken", 1_728_000);
+        assertThat(CatalogSchemaValidator.matches(schema, request)).isTrue();
+        var parsed = dev.aod.mcmcp.agent.dsl.ActionDslParser.parse(request);
+        assertThat(ActionDslCompiler.compile(parsed, ignored -> java.util.Optional.empty(),
+                parsed.program().capabilities()).worstCaseCost().interactions()).isEqualTo(1_728_000);
+        node.addProperty("repeat_target", true);
+        node.add("inputs", JsonParser.parseString("[\"sneak\"]"));
+        node.remove("target_guard");
+        node.remove("selected_item");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> dev.aod.mcmcp.agent.dsl.ActionDslValidator.validate(
+                dev.aod.mcmcp.agent.dsl.ActionDslParser.parse(request)))
+                .isInstanceOf(dev.aod.mcmcp.agent.dsl.ActionDslException.class);
     }
 
     @Test
@@ -563,6 +672,25 @@ class McpToolCatalogTest {
                 .contains("or item_id_any_components")
                 .contains("craft/smelt goal.stack_policy")
                 .contains("smelt fuel.stack_policy are exactly default_components_only");
+    }
+
+    @Test
+    void boundedInputNullStateRequiresObservedBlockIdentityInSchema() {
+        var schema = LegacyActionSchema.inputSchema();
+        var example = schema.getAsJsonArray("examples").asList().stream()
+                .map(com.google.gson.JsonElement::getAsJsonObject)
+                .filter(value -> value.getAsJsonObject("program").getAsJsonArray("body")
+                        .get(0).getAsJsonObject().get("op").getAsString().equals("hold_bounded_inputs"))
+                .findFirst().orElseThrow().deepCopy();
+        var guard = example.getAsJsonObject("program").getAsJsonArray("body")
+                .get(0).getAsJsonObject().getAsJsonObject("target_guard");
+        guard.remove("expected_block");
+        guard.add("expected_state", com.google.gson.JsonNull.INSTANCE);
+        assertThat(CatalogSchemaValidator.matches(schema, example)).isFalse();
+        guard.addProperty("expected_block", "minecraft:snow");
+        assertThat(CatalogSchemaValidator.matches(schema, example)).isTrue();
+        guard.remove("expected_state");
+        assertThat(CatalogSchemaValidator.matches(schema, example)).isFalse();
     }
 
     @Test
@@ -1072,7 +1200,7 @@ class McpToolCatalogTest {
 
         assertThat(schema.getAsJsonObject("properties").getAsJsonObject("budget")
                 .getAsJsonObject("properties").getAsJsonObject("max_interactions")
-                .get("maximum").getAsInt()).isEqualTo(2_048);
+                .get("maximum").getAsInt()).isEqualTo(AgentActionStore.MAX_RECORDED_INTERACTIONS);
         var state = catalog.outputSchema("agent_get_state");
         assertThat(state.getAsJsonObject("properties").getAsJsonObject("policy")
                 .getAsJsonObject("properties").getAsJsonObject("max_interactions")
@@ -1113,13 +1241,13 @@ class McpToolCatalogTest {
         assertThat(legacyActionOutputSchema()
                 .getAsJsonObject("properties").getAsJsonObject("progress")
                 .getAsJsonObject("properties").getAsJsonObject("interactions")
-                .get("maximum").getAsInt()).isEqualTo(2_048);
+                .get("maximum").getAsInt()).isEqualTo(AgentActionStore.MAX_RECORDED_INTERACTIONS);
         var actionOutput = legacyActionOutputSchema();
         assertThat(actionOutput.getAsJsonObject("properties")
                 .getAsJsonObject("effect_aggregate")
                 .getAsJsonObject("properties")
                 .getAsJsonObject("dispatched_attacks")
-                .get("maximum").getAsInt()).isEqualTo(2_048);
+                .get("maximum").getAsInt()).isEqualTo(AgentActionStore.MAX_RECORDED_INTERACTIONS);
         assertThat(actionOutput.getAsJsonObject("properties")
                 .getAsJsonObject("trace").getAsJsonObject("items")
                 .getAsJsonObject("properties").getAsJsonObject("tick")

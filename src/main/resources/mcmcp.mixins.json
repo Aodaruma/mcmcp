@@ -26,6 +26,8 @@
     "client.MinecraftPickInvoker",
     "client.MinecraftUseItemInvoker",
     "client.MultiPlayerGameModeUseMixin",
+    "client.MinecraftBoundedUseMixin",
+    "client.MultiPlayerGameModeBoundedInputMixin",
     "client.MouseHandlerMixin"
   ],
   "injectors": {

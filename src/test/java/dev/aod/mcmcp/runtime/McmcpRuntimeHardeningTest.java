@@ -1469,12 +1469,13 @@ class McmcpRuntimeHardeningTest {
                 lock, false, null, List.of());
 
         assertThat(state.keySet()).containsExactly(
-                "schema_version", "control", "world", "inventory",
+                "schema_version", "control", "world", "inventory", "held_items",
                 "standard_potions", "placement_materials", "entity_attack_consent", "recipe_query",
                 "policy", "observation", "action");
         assertThat(state).containsEntry("schema_version", 1)
                 .containsEntry("world", null)
                 .containsEntry("inventory", List.of())
+                .containsEntry("held_items", null)
                 .containsEntry("standard_potions", List.of())
                 .containsEntry("recipe_query", null)
                 .containsEntry("observation", null)
@@ -1512,7 +1513,8 @@ class McmcpRuntimeHardeningTest {
         var hotbar = Map.<String, Object>of("selected_slot", 0, "slots", List.of());
         var details = Map.<String, Object>of(
                 "control", Map.of("mode", "ready"),
-                "inventory", List.of(Map.of("item", "minecraft:stone", "count", 64)));
+                "inventory", List.of(Map.of("item", "minecraft:stone", "count", 64)),
+                "held_items", Map.of("selected_hotbar_slot", 0));
 
         assertThat(ActionWireMapper.lightweightStatePayload(
                 player, hotbar, details, Set.of()))
@@ -1524,6 +1526,10 @@ class McmcpRuntimeHardeningTest {
                 player, hotbar, details, Set.of("inventory")))
                 .containsOnlyKeys("schema_version", "player", "hotbar", "inventory")
                 .containsEntry("inventory", details.get("inventory"));
+        assertThat(ActionWireMapper.lightweightStatePayload(
+                player, hotbar, details, Set.of("held_items")))
+                .containsOnlyKeys("schema_version", "player", "hotbar", "held_items")
+                .containsEntry("held_items", details.get("held_items"));
     }
 
     @Test

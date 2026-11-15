@@ -22,7 +22,7 @@ final class McpTestFixtures {
     }
 
     private static Map<String, Object> baseState() {
-        return Map.of(
+        var result = new LinkedHashMap<>(Map.of(
                 "schema_version", 1,
                 "control", Map.of(
                         "mode", "off",
@@ -71,7 +71,9 @@ final class McpTestFixtures {
                                 "missing_capability_guidance",
                                 ActionDslOperationManifest.missingCapabilityGuidance()))),
                 "observation", nullValue(),
-                "action", nullValue());
+                "action", nullValue()));
+        result.put("held_items", nullValue());
+        return result;
     }
 
     static Map<String, Object> stateWithEmptyRecipeQuery() {

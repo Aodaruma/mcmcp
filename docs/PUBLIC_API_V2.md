@@ -212,3 +212,5 @@ snapshotの既知の安全な停止候補を目標への直線距離、同距離
 観測の既定compact応答も、frame選択・announcement・page作成を同じstore lock内で行う。明示pageの`frame_id=null,cursor=null`でも同じ最新frame経路を使える。ページングを中断する場合は`{schema_version:1,release_cursor:next_cursor}`だけを送り、`include_nbt`やpage fieldを併用しない。releaseは配送ACKや新しいworld観測を作らない。
 
 レバーを目的のON/OFFへ合わせるには`agent_interact`の空手block操作で`block="minecraft:lever"`と`expected_after_properties={"powered":"true"}`または`{"powered":"false"}`を指定する。通常reach内で同値を確認した場合はuse・照準・hotbar・姿勢入力を行わず`observed_cells`へbefore=afterを記録し、`confirmed_count`へ加算しない。変更時は通常useを1回だけ送り、powered以外のproperties不変とserver ACKを確認する。取消・失敗・成功時の自動OFFは行わない。結果不明の操作を再送する前に実状態を観測する。
+
+手持ちの詳しい名称・耐久・エンチャント等は`agent_get_state`へ`sections=["held_items"]`を明示して取得する。既定応答はplayer/hotbarを維持し、この詳細の生成・返却を行わない。tooltip非表示・欠測・打切りは元の診断を保持する。
