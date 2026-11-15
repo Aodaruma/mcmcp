@@ -3412,6 +3412,7 @@ public final class McmcpRuntime implements McpRuntimePort, EvaluationTurnControl
                 minecraft.player.getY(),
                 minecraft.player.onGround(),
                 minecraft.player.isInWater() && !minecraft.player.isInLava(),
+                LocalObservationVolume.canHoldLadder(minecraft.player),
                 correctionRevision);
     }
 
