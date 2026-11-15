@@ -21,6 +21,67 @@ class ObservationFrameStoreTest {
     private static final ResourceId DIMENSION = new ResourceId("minecraft:overworld");
 
     @Test
+    void latestPageWithoutCursorRetainsItsFrameForOtherQueriesUntilTheIdleDeadline()
+            throws Exception {
+        for (int records : List.of(0, 1, 64)) {
+            var clock = new FakeClock();
+            var store = store(clock);
+            store.publish(frame(1, records));
+
+            var compact = store.page(null, Set.of(ObservationKind.VISIBLE_SURFACE), null, 64);
+            assertThat(compact.nextCursor()).isNull();
+            assertThat(store.activePaginationLeases()).isZero();
+            store.publish(frame(2, 1));
+            store.publish(frame(3, 1));
+            clock.advance(Duration.ofSeconds(59));
+
+            var anotherQuery = store.page(compact.frameId(), Set.of(ObservationKind.HAZARD), null, 64);
+            assertThat(anotherQuery.frameId()).isEqualTo(compact.frameId());
+            assertThat(anotherQuery.frameCompletedTick()).isEqualTo(compact.frameCompletedTick());
+            assertThat(anotherQuery.records()).isEmpty();
+            assertThat(store.announcedFrameCount()).isOne();
+
+            clock.advance(ObservationFrameStore.ANNOUNCED_FRAME_IDLE_TIMEOUT);
+            assertFailure(() -> store.page(compact.frameId(), Set.of(ObservationKind.HAZARD), null, 64),
+                    ObservationStoreException.Code.FRAME_EXPIRED);
+        }
+    }
+
+    @Test
+    void latestPageAnnouncementsUseTheExistingHandleAndRecordCaps() throws Exception {
+        for (int records : List.of(1, 5_000)) {
+            var store = new ObservationFrameStore();
+            for (int number = 1; number <= ObservationFrameStore.ANNOUNCED_FRAME_LIMIT + 2; number++) {
+                store.publish(frame(number, records));
+                assertThat(store.page(null, Set.of(ObservationKind.HAZARD), null, 64).nextCursor()).isNull();
+            }
+            assertThat(store.activePaginationLeases()).isZero();
+            int retained = Math.min(ObservationFrameStore.ANNOUNCED_FRAME_LIMIT,
+                    ObservationFrameStore.ANNOUNCED_RECORD_LIMIT / records);
+            assertThat(store.announcedFrameCount()).isEqualTo(retained);
+            assertThat(store.announcedRecordCount()).isEqualTo(retained * records);
+            assertFailure(() -> store.page(id(1), Set.of(ObservationKind.HAZARD), null, 64),
+                    ObservationStoreException.Code.FRAME_EXPIRED);
+        }
+    }
+
+    @Test
+    void releasingALatestPageCursorDoesNotRefreshTheAnnouncedFrameDeadline() throws Exception {
+        var clock = new FakeClock();
+        var store = store(clock);
+        store.publish(frame(1, 2));
+        var page = store.page(null, Set.of(ObservationKind.VISIBLE_SURFACE), null, 1);
+        store.publish(frame(2, 1));
+        store.publish(frame(3, 1));
+        clock.advance(Duration.ofSeconds(59));
+
+        assertThat(store.releaseCursor(page.nextCursor())).isEqualTo(ObservationFrameStore.CursorReleaseStatus.RELEASED);
+        clock.advance(Duration.ofSeconds(2));
+        assertFailure(() -> store.page(page.frameId(), Set.of(ObservationKind.HAZARD), null, 64),
+                ObservationStoreException.Code.FRAME_EXPIRED);
+    }
+
+    @Test
     void atomicLatestSelectionPinsPaginationAcrossASubsequentPublication() throws Exception {
         var store = new ObservationFrameStore();
         store.publish(frame(1, 3));
