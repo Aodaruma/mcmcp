@@ -1,10 +1,13 @@
 package dev.aod.mcmcp.runtime;
 
 import dev.aod.mcmcp.client.McmcpClientConfig;
+import dev.aod.mcmcp.agent.observation.ClientFogDistanceSignals;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import java.util.HashMap;
@@ -16,7 +19,9 @@ final class FlightObservation {
     private final Minecraft minecraft;
     private final Vec3 eye;
     private final double radius;
+    private final double landingFog;
     private final Map<BlockPos, Boolean> cells = new HashMap<>();
+    private final Map<LandingSupport, Boolean> landingSupports = new HashMap<>();
     private final Map<String, Integer> rejections = new java.util.LinkedHashMap<>();
     private Map<String, Object> firstRejection;
     FlightObservation(Minecraft minecraft) {
@@ -24,6 +29,7 @@ final class FlightObservation {
         eye = minecraft.player.getEyePosition();
         radius = Math.min(McmcpClientConfig.flightObservationBlocks(),
                 Math.max(8, minecraft.options.getEffectiveRenderDistance() * 16 - 16));
+        landingFog = ClientFogDistanceSignals.current(minecraft.level, minecraft.player, minecraft.player.tickCount).orElse(0);
     }
     boolean clear(AABB box) {
         if (box.getSize() > radius || box.getCenter().distanceTo(eye) + box.getSize() > radius)
@@ -34,7 +40,7 @@ final class FlightObservation {
                 BlockPos.containing(box.maxX, box.maxY, box.maxZ))) {
             Boolean known = cells.get(pos);
             if (known == null) {
-                if (cells.size() >= MAX_CELLS) return reject("cell_budget", pos);
+                if (sampledCells() >= MAX_CELLS) return reject("cell_budget", pos);
                 known = witness(pos);
                 cells.put(pos.immutable(), known);
             }
@@ -71,7 +77,81 @@ final class FlightObservation {
                 feet.x + .3, feet.y + .6, feet.z + .3), Vec3.ZERO);
     }
 
-    Vec3 findLanding(Vec3 preferred, Vec3 threat) {
+    boolean stoppedLanding(AABB body, Vec3 motion, double expectedGround) {
+        if (motion.y > 0 || motion.y < -.6 || motion.horizontalDistance() > .65) return false;
+        var feet = body.getCenter();
+        var hit = minecraft.level.clip(new ClipContext(new Vec3(feet.x, body.minY + 1, feet.z),
+                new Vec3(feet.x, body.minY - .4, feet.z), ClipContext.Block.COLLIDER,
+                ClipContext.Fluid.ANY, minecraft.player));
+        if (hit.getType() != HitResult.Type.BLOCK || hit.getDirection() != net.minecraft.core.Direction.UP) return false;
+        double ground = hit.getLocation().y;
+        if (!sameLandingHeight(expectedGround, ground) || ground - body.minY > .4 || body.minY - ground > .3) return false;
+        var at = new Vec3(feet.x, ground, feet.z);
+        var drift = new Vec3(motion.x, 0, motion.z);
+        for (int tick = 0; tick < 32; tick++) {
+            var next = at.add(drift);
+            var standing = new AABB(Math.min(at.x, next.x) - .4, ground + .01, Math.min(at.z, next.z) - .4,
+                    Math.max(at.x, next.x) + .4, ground + 1.8, Math.max(at.z, next.z) + .4);
+            if (!clear(standing)) return false;
+            for (var pos : BlockPos.betweenClosed(BlockPos.containing(standing.minX, ground - .01, standing.minZ),
+                    BlockPos.containing(standing.maxX, ground - .01, standing.maxZ))) {
+                var key = new LandingSupport(pos.immutable(), ground);
+                Boolean known = landingSupports.get(key);
+                if (known == null) {
+                    if (sampledCells() >= MAX_CELLS) return reject("cell_budget", pos);
+                    known = dryLandingSupport(pos, ground);
+                    landingSupports.put(key, known);
+                }
+                if (!known) return false;
+            }
+            at = next;
+            // Three unreduced steps cover touchdown reconciliation before ordinary ground friction.
+            if (tick >= 2) drift = drift.scale(.546);
+            if (drift.horizontalDistance() < .005) return true;
+        }
+        return false;
+    }
+
+    private boolean dryLandingSupport(BlockPos pos, double ground) {
+        var level = minecraft.level;
+        if (!visibleLandingSupport(eye, pos, ground, radius, landingFog,
+                cell -> level.isLoaded(cell) && level.getWorldBorder().isWithinBounds(cell),
+                (mode, end) -> level.clip(new ClipContext(eye, end, mode, ClipContext.Fluid.ANY, minecraft.player))))
+            return reject("landing_support_unseen", pos);
+        var state = level.getBlockState(pos);
+        return state.isFaceSturdy(level, pos, net.minecraft.core.Direction.UP)
+                && state.getFluidState().isEmpty()
+                && !dev.aod.mcmcp.routine.MinecraftSemanticActionPort.isNavigationHazard(state)
+                && Math.abs(state.getFriction(level, pos, minecraft.player) - .6F) <= .0001F;
+    }
+
+    static boolean sameLandingHeight(double expected, double actual) {
+        return Double.isFinite(expected) && Double.isFinite(actual) && Math.abs(expected - actual) <= 1e-6;
+    }
+
+    /** Air above a floor does not prove that the floor's top, fluid or friction can be seen. */
+    static boolean visibleLandingSupport(Vec3 eye, BlockPos support, double ground, double radius, double fog,
+            java.util.function.Predicate<BlockPos> loaded,
+            java.util.function.BiFunction<ClipContext.Block, Vec3, BlockHitResult> ray) {
+        var surface = new Vec3(support.getX() + .5, ground, support.getZ() + .5);
+        if (!Double.isFinite(ground) || !Double.isFinite(fog) || fog <= 0
+                || eye.distanceToSqr(surface) > Math.min(radius, fog) * Math.min(radius, fog)) return false;
+        var end = surface.add(0, -1e-5, 0);
+        boolean allLoaded = BlockGetter.<Boolean, java.util.function.Predicate<BlockPos>>traverseBlocks(
+                eye, end, loaded, (known, pos) -> known.test(pos) ? null : Boolean.FALSE, known -> Boolean.TRUE);
+        if (!allLoaded) return false;
+        for (var mode : new ClipContext.Block[] {ClipContext.Block.VISUAL, ClipContext.Block.COLLIDER}) {
+            var hit = ray.apply(mode, end);
+            if (hit.getType() != HitResult.Type.BLOCK || !support.equals(hit.getBlockPos())
+                    || hit.getDirection() != net.minecraft.core.Direction.UP || hit.isInside() || hit.isWorldBorderHit()
+                    || !sameLandingHeight(ground, hit.getLocation().y)) return false;
+        }
+        return true;
+    }
+
+    private record LandingSupport(BlockPos position, double height) { }
+
+    Vec3 findLanding(Vec3 preferred, Vec3 threat, boolean descending) {
         var player = minecraft.player;
         Vec3 best = null;
         double bestScore = Double.POSITIVE_INFINITY;
@@ -84,6 +164,7 @@ final class FlightObservation {
                     ClipContext.Fluid.ANY, player));
             if (hit.getType() != HitResult.Type.BLOCK || hit.getDirection() != net.minecraft.core.Direction.UP) continue;
             var feet = hit.getLocation();
+            if (descending && !ElytraLandingCourse.descendingGoal(player.position(), feet)) continue;
             if (eye.distanceTo(feet) > radius || !minecraft.level.isLoaded(hit.getBlockPos())) continue;
             var sight = minecraft.level.clip(new ClipContext(eye, feet.add(0, .02, 0),
                     ClipContext.Block.COLLIDER, ClipContext.Fluid.ANY, player));
@@ -121,6 +202,6 @@ final class FlightObservation {
         return Map.of("rejections", Map.copyOf(rejections), "first_rejection",
                 firstRejection == null ? Map.of() : firstRejection);
     }
-    int sampledCells() { return cells.size(); }
+    int sampledCells() { return cells.size() + landingSupports.size(); }
     double radius() { return radius; }
 }

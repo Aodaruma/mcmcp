@@ -1,6 +1,9 @@
 package dev.aod.mcmcp.fixture;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import java.lang.reflect.Field;
 import java.util.*;
@@ -12,6 +15,8 @@ public final class FlightRecoveryProfiler {
     private static String caseName;
     private static Object flight, observation;
     private static Map<String, Object> before;
+    private static Map<String, Object> supportAttempt, firstSupportFailure;
+    private static int supportAttempts;
     private static long started;
     private FlightRecoveryProfiler() { }
 
@@ -19,6 +24,7 @@ public final class FlightRecoveryProfiler {
     public static void observe(Object value) { if (before != null) observation = value; }
     public static void before(Object runtime) {
         before = null; flight = null; observation = null;
+        supportAttempt = null; firstSupportFailure = null; supportAttempts = 0;
         var mc = Minecraft.getInstance();
         if (caseName == null || !Boolean.getBoolean("mcmcp.testHarness") || mc.player == null
                 || mc.getSingleplayerServer() == null || mc.getSingleplayerServer().isPublished() || SAMPLES.size() >= 1000) return;
@@ -49,10 +55,37 @@ public final class FlightRecoveryProfiler {
                 var method = observation.getClass().getDeclaredMethod("diagnostic"); method.setAccessible(true);
                 row.put("observation", method.invoke(observation));
                 var cells = (Map<?, ?>) field(observation, "cells"); row.put("sampled_cells", cells.size());
+                row.put("landing_visibility", Map.of("eye", vector((Vec3) field(observation, "eye")),
+                        "radius", field(observation, "radius"), "fog", field(observation, "landingFog"),
+                        "support_probe_truncated", supportAttempts > 16,
+                        "first_support_failure", firstSupportFailure == null ? Map.of() : firstSupportFailure));
             }
             SAMPLES.add(Map.copyOf(row));
         } catch (ReflectiveOperationException failure) { throw new IllegalStateException("Flight probe fields changed", failure); }
         finally { before = null; flight = null; observation = null; }
+    }
+    public static void supportStart(Vec3 eye, BlockPos support, double ground, double radius, double fog) {
+        supportAttempt = null;
+        if (before == null || firstSupportFailure != null || ++supportAttempts > 16) return;
+        var target = new Vec3(support.getX() + .5, ground, support.getZ() + .5);
+        supportAttempt = new LinkedHashMap<>(Map.of("eye", vector(eye), "support",
+                List.of(support.getX(), support.getY(), support.getZ()), "ground", ground,
+                "radius", radius, "fog", fog, "distance", eye.distanceTo(target),
+                "rays", new ArrayList<Map<String, Object>>()));
+    }
+    @SuppressWarnings("unchecked")
+    public static void supportRay(ClipContext.Block mode, BlockHitResult hit) {
+        if (supportAttempt == null) return;
+        var rays = (List<Map<String, Object>>) supportAttempt.get("rays");
+        if (rays.size() >= 2) return;
+        var pos = hit.getBlockPos();
+        rays.add(Map.of("mode", mode.name(), "type", hit.getType().name(), "block",
+                List.of(pos.getX(), pos.getY(), pos.getZ()), "location", vector(hit.getLocation()),
+                "face", hit.getDirection().name(), "inside", hit.isInside(), "world_border", hit.isWorldBorderHit()));
+    }
+    public static void supportEnd(boolean visible) {
+        if (supportAttempt != null && !visible) firstSupportFailure = Map.copyOf(supportAttempt);
+        supportAttempt = null;
     }
     static Map<String, Object> finish() {
         if (caseName == null) return Map.of();

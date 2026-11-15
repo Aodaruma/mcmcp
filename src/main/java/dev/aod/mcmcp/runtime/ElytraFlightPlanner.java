@@ -5,12 +5,22 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import java.util.function.Predicate;
 import java.util.function.BiPredicate;
+import java.util.function.BooleanSupplier;
 
 /** Rolling, finite Vanilla flight predictions. Unknown space is rejected by the supplied witness. */
 final class ElytraFlightPlanner {
     private ElytraFlightPlanner() { }
     record Plan(float yaw, float pitch, boolean boost, int verifiedTicks, int horizon, double score, boolean landing) {
         boolean fullyVerified() { return verifiedTicks == horizon || landing; }
+    }
+
+    static float launchYaw(Vec3 position, Vec3 goal, float currentYaw) {
+        return goal.subtract(position).horizontalDistanceSqr() < 1e-8 ? currentYaw
+                : (float) Math.toDegrees(Math.atan2(position.x - goal.x, goal.z - position.z));
+    }
+
+    static boolean reserveLanding(boolean alreadyReserved, int verifiedCourseTicks) {
+        return alreadyReserved || verifiedCourseTicks > 0;
     }
 
     static boolean reserveLanding(Vec3 position, Vec3 motion, Vec3 goal, long ticks, double distance, double camera) {
@@ -44,6 +54,26 @@ final class ElytraFlightPlanner {
     static int horizon(double speed, int boostTicks, int latencyTicks) {
         return Math.min(100, Math.max(16 + latencyTicks, boostTicks + 12 + latencyTicks
                 + (int) Math.ceil(Math.min(8, speed) * 4)));
+    }
+
+    static Plan coast(Vec3 position, Vec3 motion, float yaw, float pitch, double gravity, int latencyTicks,
+            long remainingTicks, double remainingDistance, Predicate<AABB> witnessed, BooleanSupplier allowed) {
+        int horizon = horizon(motion.length(), 0, latencyTicks);
+        if (horizon < 1 || horizon > remainingTicks || !allowed.getAsBoolean()) return null;
+        var body = new AABB(position.x - .3, position.y, position.z - .3,
+                position.x + .3, position.y + .6, position.z + .3);
+        if (!witnessed.test(body.inflate(.2))) return null;
+        double distance = 0;
+        // With no turn, phase change or boost, every steering-delay path is identical.
+        for (int tick = 0; tick < horizon; tick++) {
+            if (!allowed.getAsBoolean()) return null;
+            motion = velocity(motion, yaw, pitch, gravity, false);
+            distance += motion.length();
+            if (!Double.isFinite(distance) || distance > remainingDistance
+                    || !witnessed.test(body.expandTowards(motion).inflate(.2))) return null;
+            body = body.move(motion);
+        }
+        return allowed.getAsBoolean() ? new Plan(yaw, pitch, false, horizon, horizon, 0, false) : null;
     }
 
     static boolean needsBoost(Vec3 position, Vec3 goal, int boostTicks, int latencyTicks) {

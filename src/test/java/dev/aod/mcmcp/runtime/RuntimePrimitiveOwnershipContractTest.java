@@ -14,6 +14,31 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** 分割後も効果回収と入力解放がActionのterminal公開より先に行われることを検査する。 */
 class RuntimePrimitiveOwnershipContractTest {
     @Test
+    void landingSearchTimeoutCoastRequiresTheActualPlayerBodyBeforeItsDispatch() throws Exception {
+        var tick = method(MinecraftElytraFlight.class, "tick");
+        MethodInsnNode coast = null, body = null, clear = null, expired = null;
+        for (var instruction : tick.instructions) {
+            if (!(instruction instanceof MethodInsnNode call)) continue;
+            if (call.owner.endsWith("ElytraFlightPlanner") && call.name.equals("coast")) { coast = call; break; }
+            if (call.name.equals("expired")) expired = call;
+            if (call.name.equals("getBoundingBox")) body = call;
+            if (call.owner.endsWith("FlightObservation") && call.name.equals("clear")) clear = call;
+        }
+        assertThat(coast).isNotNull();
+        assertThat(expired).isNotNull();
+        assertThat(body).isNotNull();
+        assertThat(clear).isNotNull();
+        assertThat(tick.instructions.indexOf(body)).isGreaterThan(tick.instructions.indexOf(expired));
+        assertThat(tick.instructions.indexOf(clear)).isGreaterThan(tick.instructions.indexOf(body));
+        var guard = clear.getNext();
+        while (guard.getOpcode() < 0) guard = guard.getNext();
+        assertThat(guard).isInstanceOf(org.objectweb.asm.tree.JumpInsnNode.class);
+        var rejection = (org.objectweb.asm.tree.JumpInsnNode) guard;
+        assertThat(rejection.getOpcode()).isEqualTo(org.objectweb.asm.Opcodes.IFEQ);
+        assertThat(tick.instructions.indexOf(rejection.label)).isGreaterThan(tick.instructions.indexOf(coast));
+    }
+
+    @Test
     void floorCleanupExceptionsReturnTheCapturedExpiryBeforeGenericSafetyFailure() throws Exception {
         var tick = method(dev.aod.mcmcp.routine.MinecraftFloorExtensionAttempt.class, "tick");
         var handler = tick.tryCatchBlocks.stream().filter(block -> block.type.equals("java/lang/RuntimeException"))
