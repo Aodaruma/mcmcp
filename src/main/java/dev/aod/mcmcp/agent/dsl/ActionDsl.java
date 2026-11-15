@@ -197,24 +197,46 @@ public final class ActionDsl {
             List<BoundedInput> inputs,
             long durationTicks,
             Optional<ExactBlockTargetGuard> targetGuard,
-            Optional<String> selectedItem) implements Node {
+            Optional<String> selectedItem,
+            boolean repeatTarget) implements Node {
         public HoldBoundedInputs {
             Objects.requireNonNull(id, "id");
             inputs = List.copyOf(Objects.requireNonNull(inputs, "inputs"));
             Objects.requireNonNull(targetGuard, "targetGuard");
             Objects.requireNonNull(selectedItem, "selectedItem");
         }
+
+        public HoldBoundedInputs(String id, List<BoundedInput> inputs, long durationTicks,
+                Optional<ExactBlockTargetGuard> targetGuard, Optional<String> selectedItem) {
+            this(id, inputs, durationTicks, targetGuard, selectedItem, false);
+        }
     }
 
-    /** Exact live crosshair guard required by bounded attack/use input holds. */
+    /** Live block guard; only attack may explicitly opt out of matching the observed face. */
     public record ExactBlockTargetGuard(
             Position target,
             BlockFace face,
-            BlockStateSpec expectedState) {
+            String expectedBlock,
+            BlockStateSpec expectedState,
+            boolean matchFace) {
         public ExactBlockTargetGuard {
             Objects.requireNonNull(target, "target");
             Objects.requireNonNull(face, "face");
-            Objects.requireNonNull(expectedState, "expectedState");
+            Objects.requireNonNull(expectedBlock, "expectedBlock");
+        }
+
+        public ExactBlockTargetGuard(Position target, BlockFace face, BlockStateSpec expectedState) {
+            this(target, face, expectedState.block(), expectedState, true);
+        }
+
+        public ExactBlockTargetGuard(Position target, BlockFace face, String expectedBlock,
+                BlockStateSpec expectedState) {
+            this(target, face, expectedBlock, expectedState, true);
+        }
+
+        public boolean matches(String block, Map<String, String> properties) {
+            return expectedBlock.equals(block) && (expectedState == null
+                    || expectedState.properties().equals(properties));
         }
     }
 
@@ -751,11 +773,16 @@ public final class ActionDsl {
     }
 
     /** Executes one current opaque operation against its session-bound known menu. */
-    public record OperateKnownMenu(String id, String operationRef) implements Node {
+    public record OperateKnownMenu(String id, String operationRef,
+            String operation, String item, Integer transferCount) implements Node {
+        public OperateKnownMenu(String id, String operationRef) {
+            this(id, operationRef, null, null, null);
+        }
         public OperateKnownMenu {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(operationRef, "operationRef");
         }
+        public boolean opensStorage() { return operation != null; }
     }
 
     /** Brews one declared batch of 1..3 component-exact standard Vanilla potions. */

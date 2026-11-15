@@ -20,6 +20,33 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class KnownContainerAttemptTest {
     @Test
+    void storageTransferRetainsConfirmedPrefixAndUnknownTailOnceOnCancellation() {
+        var port = new FakePort();
+        port.holdPending = true;
+        port.extraBasis = Map.ofEntries(
+                Map.entry("open_count", 1), Map.entry("container_clicks", 3),
+                Map.entry("source_before", 2560), Map.entry("destination_before", 0),
+                Map.entry("confirmed_transfer_count", 24), Map.entry("confirmed_source_count", 2536),
+                Map.entry("confirmed_destination_count", 24), Map.entry("transfer_in_flight", true),
+                Map.entry("pending_source_before", 2536), Map.entry("pending_destination_before", 24));
+        var original = request();
+        var request = new PhaseFiveRequest("operate_known_menu",
+                Map.of("operation_ref", "abcdefghijklmnopqrstuvwx", "operation", "take",
+                        "item", "minecraft:red_dye", "transfer_count", 48), original.bounds(), 48, "items");
+        var attempt = new KnownContainerAttempt(port, request, 1, 101);
+        port.tick = 1;
+        attempt.tick(1);
+        port.tick = 2;
+        attempt.tick(2);
+        attempt.close();
+        var effects = attempt.drainEffectDeltas();
+        assertThat(effects).hasSize(2);
+        assertThat(effects.getFirst().verification()).isEqualTo(AgentActionStore.Verification.CONFIRMED);
+        assertThat(effects.getFirst().observedAfter()).containsEntry("transferred", 24);
+        assertThat(effects.getLast().verification()).isEqualTo(AgentActionStore.Verification.UNKNOWN);
+        assertThat(attempt.drainEffectDeltas()).isEmpty();
+    }
+    @Test
     void missingSafeHandReportsFixedCauseAndRemedyBeforeOrAfterBegin() {
         for (boolean beforeBegin : new boolean[] {true, false}) {
             for (String code : List.of("INVENTORY_SAFE_OPEN_HAND_REQUIRED", "INVENTORY_SAFE_OPEN_HAND_UNAVAILABLE")) {

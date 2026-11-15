@@ -11,4 +11,3 @@ function Get-MaterialSurface {
         -Block $Block -Bounds (Get-MaterialCellBounds $X $Y $Z) -Faces $Faces
     return $current.records[0]
 }
-

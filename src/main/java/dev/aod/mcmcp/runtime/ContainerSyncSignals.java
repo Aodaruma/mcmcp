@@ -56,6 +56,14 @@ public final class ContainerSyncSignals {
         return record(level, channel -> channel.openScreen(containerId, menuTypeId, receivedTick));
     }
 
+    /** Fresh cursor packets are required independently from incremental slot packets. */
+    public long cursorProofRevision(ClientLevel level) {
+        synchronized (gate) {
+            var channel = channels.get(level);
+            return channel == null || !channel.bound() ? -1L : channel.cursorProofRevision;
+        }
+    }
+
     public Optional<RecordResult> onFullContent(
             ClientLevel level,
             int containerId,
@@ -311,10 +319,13 @@ public final class ContainerSyncSignals {
         private ContainerSnapshot container;
         private Map<Integer, ContainerDataEvidence> data = Map.of();
         private CloseEvidence lastClose;
+        private long cursorProofRevision = -1L;
 
         boolean bound() {
             return worldSessionId != null;
         }
+
+        long cursorProofRevision() { return cursorProofRevision; }
 
         Snapshot bindAndSnapshot(UUID requestedSession) {
             Objects.requireNonNull(requestedSession, "requestedSession");
@@ -325,6 +336,7 @@ public final class ContainerSyncSignals {
                 container = null;
                 data = Map.of();
                 lastClose = null;
+                cursorProofRevision = -1L;
             }
             return snapshot();
         }
@@ -339,6 +351,7 @@ public final class ContainerSyncSignals {
             // A newly negotiated menu must never inherit data from an older container id.
             container = null;
             data = Map.of();
+            cursorProofRevision = -1L;
             return RecordResult.applied(snapshot());
         }
 
@@ -352,6 +365,7 @@ public final class ContainerSyncSignals {
             long revision = nextRevision();
             container = new ContainerSnapshot(worldSessionId, containerId, menuTypeId, stateId,
                     slots, carried, tick, revision);
+            cursorProofRevision = revision;
             return RecordResult.applied(snapshot());
         }
 
@@ -409,6 +423,7 @@ public final class ContainerSyncSignals {
                 return RecordResult.rejected(snapshot(), "container_identity_mismatch");
             }
             container = container.withCarried(stack, tick, revision);
+            cursorProofRevision = revision;
             return RecordResult.applied(snapshot());
         }
 

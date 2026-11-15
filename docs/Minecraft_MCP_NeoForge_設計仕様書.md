@@ -1096,6 +1096,16 @@ agent_get_stateの返却対象:
 
 生chunk、遮蔽されたentity、chat、看板、本、world seed、tokenはTool resultへ含めない。例外としてautomation-ownedな明示allowlist対象Vanilla chest / barrelを通常useで開いた直後のserver full-content packetから作るbounded item集計だけは、そのActionのtraceへ一時的に返せる。許可された観測recordだけを`agent_get_observation`で最大256件ずつ返す。Action traceはagent_get_actionで最大256件まで返す。既に行った移動、破壊、設置、攻撃、item消費はtransactionではなく、cancel時に自動rollbackしない。不可逆primitiveは実行直前にも観測、capability、budgetを再検証する。
 
+#### 手持ちアイテムの公開情報
+
+`agent_get_state.held_items` は現在選択中のhotbar番号（0〜8）と `main_hand` / `off_hand` のimmutable snapshotを返す。world/player不在では全体が `null`、空手はそのhandが `null`。既存 `inventory` は品目IDと合計数の集計を維持する。同種の道具を複数持つ場合も、手持ちの個体を集計から推測しない。
+
+各handはitem ID、個数、表示名、耐久値（`damage` / `maximum` / `remaining`）、エンチャントIDとlevel、現在のhandで表示される標準数値の属性modifierを公開する。要求時に通常のadvanced tooltipを生成し、NeoForge `ItemTooltipEvent` 適用後の最終表示に一致する項目だけを採用する。tooltip本文、lore、任意NBT、component blob、click/hover eventは返さない。表示名は信頼しないデータとして扱う。
+
+耐久値は数値行が見える場合だけ返すため、新品、非耐久品、破壊不能、表示非公開、取得不能では `null` とする。`unbreakable` は表示を確認した `true` または不明の `null`。数値の上書き表示、非表示属性、player基礎値と合算される攻撃力・攻撃速度、表示で丸め落とされる精度は公開しない。属性は最終player能力値や採掘速度ではなくmodifierの値であり、Efficiency Vの標準表示なら採掘効率 `+26` を含む。
+
+非公開/不明の一覧は `null`。空配列は返せる項目がないことを表し、すべての効果の不在を保証しない。文字列256 UTF-16単位、一覧64件、照合するtooltip256行までに制限し、長すぎる表示名は省略する。長すぎるitem IDは `null` とし、制限・取得不能は `truncated` で示す。`tooltip_hidden` は標準componentの全体非表示フラグを表す。道具交換や使用後は再取得し、このsnapshotを後続操作の認可や、耐久力/修繕込みの残作業時間の保証に使わない。
+
 ### 8.6 内部Task state
 
 ~~~text
@@ -1377,9 +1387,17 @@ MOD menuは次の2種類に分ける。
 
 すべてのadapterは、通常use / menu openの因果ACK、exact menu ownership、cursorを変化させるclick直前のcursor証明失効とfresh server cursor証明、cursor-invariantなQUICK_MOVEでは直前のserver-confirmed empty cursor維持、絶対inventory差分、有限budget、Esc / UI OFF / world境界、terminal前のScreen・cursor・camera・slot解放を9.6と共通の必須条件とする。途中まで消費・生成されたitemをrollbackしたふりはせず、最初のterminal intentとauthoritative inventoryを保持する。cleanupが証明できない場合は成功・失敗を公開せず、入力隔離を維持してfail closedにする。
 
-#### 9.7.1 共通収納操作への拡張方針（計画・未実装）
+#### 9.7.1 共通収納操作（#70候補・実機未検証）
 
-利用者の方針変更を受け、[Issue #70](https://github.com/Aodaruma/mcmcp/issues/70)ではMODを限定しない収納操作を実装する。既存の共通Menu基盤を拡張し、バックパック専用Toolや独立した転送エンジンは作らない。Sophisticated Backpacksは最初の検証対象とする。ここに記載するMCPからのバッグ開閉、MOD収納の指定個数移送、拡張stack対応は、現時点で利用可能な機能ではない。
+利用者の方針変更を受け、[Issue #70](https://github.com/Aodaruma/mcmcp/issues/70)で既存の共通Menu基盤を拡張した。公開Toolは5本のまま、既存`operate_known_menu`へ汎用の`inspect` / `take` / `store`を追加する。MODごとの移送エンジンは作らず、Vanillaの`ExactInventoryTransfer`を両方向の数量計画・照合に再利用する。本節は候補実装の仕様であり、mainの配布版および実機合格とは区別する。
+
+`agent_get_state.known_storages`は現在の所持・装備にある対応収納を最大16件返す。`storage_id`は同一session内で同じ個体を識別するopaque ID、`operation_ref`は現在の位置とstack・player・sessionへ結び付いた1回限りの操作参照である。内容確認後は同じ`storage_id`の新しい`operation_ref`を取得する。参照期限は1,200tick、対象移動・交換・成分変更では期限内でも拒否する。内部のbag UUIDや任意NBTは公開しない。
+
+`operation:"inspect"`では開封→server full-content→空cursorと閉画面を確認し、直近1件の内容を`storage_inspection`へ保持する。結果はstorage ID、消費した参照、実観測tick、packet revision、slotごとのitem/countを持つ履歴であり、再操作の認可ではない。`operation:"take"|"store"`では`item`と`transfer_count`（1..896）を必須とし、同一componentsの固定計画が14click以内で証明できる場合だけ進める。別componentsを合算して数量を満たさない。移送後は同一個体を再開封して全slotの保存則を照合し、閉じる。取り出し・格納は80秒/1,600tick/16interaction、inspectは30秒/600tick/1interaction、移動・camera・破壊・設置は0である。
+
+初期providerは既存のversion/hash固定Sophisticated Backpacks + Coreである。Vanillaの36所持slot、胸装備、offhandを発見し、MOD本来の対象指定開封を呼ぶ。UUID未初期化のバッグ、入れ子・linked storage、独自装備API、worldに設置されたMOD収納の自動開封は今回のproviderの対象外。通常のVanilla chest/barrelと手動で開いた既知menuの従来操作は維持する。通常menu参照に`operation`を付けて数量移送する拡張は未対応であり、数量操作では`known_storages`の参照を使う。
+
+NeoForgeの追加データ付きopenとproviderのfull/slot同期を共通packet ledgerへ接続する。providerが`menu.slots`の外へ持つupgrade slotも全体snapshotへ含め、protectedとして変更を拒否する。storageは最大512slot、全同期slotは最大1,024。open upgrade / extra slots、取り出せないslot、overflow消費hookがある構成は移送を拒否する。未知のversion・class・同期規則は有効化しない。
 
 | 境界 | 担当する処理 |
 | --- | --- |
@@ -1387,11 +1405,11 @@ MOD menuは次の2種類に分ける。
 | 収納の契約 | storage / player / protectedの役割、取り出し・格納可否、item/components、slot容量、通常／拡張stackのclick規則、同期・readback方法を表す。slot順序やplayer slotの位置を操作本体の前提にしない |
 | 共通の実行 | 参照の再検証、個数計画、通常click、fresh server slot/cursor確認、保存則、confirmed/unknown台帳、有限予算、取消・解放を共有する。MOD名・class名・JAR hashの分岐をここへ置かない |
 
-利用者向けには「収納を選ぶ→開く→内容を確認する→指定数を取り出す／格納する→閉じる」を同じ流れで扱う。手動で開いた対応画面にも同じ移送処理を使えるが、手動開封だけでは本対応の完了条件を満たさない。同種のバッグが複数ある場合も、選択後の移動・持ち替え・交換で別の個体を操作しないよう、対象参照を再検証する。
+利用者向けには「収納を選ぶ→内容を確認する→指定数を取り出す／格納する」を同じ流れで扱い、開閉は各Actionに含める。将来のproviderと手動開封・world収納の数量操作もこの共通実行へ接続する。同種のバッグが複数ある場合も、選択後の移動・持ち替え・交換で別の個体を操作しないよう、対象参照を再検証する。
 
 標準の収納契約で扱える画面は共通処理へ載せ、固有の開き方やstack更新規則だけを小さな連携部分で補う。slot数や表示名から未知の画面を純storageと推測せず、加工結果、購入、upgrade、ghost等の操作は収納から分離する。既存profileのversion/hash確認は互換性を検証して移行するまで維持する。新しいMODへ対応するときに数量移送処理を複製する必要をなくすことが目的であり、未検証のすべてのMODへの自動対応を保証するものではない。
 
-Vanillaの`transfer_count`で使う`ExactInventoryTransfer`は共通数量計画・照合の再利用元とする。ただし現在は通常stackと最大14clickのモデルであり、拡張stackには専用のclick規則・上限と同期証拠の検証が必要になる。読み取り、全量移送、指定数移送、拡張stack対応の能力を区別し、未対応操作を実行可能と表示しない。取消時の無条件なcursor救済や未知clickの再送を共通化に含めない。正常終了では空cursorと画面解放を確認し、途中停止では確認済みの移送と不明な結果を保存し、安全な解放を証明できなければ既存の停止方針を維持する。
+`ExactInventoryTransfer`はMenuのPICKUP規則に従い、空cursorの左clickではslot全量、右clickでは半量を持ち上げる。拡張stackではcursorが一時的に通常の最大stack数を超えるため、その状態も各clickで照合する。どちらか一方が通常player slotである組合せだけを有限探索し、14click以内に空cursorへ戻せない数量は実行前に拒否する。slot役割の順序に依存せず、protected slotも毎clickの照合に含める。各clickの前に全slot/cursor、後にfreshなslotと独立したcursor packetを要求する。途中停止では確認済みprefixと結果不明のclickを既存effect台帳へ別々に一度だけ記録する。取消時の無条件なcursor救済や未知clickの再送はしない。開封応答待ちの取消は遅れて来る画面の後片付けまで保持し、空cursor・閉画面を証明できなければOFF lockを維持する。
 
 受入試験はVanillaとMOD収納の異なる実装・slot配置、装備中と所持品内、同種バッグ2個、両方向の指定数移送、拡張stack、容量不足、成分違い、自動補充、対象移動、同期遅延・欠落、各中断境界を含む。単体・結合試験と、利用者が許可したリモートDocker検証環境での軽い実機試験を分けて記録する。コード・候補JARの共有、実機合格、Release公開も別の完了状態とする。
 
@@ -2083,6 +2101,37 @@ repository作成直前に、選択したowner配下で`mcmcp`が作成可能か�
 ### チャットから期待したコンテナへの画面遷移
 
 NeoForge 26.2の画面切替は新画面のOpeningの後に旧画面のClosingを通知する。通常操作を許可する非pause ChatScreenから、正確なOpenScreen packetに対応したmenuへ切り替わる場合だけ、EXPECTING_FULL_CONTENTへ進んだ同じclient tick内の旧chatのClosingを1回許可する。所有権は同じsession・container ID・menu typeのfull-content packet確認後に限る。期待前・別tick・重複のchat閉鎖、所有済みコンテナの予期しない閉鎖、別menuのopenは引き続き停止する。
+
+
+## 対象の再生成を待つ有限長押し
+
+`hold_bounded_inputs` は有限時間だけ入力を保持します。`target_guard` の座標・面は最新の配送済み観測からコピーし、`expected_state` は省略しません。完全stateがあればそのまま指定し、`state:null` なら `expected_state:null` と観測のblockをコピーした `expected_block` を指定します。両方にblock IDがある場合は一致が必須です。非公開propertyを推測する必要はありません。
+
+`target_guard.match_face` の既定は `true` で、観測面と実際のcrosshair面も一致させます。雪の採掘などでは `match_face:false` を明示すると、同じ座標・blockへ実際に当たった別の面を許可できます。`face` は観測記録の値として引き続き必須です。許可する入力は `attack` または `attack` と `sneak` の組合せだけで、面により効果が変わる `use` ではfalseを拒否します。通常reach、実BLOCK hit、loaded/world border、手持ち、静止・安全条件、非null時の完全state一致は維持します。実際に当たった面をVanillaへ渡し、照準や面を合成しません。
+
+既定の `repeat_target:false` は厳密停止です。現在のcrosshairが座標・block・指定state（`match_face:true` では面も）から外れると拒否を保持し、同じAction内では再開しません。
+
+`repeat_target:true` と有限の `duration_ticks` を明示すると、同じActionの中で対象の再生成を待てます。対象消失、MISS、entity、別の座標・block・state（`match_face:true` では別の面も）への照準中は新しい採掘・使用を出さず、同じ対象条件が戻ると再開します。照準を自動で動かしません。開始済みの弓・飲食等の使用は一時的な対象不一致だけでは解除せず、次の使用開始には改めて一致を要求します。
+
+回数指定の `max_repetitions` は廃止しました。反復モードでは1 client tickにつき最大1回の新規開始とし、`duration_ticks` から必要な試行枠を算出します。`budget.max_interactions` と、attackでは `budget.max_blocks_broken` に、それぞれ `duration_ticks` 以上を指定してください。時間分に満たない予算は実行前に拒否し、受理したActionを64回・2,048回など時間と独立した回数上限で打ち切りません。最大時間は1,728,000tick・86,400,000ms（24時間）です。通常のVanilla採掘・使用の新規開始ごとに1 interactionを記録し、継続・cooldown・待機tickは追加消費しません。同一tickの重複開始や予算を超える開始は送信前に拒否します。旧 `max_repetitions` fieldと移動だけの反復は拒否します。他のActionの予算上限は変更しません。
+
+例えば、観測済みの雪を現在の照準で最大60tickだけ採掘するnodeは次の形です。座標・面・block・手持ちは実観測から置き換え、programの唯一のbody nodeとして `block_break` capabilityで提出します。
+
+```json
+{
+  "id": "hold_attack", "op": "hold_bounded_inputs", "inputs": ["attack"],
+  "duration_ticks": 60, "repeat_target": true,
+  "target_guard": {
+    "target": {"dimension": "minecraft:overworld", "x": 204, "y": 200, "z": 194},
+    "face": "south", "match_face": false, "expected_state": null, "expected_block": "minecraft:snow"
+  },
+  "selected_item": "minecraft:wooden_shovel"
+}
+```
+
+この例のbudgetは `max_duration_ms:3000`、`max_ticks:60`、`max_interactions:60`、`max_blocks_broken:60`、その他の枠は0です。待機も元の時間・tick予算へ数え、対象復帰で期限を延長しません。実際のsimulation pauseは既存規則通り入力を中立化してactive timeを凍結し、再開時に検証します。
+
+位置・手持ち変更、reach外、health低下、Screen・overlay、安全中断、Esc、OFF、cancel、期限、world/session変更では既存の入力解放経路へ進みます。 対象照合の固定診断は `bounded_input_target_not_focused`、`target_position_changed`、`target_face_changed`、`target_block_changed`、`target_state_changed`、`target_unloaded`、`target_outside_world_border`、`target_out_of_reach`（後続も同じ `bounded_input_` 接頭辞）に分け、面不一致を距離外等と混同しません。入力開始直前にも再検証し、例外や安全違反は解除までラッチします。開始回数は保守的な試行数であり、破壊成功数・回収数・server確認済みeffectではありません。道具交換・耐久保護・収集量保証はありません。
 
 ## 外部平面施工runnerとworld session
 

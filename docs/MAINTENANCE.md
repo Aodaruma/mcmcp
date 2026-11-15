@@ -73,6 +73,11 @@ The hourly heartbeat in the MCMCP maintenance task checks the following. Stay qu
 - ProjectsとIssue状態の整合、`release:verification-needed`の未解決項目。<br>
   Project/issue consistency and outstanding `release:verification-needed` items.
 
+## ローカル導入 / Local installation
+
+Windows の製品 JAR 更新は [導入ツール](../tools/install/README.md)を使い、Minecraft 停止中に実ファイルの物理パスとハッシュを検証します。MSIX アプリ配下のシェルは AppData を別の場所へ転送する場合があるため、同じパス文字列とハッシュ一致だけでは実プロファイルへの導入を証明できません。導入後は起動中の Tool catalog と手動入力を別途確認します。<br>
+Use the installation tool to verify physical paths and hashes while Minecraft is stopped. An MSIX app's shell can redirect AppData, so a matching logical path and hash alone do not prove installation into the real profile. Verify the live Tool catalog and manual input after restarting.
+
 ## タグと公開 / Tags and releases
 
 タグpushは非draft Releaseを公開します。**実機確認が未完了または不合格のhotfixを配布タグへ昇格させないでください。** CI成功・PR merge・JAR生成と、実機合格は別です。<br>
