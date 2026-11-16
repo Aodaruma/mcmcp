@@ -4,6 +4,13 @@
 
 <img src="docs/assets/readme/mcmcp-logo.png" width="180" alt="MCMCP: ロボットとピッケル">
 
+[![リリース](https://img.shields.io/github/v/release/Aodaruma/mcmcp?include_prereleases&sort=semver)](https://github.com/Aodaruma/mcmcp/releases)
+[![ビルド状況](https://github.com/Aodaruma/mcmcp/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/Aodaruma/mcmcp/actions/workflows/release.yml)
+[![Minecraft 26.2](https://img.shields.io/badge/Minecraft-26.2-62B47A)](#はじめるには)
+[![NeoForge 26.2.0.59](https://img.shields.io/badge/NeoForge-26.2.0.59-orange)](#はじめるには)
+[![Java 25](https://img.shields.io/badge/Java-25-ED8B00)](#はじめるには)
+[![ライセンス](https://img.shields.io/github/license/Aodaruma/mcmcp)](LICENSE)
+
 Minecraftでの作業を、CodexやClaude CodeなどのAIアシスタントに頼めるNeoForge MODです。自分のプレイヤーを通して、周囲の確認、移動、採掘・建築、クラフト、アイテム整理などを行います。
 
 **[ダウンロード](https://github.com/Aodaruma/mcmcp/releases)** · **[画像付き導入ガイド](docs/MCMCP_配布用README.md)** · **[ガイドPDF](docs/MCMCP_配布用README.pdf)**
