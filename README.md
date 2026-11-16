@@ -1,87 +1,79 @@
 # MCMCP
 
-<img src="docs/assets/readme/mcmcp-logo.png" width="180" alt="MCMCP: a robot with a pickaxe / ロボットとピッケル">
+[日本語版](README-ja.md)
 
-Minecraftでの作業を、CodexやClaude CodeなどのAIに頼めるNeoForge MODです。自分のプレイヤーを通して、周囲の確認、移動、アイテム整理、農作業などを行います。
+<img src="docs/assets/readme/mcmcp-logo.png" width="180" alt="MCMCP: a robot with a pickaxe">
 
-A NeoForge mod that lets you ask AI assistants such as Codex and Claude Code to help in Minecraft. Your player can inspect the surroundings, move, organize items, and work on crops.
+Ask an AI assistant such as Codex or Claude Code to help you in Minecraft. MCMCP is a client-side NeoForge mod that lets your assistant use your player to explore, move, build, craft, and manage items.
 
-**[画像付き導入ガイド / Setup guide](docs/MCMCP_配布用README.md)** · **[PDF](docs/MCMCP_配布用README.pdf)** · **[Releases](https://github.com/Aodaruma/mcmcp/releases)**
+**[Download](https://github.com/Aodaruma/mcmcp/releases)** · **[Illustrated setup guide (Japanese)](docs/MCMCP_配布用README.md)** · **[Guide PDF (Japanese)](docs/MCMCP_配布用README.pdf)**
 
-## はじめるには / Getting started
+## Getting started
 
-- **Minecraft Java Edition 26.2 / NeoForge 26.2.0.59 / Java 25**
-- 同じPCで使うMCP対応クライアント（Codex・Claude Codeなど）<br>An MCP client running on the same PC, such as Codex or Claude Code.
-- MODは自分のMinecraftに導入します。サーバー側への導入は不要です。<br>Install the mod in your Minecraft client. No server-side installation is needed.
+You need **Minecraft Java Edition 26.2, NeoForge 26.2.0.59, Java 25**, and an MCP-compatible AI client running on the same PC. Install MCMCP in your Minecraft client; no server-side installation is needed.
 
-1. **MODを追加する** — CurseForgeまたはPrism Launcherの使用中のプロフィールへJARを追加します。<br>**Add the mod** — Add the JAR to your existing CurseForge or Prism Launcher profile.
-2. **AIクライアントを接続する** — ワールドに入り、Esc →「MCP接続設定」で設定し、AIクライアントを再起動します。<br>**Connect your AI client** — Enter a world, press Esc, open “MCP接続設定” (MCP connection settings), then restart your AI client after setup.
-3. **操作をONにして依頼する** —「MCP操作」をONにしてゲームへ戻り、まず現在の状態や持ち物の確認を頼みます。<br>**Enable control and ask for help** — Turn on “MCP操作” (MCP control), return to the game, and start by asking about your status or inventory.
+1. **Install the mod.** Download the distribution ZIP from [Releases](https://github.com/Aodaruma/mcmcp/releases), then add its JAR to your CurseForge or Prism Launcher profile.
+2. **Connect your assistant.** Enter a world, press Esc, and open **MCP connection setup**. Configure your AI client, then restart it with the configuration you selected.
+3. **Enable control.** Turn **MCP control** on, return to the game, and start by asking your assistant to check your status or inventory.
 
-導入ガイドは日本語です。配布用ZIP・JAR・PDFは[Releases](https://github.com/Aodaruma/mcmcp/releases)、開発中のビルドは[GitHub Actions](https://github.com/Aodaruma/mcmcp/actions/workflows/release.yml)を参照してください。
-
-The illustrated guide is currently in Japanese. See [Releases](https://github.com/Aodaruma/mcmcp/releases) for distribution ZIPs, JARs, and PDFs, or [GitHub Actions](https://github.com/Aodaruma/mcmcp/actions/workflows/release.yml) for development builds.
+The illustrated setup guide and most detailed documentation are currently in Japanese. Development builds are available from [GitHub Actions](https://github.com/Aodaruma/mcmcp/actions/workflows/release.yml).
 
 > [!NOTE]
-> 操作中は**Escで緊急停止**できます。作業が終わってもONは維持されるため、自動操作を無効にするときはOFFにしてください。マルチプレイではサーバーごとの許可確認があります。<br>Press **Esc to stop an active action**. Control stays ON between actions; switch it OFF to disable automation. Multiplayer control requires confirmation for each server.
+> Press **Esc to stop an active action**. Control stays on between actions; switch it off to disable automation. Multiplayer control requires permission for each server.
 >
-> 別のアプリを開きながら使う場合は、Minecraftの **F3＋P**（初期キー設定）で「フォーカス喪失時の一時停止」を無効にしてください。<br>When using another app alongside Minecraft, press **F3+P** (default binding) to disable “pause on lost focus.”
+> To keep Minecraft running while you use your AI client in another app, press **F3+P** with the default key bindings to disable pause on lost focus.
 
-## 対応状況 / Status
+## What you can do
 
-公開API v2は、座標・対象・数量を指定する17ツールを提供します。[ツールと操作例](docs/MCMCP_Public_API_v2_クイックガイド.md)、[設計図施工](docs/PUBLIC_API_V2_BLUEPRINT_TOOL.md)、[実機検証と残件](docs/PUBLIC_API_V2_STATUS_20260928.md)を参照してください。
+Public API v2 provides **17 tools** for describing tasks with coordinates, targets, and quantities. Actions share progress tracking, results, and cancellation.
 
-API v2 provides 17 tools for coordinates, targets, and quantities. See the [API guide](docs/MCMCP_Public_API_v2_クイックガイド.md) and [verification status](docs/PUBLIC_API_V2_STATUS_20260928.md).
-
-| 操作 / Operation | ツール / Tools |
+| Task | Tools |
 | --- | --- |
-| 状態・観測 / State and observation | `agent_get_state`、`agent_get_mcp_status`、`agent_get_observation` |
-| 移動・視点・施工 / Movement and building | `agent_look`、`agent_move`、`agent_break_block`、`agent_place_block`、`agent_build` |
-| 操作・生産・所持品 / Interaction and inventory | `agent_interact`、`agent_craft`、`agent_inventory` |
-| 入力・script・chat / Input, scripts and chat | `agent_click`、`agent_input_sequence`、`agent_run_script`、`agent_chat` |
-| 進行・取消 / Progress and cancellation | `agent_get_action`、`agent_cancel_action` |
+| Check state and surroundings | `agent_get_state`, `agent_get_mcp_status`, `agent_get_observation` |
+| Move, look, mine, and build | `agent_look`, `agent_move`, `agent_break_block`, `agent_place_block`, `agent_build` |
+| Interact, craft, and manage items | `agent_interact`, `agent_craft`, `agent_inventory` |
+| Use inputs, scripts, and game chat | `agent_click`, `agent_input_sequence`, `agent_run_script`, `agent_chat` |
+| Check progress or cancel work | `agent_get_action`, `agent_cancel_action` |
 
-**0.1系からの移行：** 旧`agent_start_action`とJSON Action DSLは削除されています。MCPクライアントを再起動し、v2ガイドへ移行してください。<br>**Upgrading from 0.1:** restart your MCP client and migrate from the removed `agent_start_action` / JSON Action DSL to the v2 tools.
+Use a bounded script to combine several actions, or preview a JSON/CSV blueprint with `agent_build` before building it in limited sections. Cancelling or failing an action does not undo changes already confirmed in the world.
 
-設計図は`agent_build`でpreviewし、hashとworld/sessionを確認して有限の区間を施工できます。取消・失敗は確定済みの変更を巻き戻しません。実機で確認した規模と、APIが受け付ける上限は区別してください。
+See the [API guide](docs/MCMCP_Public_API_v2_クイックガイド.md), [blueprint guide](docs/PUBLIC_API_V2_BLUEPRINT_TOOL.md), and [tested features and remaining work](docs/experiments/20261115_release_rc1.md). These guides are in Japanese. API limits describe what a request can ask for; the validation records describe what has actually been tested.
 
-## 質問・不具合 / Questions and issues
+**Upgrading from 0.1:** API v2 replaces `agent_start_action` and the public JSON Action DSL. Restart your MCP client to refresh its tool list, then update workflows to use the v2 tools and scripts.
 
-導入で困った場合は[ガイドの「困ったとき」](docs/MCMCP_配布用README.md#5-困ったとき--トラブルシューティング)を参照してください。不具合や要望は[Issues](https://github.com/Aodaruma/mcmcp/issues)へどうぞ。
+## Help and feedback
 
-For setup problems, see the guide’s [troubleshooting section (Japanese)](docs/MCMCP_配布用README.md#5-困ったとき--トラブルシューティング). Report bugs or request features in [Issues](https://github.com/Aodaruma/mcmcp/issues).
+For setup problems, see the [troubleshooting guide (Japanese)](docs/MCMCP_配布用README.md#5-困ったとき--トラブルシューティング). Report bugs and request features in [Issues](https://github.com/Aodaruma/mcmcp/issues).
 
-## 開発者向け / For developers
+## Contributing
 
-修正への参加は[CONTRIBUTING.md](CONTRIBUTING.md)からどうぞ。Issueで担当と範囲を決め、fork / cloneした環境からPRを送れます。Codex・Claude Code共通の作業ルールは[AGENTS.md](AGENTS.md)、保守・マージ方針は[MAINTENANCE.md](docs/MAINTENANCE.md)にあります。<br>Start with [CONTRIBUTING.md](CONTRIBUTING.md): coordinate on an issue, work in your own fork / clone, and submit a PR. [AGENTS.md](AGENTS.md) applies to Codex and Claude Code; see [MAINTENANCE.md](docs/MAINTENANCE.md) for triage and merge rules.
+Start with [CONTRIBUTING.md](CONTRIBUTING.md). Coordinate the scope on an issue, work in your own fork or checkout, and submit a pull request. [AGENTS.md](AGENTS.md) contains the shared rules for Codex and Claude Code; [MAINTENANCE.md](docs/MAINTENANCE.md) covers reviews, merging, and releases.
 
-**[開発ボード / Project](https://github.com/users/Aodaruma/projects/5)** · **[着手できるIssue / Ready issues](https://github.com/Aodaruma/mcmcp/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready)** · **[初めての修正 / Good first issues](https://github.com/Aodaruma/mcmcp/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)**
+**[Project board](https://github.com/users/Aodaruma/projects/5)** · **[Ready issues](https://github.com/Aodaruma/mcmcp/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready)** · **[Good first issues](https://github.com/Aodaruma/mcmcp/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)**
 
 <details>
-<summary>ビルド・技術文書・配布手順 / Build, technical docs, and release instructions</summary>
+<summary>Building, technical documentation, and releases</summary>
 
-Java 25を`JAVA_HOME`へ設定して実行します。<br>Set `JAVA_HOME` to Java 25, then run:
+Set `JAVA_HOME` to Java 25, then run:
 
-```powershell
+~~~powershell
 .\gradlew.bat test harnessTest adminBridgeTest verifyHarnessIsolation build
-```
+~~~
 
-Linux/macOSでは`bash gradlew`を使います。検証用MODは本体JARから分離しています。<br>On Linux/macOS, use `bash gradlew`. Test-only mods are kept separate from the production JAR.
+On Linux or macOS, use `bash gradlew`. Test-only mods are kept separate from the production JAR.
 
-- [接続設定の詳細 / Connection details](docs/MCMCP_導入と接続ガイド.md)
-- [公開API v2 / Public API v2](docs/MCMCP_Public_API_v2_クイックガイド.md) · [Tool Catalog](docs/MCMCP_MCP_Tool_Catalog.json)
-- [設計・仕様 / Design and specification](docs/Minecraft_MCP_NeoForge_設計仕様書.md) · [MCP Tool Catalog](docs/MCMCP_MCP_Tool_Catalog.json)
-- [実験・検証記録 / Test and experiment records](docs/experiments/)
-- [配布・PDF生成 / Distribution and PDF generation](tools/release/README.md)
+- [Connection details](docs/MCMCP_導入と接続ガイド.md)
+- [Public API v2](docs/MCMCP_Public_API_v2_クイックガイド.md) · [Tool catalog](docs/MCMCP_MCP_Tool_Catalog.json)
+- [Design and specification](docs/Minecraft_MCP_NeoForge_設計仕様書.md)
+- [Test and experiment records](docs/experiments/)
+- [Distribution and PDF generation](tools/release/README.md)
 
-技術文書は主に日本語です。`v0.1.0-rc3`のようなタグをpushすると、CIがそのバージョンのJAR・PDF・ZIPを作り、非draft Releaseを公開します。接尾辞付きはPre-releaseです。PDF生成にTyporaは不要です。
-
-Technical documentation is primarily in Japanese. Pushing a tag such as `v0.1.0-rc3` builds a matching JAR, PDF, and ZIP, then publishes a non-draft Release. Tags with a prerelease suffix produce a Pre-release. PDF generation does not require Typora.
+Technical documentation is primarily in Japanese. A version tag such as `v0.2.0-rc.1` triggers CI to test and build a matching JAR, PDF, and ZIP, then publish a non-draft release. Tags with a prerelease suffix produce a pre-release. PDF generation does not require Typora.
 
 </details>
 
-## ライセンス / License
+## License
 
-ソースコードは[MPL 2.0](LICENSE)で提供します。第三者素材の出典は[NOTICE.md](NOTICE.md)を参照してください。<br>Source code is licensed under [MPL 2.0](LICENSE). See [NOTICE.md](NOTICE.md) for third-party credits.
+Source code is licensed under [MPL 2.0](LICENSE). See [NOTICE.md](NOTICE.md) for third-party credits.
 
-Minecraft / Mojang / Microsoftの公式製品ではありません。<br>NOT AN OFFICIAL MINECRAFT MOD. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.
+NOT AN OFFICIAL MINECRAFT MOD. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.
