@@ -4,6 +4,13 @@
 
 <img src="docs/assets/readme/mcmcp-logo.png" width="180" alt="MCMCP: a robot with a pickaxe">
 
+[![Release](https://img.shields.io/github/v/release/Aodaruma/mcmcp?include_prereleases&sort=semver)](https://github.com/Aodaruma/mcmcp/releases)
+[![Build status](https://github.com/Aodaruma/mcmcp/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/Aodaruma/mcmcp/actions/workflows/release.yml)
+[![Minecraft 26.2](https://img.shields.io/badge/Minecraft-26.2-62B47A)](#getting-started)
+[![NeoForge 26.2.0.59](https://img.shields.io/badge/NeoForge-26.2.0.59-orange)](#getting-started)
+[![Java 25](https://img.shields.io/badge/Java-25-ED8B00)](#getting-started)
+[![License](https://img.shields.io/github/license/Aodaruma/mcmcp)](LICENSE)
+
 Ask an AI assistant such as Codex or Claude Code to help you in Minecraft. MCMCP is a client-side NeoForge mod that lets your assistant use your player to explore, move, build, craft, and manage items.
 
 **[Download](https://github.com/Aodaruma/mcmcp/releases)** · **[Illustrated setup guide (Japanese)](docs/MCMCP_配布用README.md)** · **[Guide PDF (Japanese)](docs/MCMCP_配布用README.pdf)**
